@@ -28,7 +28,7 @@ func (fakeQueries) QuotaUsed(context.Context, time.Time, time.Time) (int, error)
 func (fakeQueries) CameoByID(context.Context, string) (domain.Cameo, error) {
 	return domain.Cameo{}, domain.ErrCameoNotFound
 }
-func (fakeQueries) ListLedger(_ context.Context, after *domain.LedgerCursor, limit int) ([]domain.LedgerEntry, error) {
+func (fakeQueries) ListLedger(_ context.Context, after *domain.PageCursor, limit int) ([]domain.LedgerEntry, error) {
 	if after != nil {
 		return nil, nil
 	}
@@ -38,6 +38,9 @@ func (fakeQueries) ListLedger(_ context.Context, after *domain.LedgerCursor, lim
 		{ID: "l1", Type: domain.LedgerCharge, Amount: 10, CameoID: &cameo, ClipTitle: "t", CreatedAt: at},
 		{ID: "l2", Type: domain.LedgerRefund, Amount: 10, ClipTitle: "t", CreatedAt: at},
 	}, nil
+}
+func (fakeQueries) ListCameos(context.Context, *domain.PageCursor, int) ([]domain.Cameo, error) {
+	return nil, nil
 }
 
 func (fakeQueries) DispatchableIDs(context.Context, time.Time, int) ([]string, error) {

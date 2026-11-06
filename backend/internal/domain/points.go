@@ -31,8 +31,8 @@ type LedgerEntry struct {
 	CreatedAt time.Time
 }
 
-// LedgerCursor 標記明細分頁位置：排序為 (CreatedAt, ID) 由新到舊。
-type LedgerCursor struct {
+// PageCursor 標記分頁位置（點數明細與訂單列表共用）：排序為 (CreatedAt, ID) 由新到舊。
+type PageCursor struct {
 	CreatedAt time.Time
 	ID        string
 }

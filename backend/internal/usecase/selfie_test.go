@@ -218,6 +218,10 @@ func (q fakeQueries) CameoByID(_ context.Context, id string) (domain.Cameo, erro
 	return q.db.cameo, nil
 }
 
+func (q fakeQueries) ListCameos(context.Context, *domain.PageCursor, int) ([]domain.Cameo, error) {
+	return nil, nil
+}
+
 func (q fakeQueries) DispatchableIDs(_ context.Context, now time.Time, limit int) ([]string, error) {
 	c := q.db.cameo
 	if q.db.exists && c.Status == domain.StatusQueued && c.GenerationExpiresAt != nil && c.GenerationExpiresAt.After(now) {

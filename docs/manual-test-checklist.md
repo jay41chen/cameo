@@ -442,3 +442,44 @@ docker compose -p cameo44 exec -T postgres psql -U cameo -d cameo -c \
 6. 訂單進行中才關通知：不阻擋，完成時不發通知也不刪草稿；重新開啟通知後開啟 App 補發一則。
 7. 頻道被關：App 通知開著、只關「生成結果」頻道，按「確認支付」直接顯示提示（不跳權限對話框），「前往設定」開到 App 通知設定；服務與回前景此時不認領、不通知。
 8. 另列：`startForeground` 被拒、`onTimeout`、`stopSelfResult` 回 false 的情境能否製造需另評估。
+
+## 第 5.2b-1 輪：後端訂單列表 `GET /v1/cameos?cursor=`
+
+只驗後端，沒有改 App、沒有開模擬器。
+
+### 範圍
+
+- `GET /v1/cameos?cursor=`（需要 token）：只列 `QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED`，依 `(created_at, id)` 由新到舊，一頁 20 筆（`Config.CameoPageSize`，預設 20，與點數明細頁大小分開）。
+- 回應 `{"items":[cameo],"next_cursor":null|string}`；`items` 每筆與 `GET /v1/cameos/{id}` 的 `cameo` 共用 `toCameoJSON`，不含 `upload`；無資料時 `items` 為 `[]`。
+- 分頁判斷與 `Ledger` 相同：查 `limit+1`、回傳前 20 筆，剛好 20 筆時 `next_cursor` 為 `null`（與 `Ledger` 無差異）。
+- cursor 與點數明細共用 `encodeCursor`／`decodeCursor`，`domain.LedgerCursor` 改名為 `domain.PageCursor`；不合法回 `400 INVALID_CURSOR`。唯讀，不呼叫 `ExpireDue`、不開交易。
+- 既有 `TestRoutingAndAuthHTTP` 原本斷言 `GET /v1/cameos` 為 `405`，已改成 `PUT` 為 `405`（`Allow: GET, HEAD, POST`）並把 `GET /v1/cameos` 加進 `401` 清單。
+
+### 測試
+
+指令（隔離專案 `cameo52b1`，埠 15442）：
+
+```
+POSTGRES_HOST_PORT=15442 docker compose -p cameo52b1 up -d postgres
+cd backend && TEST_DATABASE_URL='postgres://cameo:cameo@127.0.0.1:15442/cameo?sslmode=disable' go test -count=1 ./...
+```
+
+結果：全部套件 `ok`，`go test -v` 統計 128 個 `--- PASS`、0 FAIL、0 SKIP；`go vet ./...` 無輸出，`gofmt -l .` 無輸出。新測試在 `backend/test/integration/list_test.go`（真實 Postgres）：同 `created_at` 45 筆跨 3 頁、7 種狀態篩選、20／21 筆的 `next_cursor`、列表項目與 `GET /v1/cameos/{id}` 的 `cameo` 完全相同、不合法 cursor 與點數明細回應相同、空列表、無 token `401`、`POST` 不變。
+
+### Mutation 結果（`go test -overlay`，不改 repo 檔案）
+
+| mutation | 結果 |
+|---|---|
+| `(c.created_at, c.id) <` 改 `<=` | 抓到：分頁測試 id 重複（`id-025`、`id-006` 出現兩次），第 2 頁測試失敗 |
+| 拿掉狀態篩選 | 抓到：狀態測試回 7 種、邊界測試看到 `AWAITING_UPLOAD` |
+| 不多查一筆（`limit` 不加 1） | 抓到：21 筆時 `next_cursor` 為 `nil`，分頁只有 1 頁 |
+| 列表少 `display` | 抓到：列表與單筆的 `cameo` 不同 |
+| 列表少 `failure_reason` | 抓到：`FAILED` 項目 `failure_reason` 為 `nil` |
+
+### 未涵蓋
+
+- App「我的客串」頁、點通知開此頁（5.2b-2 以後）。
+- `video_available`、`share` 目前固定 `false`／`{"active":false,"url":null}`（同單筆查詢）。
+- 並行寫入時的分頁一致性（只測了靜態資料）。
+- `user_id` 條件沒有回歸測試（`points_account` 有 `CHECK (id = 1)`，目前 schema 只能有一個使用者）。
+- 「列表不觸發逾期、不改狀態」沒有自動測試，只靠讀碼（`Service.Cameos` 只呼叫 `ListCameos`）。

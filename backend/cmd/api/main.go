@@ -51,6 +51,7 @@ func run() error {
 
 	cfg := usecase.Config{
 		LedgerPageSize: usecase.DefaultLedgerPageSize,
+		CameoPageSize:  usecase.DefaultCameoPageSize,
 		DailyLimit:     getenvInt("DAILY_LIMIT", 3),
 		UploadTTL:      getenvDuration("UPLOAD_TTL", time.Hour),
 		MaxSelfieBytes: int64(getenvInt("MAX_SELFIE_BYTES", usecase.DefaultMaxSelfieBytes)),

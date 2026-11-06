@@ -21,7 +21,10 @@ func (emptyQueries) QuotaUsed(context.Context, time.Time, time.Time) (int, error
 func (emptyQueries) CameoByID(context.Context, string) (domain.Cameo, error) {
 	return domain.Cameo{}, domain.ErrCameoNotFound
 }
-func (emptyQueries) ListLedger(context.Context, *domain.LedgerCursor, int) ([]domain.LedgerEntry, error) {
+func (emptyQueries) ListLedger(context.Context, *domain.PageCursor, int) ([]domain.LedgerEntry, error) {
+	return nil, nil
+}
+func (emptyQueries) ListCameos(context.Context, *domain.PageCursor, int) ([]domain.Cameo, error) {
 	return nil, nil
 }
 

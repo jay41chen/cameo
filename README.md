@@ -1,6 +1,6 @@
 # 客串短劇（Kimhit 候選人作業）
 
-> 狀態：進行中。Android App 的片段清單、點數、點數明細（含分頁）已在 API 37 模擬器驗證過。後端另已實作建單（冪等、點數占用、每日額度）、訂單查詢、額度、上傳自拍、送出（扣點、寫 `CHARGE` 明細）與上傳逾期釋放；Android App 的額度顯示、確認支付（建單）、本機草稿已在 API 37 模擬器接真實後端驗證，涵蓋：額度用完、點數不足、額度達上限、網路錯誤後重試與重用同一個冪等 key、已建單再點同片段拿新 key、CREATE 草稿重用同 key、同 key 回原訂單、`409` 後移除重建、重試進行中不顯示錯誤、逾期重新客串／移除、重開接續。「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬（非真實斷線）。例外與未驗項目：確認時 `401` 的畫面未在模擬器驗證（單元測試涵蓋）；強制停止只驗到 POST 沒到的情況；另有數項未涵蓋與外觀問題，請見 `docs/manual-test-checklist.md` 第 3 輪。App 已有拍照與預覽（CameraX），詳見 `docs/manual-test-checklist.md` 第 4 輪；App 已接上上傳與送出，並在 API 37 模擬器接真實後端驗證（4.4，詳見 `docs/manual-test-checklist.md` 第 4 輪「Integration」：主流程到「排隊中」、上傳／送出回應遺失後接續且只扣一次（以 curl 模擬）、重試、離開畫面、強制停止、逾期、照片遺失、後端回「照片太大」時引導重拍；上傳途中進背景、真實斷線、`401`、真機未驗）；後端已實作派工給模擬廠商、廠商 webhook 回呼、生成逾時與退點（第 5.1 輪，當時未接 App，只以後端測試與 curl 驗證，見 `docs/manual-test-checklist.md` 第 5.1 輪）；App 已有生成進度畫面、前景服務與完成通知（第 5.2 輪，只在 API 37 模擬器驗證，見 `docs/manual-test-checklist.md` 第 5.2 輪）；通知權限檢查（確認支付前）、開啟 App 回前景時補發與恢復追蹤已實作（單元測試涵蓋，模擬器實測排在 5.3）；「我的客串」尚未實作，訂單結束後草稿刪除、訂單從未完成清單消失，到 5.2b 前使用者只能從通知文字與點數明細看到結果，點通知目前只開首頁。確認頁問題：返回轉場中點「確認支付」，修正前 6 次嘗試皆建單；已加一行防護（`dropUnlessResumed`），只擋掉「頁面已在離開中」的點擊，修正後 7 次嘗試未建單（每個延遲各 1 次、間隔未量；d=0.7 點到清單列、沒打到按鈕，d=0.5 沒有修正前對照，可直接對照的是 d=0、0.05、0.1、0.2、0.3 這 5 個值）。這不是完整解法：先按確認再按返回時，若回應在頁面銷毀後才回來，只占用點數，按「繼續」或等期限釋放；若在淡出期間回來，一樣導到進度畫面並自動上傳、送出、扣款（MVP 決定，見 `ARCHITECTURE.md` 取捨表；兩者皆讀碼與修正前證據推論，未實測）；傳輸中途被殺、真實手勢返回與網路延遲未測，詳見該節。API 契約中尚未實作的部分仍是設計，未確認的欄位標 `[待確認]`。
+> 狀態：進行中。Android App 的片段清單、點數、點數明細（含分頁）已在 API 37 模擬器驗證過。後端另已實作建單（冪等、點數占用、每日額度）、訂單查詢、額度、上傳自拍、送出（扣點、寫 `CHARGE` 明細）與上傳逾期釋放；Android App 的額度顯示、確認支付（建單）、本機草稿已在 API 37 模擬器接真實後端驗證，涵蓋：額度用完、點數不足、額度達上限、網路錯誤後重試與重用同一個冪等 key、已建單再點同片段拿新 key、CREATE 草稿重用同 key、同 key 回原訂單、`409` 後移除重建、重試進行中不顯示錯誤、逾期重新客串／移除、重開接續。「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬（非真實斷線）。例外與未驗項目：確認時 `401` 的畫面未在模擬器驗證（單元測試涵蓋）；強制停止只驗到 POST 沒到的情況；另有數項未涵蓋與外觀問題，請見 `docs/manual-test-checklist.md` 第 3 輪。App 已有拍照與預覽（CameraX），詳見 `docs/manual-test-checklist.md` 第 4 輪；App 已接上上傳與送出，並在 API 37 模擬器接真實後端驗證（4.4，詳見 `docs/manual-test-checklist.md` 第 4 輪「Integration」：主流程到「排隊中」、上傳／送出回應遺失後接續且只扣一次（以 curl 模擬）、重試、離開畫面、強制停止、逾期、照片遺失、後端回「照片太大」時引導重拍；上傳途中進背景、真實斷線、`401`、真機未驗）；後端已實作派工給模擬廠商、廠商 webhook 回呼、生成逾時與退點（第 5.1 輪，當時未接 App，只以後端測試與 curl 驗證，見 `docs/manual-test-checklist.md` 第 5.1 輪）；App 已有生成進度畫面、前景服務與完成通知（第 5.2 輪，只在 API 37 模擬器驗證，見 `docs/manual-test-checklist.md` 第 5.2 輪）；通知權限檢查（確認支付前）、開啟 App 回前景時補發與恢復追蹤已實作（單元測試涵蓋，模擬器實測排在 5.3）；後端 `GET /v1/cameos?cursor=` 訂單列表已實作（第 5.2b-1 輪，只以後端測試驗證，見 `docs/manual-test-checklist.md` 第 5.2b-1 輪）；App 的「我的客串」頁與點通知開此頁尚未實作，訂單結束後草稿刪除、訂單從未完成清單消失，到 5.2b 前使用者只能從通知文字與點數明細看到結果，點通知目前只開首頁。確認頁問題：返回轉場中點「確認支付」，修正前 6 次嘗試皆建單；已加一行防護（`dropUnlessResumed`），只擋掉「頁面已在離開中」的點擊，修正後 7 次嘗試未建單（每個延遲各 1 次、間隔未量；d=0.7 點到清單列、沒打到按鈕，d=0.5 沒有修正前對照，可直接對照的是 d=0、0.05、0.1、0.2、0.3 這 5 個值）。這不是完整解法：先按確認再按返回時，若回應在頁面銷毀後才回來，只占用點數，按「繼續」或等期限釋放；若在淡出期間回來，一樣導到進度畫面並自動上傳、送出、扣款（MVP 決定，見 `ARCHITECTURE.md` 取捨表；兩者皆讀碼與修正前證據推論，未實測）；傳輸中途被殺、真實手勢返回與網路延遲未測，詳見該節。API 契約中尚未實作的部分仍是設計，未確認的欄位標 `[待確認]`。
 
 ## 專案介紹
 
@@ -104,7 +104,6 @@ cd android
 
 - 訂單資料格式中 `video_available`、`share` 的結構（目前後端固定回 `false` 與 `{"active":false,"url":null}`；`SUCCEEDED` 也一樣，影片播放端點尚未實作，`video_url` 只存資料庫、不出現在 API 回應）。
 - `X-App-Version` 與 `426` 尚未實作。
-- 訂單清單 `GET /v1/cameos` 的回應形狀（尚未實作，目前該路徑只接受 `POST`，`GET` 回 `405`）。
 - `POST /debug/faults` body 的 `target`、`times`、`params`。
 
 ## API 說明
@@ -283,7 +282,7 @@ cd android
 
 ### 訂單查詢
 
-- `GET /v1/cameos?cursor=`：`{"items":[cameo],"next_cursor":null}`（尚未實作）
+- `GET /v1/cameos?cursor=`：`{"items":[cameo],"next_cursor":null}`。只列已送出的訂單（`QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED`；`AWAITING_UPLOAD`、`UPLOADED`、`EXPIRED` 不列），依 `(created_at, id)` 由新到舊，一頁 20 筆；有下一頁時 `next_cursor` 為字串，剛好滿一頁或最後一頁為 `null`；沒有資料時 `items` 為 `[]`。`items` 每筆與 `GET /v1/cameos/{id}` 的 `cameo` 物件完全相同（含 `display`、`points_state`、`failure_reason`、`video_available`、`share`），不含 `upload`。cursor 無法解析回 `400 INVALID_CURSOR`（同點數明細）。唯讀，需要 token。
 - `GET /v1/cameos/{id}`：`{"cameo":{...},"upload":...}`（`upload` 規則同 `POST /v1/cameos`）；不存在、不屬於該使用者、或 id 含 NUL／非法 UTF-8 回 `404 CAMEO_NOT_FOUND`。
 - 失敗後 `points_state = REFUNDED` 並有 `REFUND` 明細（金額為建單時的 `clip.cost` 快照；資料庫的 partial unique index 保證每筆訂單最多一筆 `REFUND`）。
 

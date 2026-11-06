@@ -98,7 +98,7 @@ func (q *Queries) BalanceAndHeld(ctx context.Context) (balance, held int, err er
 	return balance, held, err
 }
 
-func (q *Queries) ListLedger(ctx context.Context, after *domain.LedgerCursor, limit int) ([]domain.LedgerEntry, error) {
+func (q *Queries) ListLedger(ctx context.Context, after *domain.PageCursor, limit int) ([]domain.LedgerEntry, error) {
 	const base = `SELECT id, type, amount, cameo_id, clip_title, created_at FROM ledger_entries`
 	const order = ` ORDER BY created_at DESC, id DESC LIMIT `
 	var (
@@ -128,6 +128,37 @@ func (q *Queries) ListLedger(ctx context.Context, after *domain.LedgerCursor, li
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
+}
+
+// ListCameos 只列已送出的訂單（QUEUED／GENERATING／SUCCEEDED／FAILED），依 (created_at, id) 由新到舊。
+func (q *Queries) ListCameos(ctx context.Context, after *domain.PageCursor, limit int) ([]domain.Cameo, error) {
+	const where = ` WHERE c.user_id = $1 AND c.status IN ('QUEUED', 'GENERATING', 'SUCCEEDED', 'FAILED')`
+	const order = ` ORDER BY c.created_at DESC, c.id DESC LIMIT `
+	var (
+		query string
+		args  []any
+	)
+	if after == nil {
+		query = cameoSelect + where + order + `$2`
+		args = []any{userID, limit}
+	} else {
+		query = cameoSelect + where + ` AND (c.created_at, c.id) < ($2, $3)` + order + `$4`
+		args = []any{userID, after.CreatedAt, after.ID, limit}
+	}
+	rows, err := q.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cameos := []domain.Cameo{}
+	for rows.Next() {
+		c, err := scanCameo(rows)
+		if err != nil {
+			return nil, err
+		}
+		cameos = append(cameos, c)
+	}
+	return cameos, rows.Err()
 }
 
 // DispatchableIDs 回傳 QUEUED 且生成期限尚未到（generation_expires_at > now）的訂單 id，

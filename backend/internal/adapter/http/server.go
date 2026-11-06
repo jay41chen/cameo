@@ -48,7 +48,7 @@ func Handler(svc *usecase.Service, opts ...Option) http.Handler {
 	handleGET(mux, "/v1/points", s.points)
 	handleGET(mux, "/v1/points/ledger", s.ledger)
 	handleGET(mux, "/v1/quota", s.quota)
-	handleMethods(mux, "/v1/cameos", map[string]http.HandlerFunc{http.MethodPost: s.createCameo})
+	handleMethods(mux, "/v1/cameos", map[string]http.HandlerFunc{http.MethodGet: s.listCameos, http.MethodPost: s.createCameo})
 	handleMethods(mux, "/v1/cameos/{id}", map[string]http.HandlerFunc{http.MethodGet: s.getCameo})
 	handleMethods(mux, "/v1/cameos/{id}/selfie", map[string]http.HandlerFunc{http.MethodPut: s.putSelfie})
 	handleMethods(mux, "/v1/cameos/{id}/submit", map[string]http.HandlerFunc{http.MethodPost: s.submitCameo})
@@ -154,6 +154,27 @@ func (s *server) ledger(w http.ResponseWriter, r *http.Request) {
 	items := make([]item, 0, len(page.Items))
 	for _, e := range page.Items {
 		items = append(items, item{e.ID, string(e.Type), e.Amount, e.CameoID, e.ClipTitle, e.CreatedAt.In(taipei).Format(time.RFC3339)})
+	}
+	var next *string
+	if page.NextCursor != "" {
+		next = &page.NextCursor
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": next})
+}
+
+func (s *server) listCameos(w http.ResponseWriter, r *http.Request) {
+	page, err := s.svc.Cameos(r.Context(), r.URL.Query().Get("cursor"))
+	if errors.Is(err, domain.ErrInvalidCursor) {
+		writeError(w, http.StatusBadRequest, "INVALID_CURSOR", "cursor 無效", false)
+		return
+	}
+	if err != nil {
+		writeInternal(w, r, err)
+		return
+	}
+	items := make([]cameoJSON, 0, len(page.Items))
+	for _, c := range page.Items {
+		items = append(items, toCameoJSON(c))
 	}
 	var next *string
 	if page.NextCursor != "" {

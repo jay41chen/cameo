@@ -183,15 +183,14 @@ func TestRoutingAndAuthHTTP(t *testing.T) {
 		return resp{rec, m}
 	}
 	for _, c := range []struct{ method, path string }{
-		{"POST", "/v1/cameos"}, {"GET", "/v1/cameos/x"}, {"GET", "/v1/quota"},
+		{"POST", "/v1/cameos"}, {"GET", "/v1/cameos"}, {"GET", "/v1/cameos/x"}, {"GET", "/v1/quota"},
 	} {
 		for _, auth := range []string{"", "Bearer wrong"} {
 			wantError(t, do(c.method, c.path, auth), 401, "UNAUTHORIZED")
 		}
 	}
 	for _, c := range []struct{ method, path, allow string }{
-		{"GET", "/v1/cameos", "POST"},
-		{"PUT", "/v1/cameos", "POST"},
+		{"PUT", "/v1/cameos", "GET, HEAD, POST"},
 		{"DELETE", "/v1/cameos/x", "GET, HEAD"},
 		{"POST", "/v1/quota", "GET, HEAD"},
 	} {

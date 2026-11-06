@@ -14,11 +14,16 @@ import (
 // DefaultLedgerPageSize 是明細每頁筆數。
 const DefaultLedgerPageSize = 20
 
+// DefaultCameoPageSize 是訂單列表每頁筆數。
+const DefaultCameoPageSize = 20
+
 // Config 是業務設定，由 cmd 從環境變數讀入。
 type Config struct {
 	LedgerPageSize int
-	DailyLimit     int
-	UploadTTL      time.Duration
+	// CameoPageSize 是訂單列表每頁筆數；0 表示用 DefaultCameoPageSize。
+	CameoPageSize int
+	DailyLimit    int
+	UploadTTL     time.Duration
 	// MaxSelfieBytes 是自拍檔案上限；0 表示用 DefaultMaxSelfieBytes。
 	MaxSelfieBytes int64
 	// GenerationTTL 是送出後到生成完成的期限（涵蓋排隊與生成）；0 表示用 DefaultGenerationTTL。
@@ -43,6 +48,9 @@ type Service struct {
 func NewService(q Queries, tx TxRunner, clock Clock, cfg Config, files FileStore) *Service {
 	if cfg.LedgerPageSize <= 0 {
 		cfg.LedgerPageSize = DefaultLedgerPageSize
+	}
+	if cfg.CameoPageSize <= 0 {
+		cfg.CameoPageSize = DefaultCameoPageSize
 	}
 	if cfg.MaxSelfieBytes <= 0 {
 		cfg.MaxSelfieBytes = DefaultMaxSelfieBytes
@@ -83,24 +91,63 @@ type LedgerPage struct {
 
 // Ledger 回傳一頁明細。cursor 為空字串表示第一頁；無法解析回 domain.ErrInvalidCursor。
 func (s *Service) Ledger(ctx context.Context, cursor string) (LedgerPage, error) {
-	var after *domain.LedgerCursor
-	if cursor != "" {
-		c, err := decodeCursor(cursor)
-		if err != nil {
-			return LedgerPage{}, err
-		}
-		after = &c
-	}
-	items, err := s.q.ListLedger(ctx, after, s.cfg.LedgerPageSize+1)
+	items, next, err := listPage(cursor, s.cfg.LedgerPageSize,
+		func(after *domain.PageCursor, limit int) ([]domain.LedgerEntry, error) {
+			return s.q.ListLedger(ctx, after, limit)
+		},
+		func(e domain.LedgerEntry) (time.Time, string) { return e.CreatedAt, e.ID })
 	if err != nil {
 		return LedgerPage{}, err
 	}
-	page := LedgerPage{Items: items}
-	if len(items) > s.cfg.LedgerPageSize {
-		page.Items = items[:s.cfg.LedgerPageSize]
-		page.NextCursor = encodeCursor(page.Items[s.cfg.LedgerPageSize-1])
+	return LedgerPage{Items: items, NextCursor: next}, nil
+}
+
+// CameoPage 是一頁訂單；NextCursor 為空字串表示沒有下一頁。
+type CameoPage struct {
+	Items      []domain.Cameo
+	NextCursor string
+}
+
+// Cameos 回傳一頁訂單列表（唯讀）。cursor 為空字串表示第一頁；無法解析回 domain.ErrInvalidCursor。
+// 與 Ledger 相同，多查一筆來判斷是否有下一頁，所以剛好滿一頁時沒有 cursor。
+func (s *Service) Cameos(ctx context.Context, cursor string) (CameoPage, error) {
+	items, next, err := listPage(cursor, s.cfg.CameoPageSize,
+		func(after *domain.PageCursor, limit int) ([]domain.Cameo, error) {
+			return s.q.ListCameos(ctx, after, limit)
+		},
+		func(c domain.Cameo) (time.Time, string) { return c.CreatedAt, c.ID })
+	if err != nil {
+		return CameoPage{}, err
 	}
-	return page, nil
+	return CameoPage{Items: items, NextCursor: next}, nil
+}
+
+// listPage 是 Ledger／Cameos 共用的分頁流程：解 cursor、查 pageSize+1 筆、截斷到 pageSize、
+// 有多的一筆才算出 NextCursor（所以剛好滿一頁時沒有 cursor）。
+func listPage[T any](
+	cursor string,
+	pageSize int,
+	list func(after *domain.PageCursor, limit int) ([]T, error),
+	key func(T) (time.Time, string),
+) ([]T, string, error) {
+	var after *domain.PageCursor
+	if cursor != "" {
+		c, err := decodeCursor(cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		after = &c
+	}
+	items, err := list(after, pageSize+1)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(items) <= pageSize {
+		return items, "", nil
+	}
+	items = items[:pageSize]
+	createdAt, id := key(items[pageSize-1])
+	return items, encodeCursor(createdAt, id), nil
 }
 
 type cursorPayload struct {
@@ -108,27 +155,27 @@ type cursorPayload struct {
 	I string `json:"i"`
 }
 
-func encodeCursor(e domain.LedgerEntry) string {
-	b, _ := json.Marshal(cursorPayload{T: e.CreatedAt.UTC().Format(time.RFC3339Nano), I: e.ID})
+func encodeCursor(createdAt time.Time, id string) string {
+	b, _ := json.Marshal(cursorPayload{T: createdAt.UTC().Format(time.RFC3339Nano), I: id})
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func decodeCursor(s string) (domain.LedgerCursor, error) {
+func decodeCursor(s string) (domain.PageCursor, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
-		return domain.LedgerCursor{}, domain.ErrInvalidCursor
+		return domain.PageCursor{}, domain.ErrInvalidCursor
 	}
 	// json.Unmarshal 會把非法 UTF-8 換成 U+FFFD 而不報錯，所以先檢查原始位元組。
 	if !utf8.Valid(raw) {
-		return domain.LedgerCursor{}, domain.ErrInvalidCursor
+		return domain.PageCursor{}, domain.ErrInvalidCursor
 	}
 	var p cursorPayload
 	if err := json.Unmarshal(raw, &p); err != nil || p.I == "" || strings.ContainsRune(p.I, 0) {
-		return domain.LedgerCursor{}, domain.ErrInvalidCursor
+		return domain.PageCursor{}, domain.ErrInvalidCursor
 	}
 	t, err := time.Parse(time.RFC3339Nano, p.T)
 	if err != nil {
-		return domain.LedgerCursor{}, domain.ErrInvalidCursor
+		return domain.PageCursor{}, domain.ErrInvalidCursor
 	}
-	return domain.LedgerCursor{CreatedAt: t, ID: p.I}, nil
+	return domain.PageCursor{CreatedAt: t, ID: p.I}, nil
 }

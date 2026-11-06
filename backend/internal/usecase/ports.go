@@ -23,7 +23,9 @@ type Queries interface {
 	// CameoByID 找不到回 domain.ErrCameoNotFound。
 	CameoByID(ctx context.Context, id string) (domain.Cameo, error)
 	// ListLedger 依 (created_at, id) 由新到舊回傳最多 limit 筆；after 為 nil 表示從頭。
-	ListLedger(ctx context.Context, after *domain.LedgerCursor, limit int) ([]domain.LedgerEntry, error)
+	ListLedger(ctx context.Context, after *domain.PageCursor, limit int) ([]domain.LedgerEntry, error)
+	// ListCameos 回傳狀態為 QUEUED／GENERATING／SUCCEEDED／FAILED 的訂單，依 (created_at, id) 由新到舊，最多 limit 筆；after 為 nil 表示從頭。
+	ListCameos(ctx context.Context, after *domain.PageCursor, limit int) ([]domain.Cameo, error)
 	// DispatchableIDs 回傳 QUEUED 且 generation_expires_at > now 的訂單 id，created_at 由舊到新，最多 limit 筆。
 	DispatchableIDs(ctx context.Context, now time.Time, limit int) ([]string, error)
 	// TimedOutIDs 回傳 QUEUED／GENERATING 且 generation_expires_at <= now 的訂單 id。
