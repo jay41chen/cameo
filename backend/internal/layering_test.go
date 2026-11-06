@@ -83,3 +83,27 @@ func violation(from, to string) string {
 	}
 	return ""
 }
+
+// TestViolationRules 確認規則本身：filestore 屬於 adapter，只能被組裝層以外的人使用，
+// 不能依賴其他 adapter，usecase／domain 也不能依賴它。
+func TestViolationRules(t *testing.T) {
+	cases := []struct {
+		from, to string
+		bad      bool
+	}{
+		{"adapter/filestore", "adapter/postgres", true},
+		{"adapter/postgres", "adapter/filestore", true},
+		{"adapter/http", "adapter/filestore", true},
+		{"usecase", "adapter/filestore", true},
+		{"domain", "adapter/filestore", true},
+		{"app", "adapter/filestore", true},
+		{"adapter/filestore", "usecase", false},
+		{"adapter/filestore", "domain", false},
+		{"adapter/filestore", "adapter/filestore", false},
+	}
+	for _, c := range cases {
+		if got := violation(c.from, c.to) != ""; got != c.bad {
+			t.Errorf("violation(%s -> %s) = %v, want %v", c.from, c.to, got, c.bad)
+		}
+	}
+}

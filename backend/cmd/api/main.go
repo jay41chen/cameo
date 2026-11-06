@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"cameo/backend/internal/adapter/filestore"
 	apihttp "cameo/backend/internal/adapter/http"
 	"cameo/backend/internal/adapter/postgres"
 	"cameo/backend/internal/app"
@@ -45,9 +46,14 @@ func run() error {
 		LedgerPageSize: usecase.DefaultLedgerPageSize,
 		DailyLimit:     getenvInt("DAILY_LIMIT", 3),
 		UploadTTL:      getenvDuration("UPLOAD_TTL", time.Hour),
+		MaxSelfieBytes: int64(getenvInt("MAX_SELFIE_BYTES", usecase.DefaultMaxSelfieBytes)),
+	}
+	files, err := filestore.New(getenv("SELFIE_DIR", "/data/selfies"))
+	if err != nil {
+		return err
 	}
 	sweepEvery := getenvDuration("EXPIRY_SWEEP_INTERVAL", 30*time.Second)
-	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), usecase.SystemClock{}, cfg)
+	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), usecase.SystemClock{}, cfg, files)
 	return app.Serve(ctx, svc, apihttp.Handler(svc), addr, sweepEvery)
 }
 

@@ -13,7 +13,7 @@ func TestDisplay(t *testing.T) {
 	if d := (Cameo{Status: StatusExpired}).Display(); d != (Display{"已過期", "上傳期限已過，點數沒有扣款，請重新客串。"}) {
 		t.Errorf("expired = %+v", d)
 	}
-	if d := (Cameo{Status: "GENERATING"}).Display(); d.Title != "處理中" {
+	if d := (Cameo{Status: StatusSucceeded}).Display(); d.Title != "處理中" {
 		t.Errorf("other = %+v", d)
 	}
 }
@@ -36,5 +36,42 @@ func TestNewQuotaNeverNegative(t *testing.T) {
 	}
 	if q := NewQuota(3, 1, time.Time{}); q.Remaining != 2 || q.Display != "今日還可客串 2 次" {
 		t.Errorf("quota = %+v", q)
+	}
+}
+
+func TestDisplayUploadedQueuedGenerating(t *testing.T) {
+	cases := map[string]Display{
+		StatusUploaded:   {"送出中", "照片已上傳，尚未扣款"},
+		StatusQueued:     {"排隊中", "完成後會通知你"},
+		StatusGenerating: {"生成中", "完成後會通知你"},
+	}
+	for status, want := range cases {
+		if d := (Cameo{Status: status}).Display(); d != want {
+			t.Errorf("%s = %+v, want %+v", status, d, want)
+		}
+	}
+	if (Cameo{Status: StatusExpired}).Display().Message != UploadExpiredMessage {
+		t.Error("expired display must use UploadExpiredMessage")
+	}
+}
+
+func TestIsJPEGPrefix(t *testing.T) {
+	cases := []struct {
+		name string
+		head []byte
+		want bool
+	}{
+		{"jpeg", []byte{0xFF, 0xD8, 0xFF}, true},
+		{"jpeg with more", []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00}, true},
+		{"empty", nil, false},
+		{"too short", []byte{0xFF, 0xD8}, false},
+		{"png", []byte{0x89, 'P', 'N', 'G'}, false},
+		{"wrong third byte", []byte{0xFF, 0xD8, 0x00}, false},
+		{"text", []byte("GIF"), false},
+	}
+	for _, c := range cases {
+		if got := IsJPEGPrefix(c.head); got != c.want {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
 	}
 }

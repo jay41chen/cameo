@@ -37,6 +37,8 @@ func Handler(svc *usecase.Service) http.Handler {
 	handleGET(mux, "/v1/quota", s.quota)
 	handleMethods(mux, "/v1/cameos", map[string]http.HandlerFunc{http.MethodPost: s.createCameo})
 	handleMethods(mux, "/v1/cameos/{id}", map[string]http.HandlerFunc{http.MethodGet: s.getCameo})
+	handleMethods(mux, "/v1/cameos/{id}/selfie", map[string]http.HandlerFunc{http.MethodPut: s.putSelfie})
+	handleMethods(mux, "/v1/cameos/{id}/submit", map[string]http.HandlerFunc{http.MethodPost: s.submitCameo})
 	return mux
 }
 
@@ -264,8 +266,7 @@ func (s *server) createCameo(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) getCameo(w http.ResponseWriter, r *http.Request) {
 	c, err := s.svc.Cameo(r.Context(), r.PathValue("id"))
-	if errors.Is(err, domain.ErrCameoNotFound) {
-		writeError(w, http.StatusNotFound, "CAMEO_NOT_FOUND", "找不到這筆客串", false)
+	if writeCameoError(w, err) {
 		return
 	}
 	if err != nil {
@@ -273,6 +274,63 @@ func (s *server) getCameo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toCameoResponse(c))
+}
+
+// putSelfie 只看內容（前 3 bytes 是否為 JPEG），不看 Content-Type。
+func (s *server) putSelfie(w http.ResponseWriter, r *http.Request) {
+	body := http.MaxBytesReader(w, r.Body, s.svc.MaxSelfieBytes())
+	c, err := s.svc.UploadSelfie(r.Context(), r.PathValue("id"), body)
+	var tooLarge *http.MaxBytesError
+	var readErr *usecase.BodyReadError
+	switch {
+	case errors.As(err, &tooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "SELFIE_TOO_LARGE", "照片太大", false)
+		return
+	case errors.Is(err, domain.ErrInvalidSelfie):
+		writeError(w, http.StatusBadRequest, "INVALID_SELFIE", "照片格式不正確", false)
+		return
+	case errors.As(err, &readErr):
+		slog.Warn("upload body read failed", "path", r.URL.Path, "err", err)
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "上傳中斷，請重試", true)
+		return
+	case errors.Is(err, domain.ErrInvalidState):
+		writeError(w, http.StatusConflict, "INVALID_STATE", "這筆客串目前無法上傳", false)
+		return
+	case writeCameoError(w, err):
+		return
+	case err != nil:
+		writeInternal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toCameoResponse(c))
+}
+
+func (s *server) submitCameo(w http.ResponseWriter, r *http.Request) {
+	c, err := s.svc.SubmitCameo(r.Context(), r.PathValue("id"))
+	switch {
+	case errors.Is(err, domain.ErrSelfieNotUploaded):
+		writeError(w, http.StatusConflict, "SELFIE_NOT_UPLOADED", "請先上傳照片", false)
+		return
+	case writeCameoError(w, err):
+		return
+	case err != nil:
+		writeInternal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toCameoResponse(c))
+}
+
+// writeCameoError 處理上傳與送出共有的錯誤；有寫出回應時回傳 true。
+func writeCameoError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, domain.ErrCameoNotFound):
+		writeError(w, http.StatusNotFound, "CAMEO_NOT_FOUND", "找不到這筆客串", false)
+	case errors.Is(err, domain.ErrUploadExpired):
+		writeError(w, http.StatusGone, "UPLOAD_EXPIRED", domain.UploadExpiredMessage, false)
+	default:
+		return false
+	}
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

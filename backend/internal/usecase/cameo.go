@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"log/slog"
 
 	"cameo/backend/internal/domain"
 )
@@ -99,13 +100,27 @@ func (s *Service) Quota(ctx context.Context) (domain.Quota, error) {
 	return domain.NewQuota(s.cfg.DailyLimit, used, to), nil
 }
 
-// ExpireDue 釋放已逾期的訂單（不寫明細），可重複執行；回傳本次轉換筆數。
-func (s *Service) ExpireDue(ctx context.Context) (int, error) {
-	var n int
+// ExpireDue 釋放已逾期的訂單（不寫明細），可重複執行；回傳本次轉換的訂單 id。
+// 交易 commit 後才刪除自拍檔；刪除失敗只記 log。
+func (s *Service) ExpireDue(ctx context.Context) ([]string, error) {
+	var ids []string
 	err := s.tx.Run(ctx, func(tx Tx) error {
 		var err error
-		n, err = tx.ExpireDue(ctx, s.clock.Now())
+		ids, err = tx.ExpireDue(ctx, s.clock.Now())
 		return err
 	})
-	return n, err
+	if err != nil {
+		return nil, err
+	}
+	s.deleteSelfies(ids...)
+	return ids, nil
+}
+
+// deleteSelfies 刪除訂單的自拍檔；失敗只記 log，不影響呼叫端。
+func (s *Service) deleteSelfies(ids ...string) {
+	for _, id := range ids {
+		if err := s.files.Delete(id); err != nil {
+			slog.Error("delete selfie failed", "cameo_id", id, "err", err)
+		}
+	}
 }

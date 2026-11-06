@@ -26,7 +26,7 @@ func newHandler(t *testing.T, limit int) (http.Handler, *testdb.Clock) {
 	pool := testdb.New(t)
 	clock := testdb.NewClock(time.Date(2026, 11, 6, 2, 0, 0, 0, time.UTC))
 	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), clock,
-		usecase.Config{DailyLimit: limit, UploadTTL: time.Hour})
+		usecase.Config{DailyLimit: limit, UploadTTL: time.Hour}, newFiles(t))
 	return apihttp.Handler(svc), clock
 }
 
@@ -153,13 +153,13 @@ func TestExpiredDisplayHTTP(t *testing.T) {
 	pool := testdb.New(t)
 	clock := testdb.NewClock(time.Date(2026, 11, 6, 2, 0, 0, 0, time.UTC))
 	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), clock,
-		usecase.Config{DailyLimit: 3, UploadTTL: time.Hour})
+		usecase.Config{DailyLimit: 3, UploadTTL: time.Hour}, newFiles(t))
 	h := apihttp.Handler(svc)
 	r := call(t, h, http.MethodPost, "/v1/cameos", "k", `{"clip_id":"c1"}`)
 	id := r.body["cameo"].(map[string]any)["id"].(string)
 	clock.Advance(time.Hour)
-	if n, err := svc.ExpireDue(t.Context()); err != nil || n != 1 {
-		t.Fatalf("expire %d %v", n, err)
+	if ids, err := svc.ExpireDue(t.Context()); err != nil || len(ids) != 1 {
+		t.Fatalf("expire %v %v", ids, err)
 	}
 	c := call(t, h, http.MethodGet, "/v1/cameos/"+id, "", "").body["cameo"].(map[string]any)
 	if c["status"] != "EXPIRED" || c["points_state"] != "RELEASED" ||
@@ -210,7 +210,7 @@ func TestUploadFieldHTTP(t *testing.T) {
 	pool := testdb.New(t)
 	clock := testdb.NewClock(time.Date(2026, 11, 6, 2, 0, 0, 0, time.UTC))
 	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), clock,
-		usecase.Config{DailyLimit: 3, UploadTTL: time.Hour})
+		usecase.Config{DailyLimit: 3, UploadTTL: time.Hour}, newFiles(t))
 	h := apihttp.Handler(svc)
 
 	created := call(t, h, http.MethodPost, "/v1/cameos", "k", `{"clip_id":"c1"}`)
@@ -226,8 +226,8 @@ func TestUploadFieldHTTP(t *testing.T) {
 	}
 
 	clock.Advance(time.Hour)
-	if n, err := svc.ExpireDue(context.Background()); err != nil || n != 1 {
-		t.Fatalf("expire %d %v", n, err)
+	if ids, err := svc.ExpireDue(context.Background()); err != nil || len(ids) != 1 {
+		t.Fatalf("expire %v %v", ids, err)
 	}
 	got = call(t, h, http.MethodGet, "/v1/cameos/"+id, "", "")
 	if got.Code != 200 || !reflect.DeepEqual(keys(got.body), []string{"cameo", "upload"}) ||
@@ -251,7 +251,7 @@ func TestConflictAndLimitPrecedenceHTTP(t *testing.T) {
 	// 額度和點數同時用完時回 429，不是 402。
 	pool := testdb.New(t)
 	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool),
-		testdb.NewClock(time.Date(2026, 11, 6, 2, 0, 0, 0, time.UTC)), usecase.Config{DailyLimit: 1, UploadTTL: time.Hour})
+		testdb.NewClock(time.Date(2026, 11, 6, 2, 0, 0, 0, time.UTC)), usecase.Config{DailyLimit: 1, UploadTTL: time.Hour}, newFiles(t))
 	if _, err := pool.Exec(context.Background(), `UPDATE points_account SET balance = 10`); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func expiredOrder(t *testing.T) (*usecase.Service, *testdb.Clock) {
 	pool := testdb.New(t)
 	clock := testdb.NewClock(time.Date(2026, 11, 6, 2, 0, 0, 0, time.UTC))
 	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), clock,
-		usecase.Config{DailyLimit: 3, UploadTTL: time.Hour})
+		usecase.Config{DailyLimit: 3, UploadTTL: time.Hour}, newFiles(t))
 	if _, err := svc.CreateCameo(context.Background(), "k", "c1"); err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestServeStartsSweeper(t *testing.T) {
 func TestServeCancelsSweeperWhenListenFails(t *testing.T) {
 	pool := testdb.New(t)
 	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), usecase.SystemClock{},
-		usecase.Config{DailyLimit: 3, UploadTTL: time.Hour})
+		usecase.Config{DailyLimit: 3, UploadTTL: time.Hour}, newFiles(t))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

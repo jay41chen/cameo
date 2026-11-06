@@ -1,6 +1,6 @@
 # 客串短劇：規格
 
-> 狀態：進行中。本文件描述「將實作」的內容；第 2 輪的片段、點數、點數明細已實作並驗證（API 37 模擬器）；第 3 輪後端的建單、額度、逾期釋放已實作；App 的額度顯示、確認支付、本機草稿已在 API 37 模擬器接真實後端驗證（含已建單再點同片段拿新 key、CREATE 草稿重用同 key；確認時 `401` 未在模擬器驗證，只由單元測試涵蓋；「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬，非真實斷線；其他例外與未驗項目見 `docs/manual-test-checklist.md` 第 3 輪）。其餘（拍照、上傳、送出、通知、訂單清單）尚未實作。設計由討論決定。推論出、尚未確認的理由標 `[待確認]`。
+> 狀態：進行中。本文件描述「將實作」的內容；第 2 輪的片段、點數、點數明細已實作並驗證（API 37 模擬器）；第 3 輪後端的建單、額度、逾期釋放已實作；第 4 輪後端的上傳自拍、送出（扣點、寫 `CHARGE` 明細）已實作並以真實 Postgres 與 Docker 驗證，App 尚未接上；App 的額度顯示、確認支付、本機草稿已在 API 37 模擬器接真實後端驗證（含已建單再點同片段拿新 key、CREATE 草稿重用同 key；確認時 `401` 未在模擬器驗證，只由單元測試涵蓋；「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬，非真實斷線；其他例外與未驗項目見 `docs/manual-test-checklist.md` 第 3 輪）。其餘（App 的拍照、上傳、送出、通知、訂單清單）尚未實作。設計由討論決定。推論出、尚未確認的理由標 `[待確認]`。
 
 ## 1. 問題定義
 
@@ -16,7 +16,7 @@
 
 - 不做取消訂單（可能被洗）。
 - 中斷後從步驟接續；照片整檔重傳（位元組續傳列 backlog，見第 12 節）。
-- 只有相機入口；後端不驗證照片來源；裝置驗證（例如平台完整性檢查）只寫文件。
+- 只有相機入口，上傳的是 JPEG 照片（影片不適用）；後端只收 JPEG，以內容前 3 bytes（`FF D8 FF`）判斷、不看 `Content-Type`，不驗證照片來源；裝置驗證（例如平台完整性檢查）只寫文件。
 - App 上傳成功後刪除本機照片；後端訂單結束後刪除自拍，只留浮水印成品。
 - 登入與使用者：假設已用一個測試帳號登入。片段清單與初始點數由模擬後端提供，App 沒有假資料層。
 
@@ -84,10 +84,11 @@ stateDiagram-v2
 |---|---|
 | `AWAITING_UPLOAD` | 標題「等待上傳」，說明「已占用 N 點，送出後才扣款」 |
 | `EXPIRED` | 標題「已過期」，說明「上傳期限已過，點數沒有扣款，請重新客串。」 |
-| `QUEUED` | 排隊中 |
-| `GENERATING` | 生成中 |
+| `UPLOADED` | 標題「送出中」，說明「照片已上傳，尚未扣款」 |
+| `QUEUED` | 標題「排隊中」，說明「完成後會通知你」 |
+| `GENERATING` | 標題「生成中」，說明「完成後會通知你」 |
 
-`QUEUED`、`GENERATING` 接「完成後會通知你」。不向使用者提示廠商故障。其他狀態的文字：`[待確認]`，在確認前後端回通用文字「處理中」。
+不向使用者提示廠商故障。其他狀態（`SUCCEEDED`、`FAILED`）的文字：`[待確認]`，在確認前後端回通用文字「處理中」。
 
 ## 6. WebSocket 與同步
 
@@ -181,7 +182,7 @@ registry 放 adapter 層，提供 debug API。異常用 JSON 情境檔（`backen
 
 ## 11. 後端架構
 
-目錄：`backend/internal/{domain,usecase,adapter/{http,postgres,vendor,realtime},app}`，`cmd` 負責組裝；測試用的整合測試與資料庫工具在 `backend/test`。以 Go 測試檢查 import 方向。`vendor-sim` 不套分層。
+目錄：`backend/internal/{domain,usecase,adapter/{http,postgres,filestore,vendor,realtime},app}`，`cmd` 負責組裝；測試用的整合測試與資料庫工具在 `backend/test`。以 Go 測試檢查 import 方向。`vendor-sim` 不套分層。
 
 Port 定義在 `usecase`：`TxRunner`、`Tx`、`Queries`、`FileStore`、`VendorClient`、`EventPublisher`、`Clock`。
 
@@ -191,13 +192,28 @@ type TxRunner interface {
 }
 ```
 
+`FileStore`（自拍檔案）已實作於 `adapter/filestore`（存本機目錄 `SELFIE_DIR`，Docker 以 named volume 掛載；暫存檔與正式檔在同一個檔案系統，用 rename 原子覆蓋）：
+
+```go
+type FileStore interface {
+    WriteTemp(ctx context.Context, r io.Reader) (tempName string, err error)
+    Commit(tempName, cameoID string) error // 原子 rename，覆蓋舊檔
+    Discard(tempName string) error
+    Delete(cameoID string) error           // 不存在不算錯
+}
+```
+
+上傳流程：先查訂單擋掉明顯不能上傳的 → 串流寫暫存檔 → 交易內鎖列、重查狀態與期限、更新狀態並 rename → commit；訂單轉 `EXPIRED` 的交易 commit 後才刪檔，刪除失敗只記 log。送出同一交易內固定先鎖點數帳戶、再鎖訂單列。逾期判斷（`upload_expires_at <= now`）掃描、上傳、送出共用同一條 SQL 規則。
+
 測試：金流用真實 Postgres；domain 用純 Go 測試；廠商和 WebSocket 用 fake。
 
 ## 12. Backlog
 
 - 位元組續傳。
+- 自拍 checksum（X-Content-SHA256、422）：目前靠 Content-Length 發現截斷並整檔重傳，先不做。
 - access token／refresh token：MVP 假設已登入、使用固定測試 token，沒有登入畫面；做完 MVP 再評估。
 - 離線優先：快取只用於顯示，事實來源仍是後端 API；離線時標示更新時間；不憑快取判斷能否建單。
+- 自拍儲存的崩潰一致性：rename 後當機未 fsync 目錄可能遺失檔案；掃描 commit 後、刪檔前當機，EXPIRED 訂單的檔案不會再被刪。MVP 只記錄，不處理。
 
 ## 13. Iteration
 

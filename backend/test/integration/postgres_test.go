@@ -29,12 +29,12 @@ func TestMigrateIsRepeatableAndSeedsOnce(t *testing.T) {
 	if len(clips) != 3 || clips[0] != (domain.Clip{ID: "c1", Title: "雨夜重逢", Cost: 10}) {
 		t.Fatalf("clips = %+v", clips)
 	}
-	balance, err := q.Balance(ctx)
-	if err != nil || balance != 100 {
-		t.Fatalf("balance = %d, err = %v", balance, err)
+	balance, held, err := q.BalanceAndHeld(ctx)
+	if err != nil || balance != 100 || held != 0 {
+		t.Fatalf("balance = %d, held = %d, err = %v", balance, held, err)
 	}
 	var versions int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&versions); err != nil || versions != 3 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&versions); err != nil || versions != 4 {
 		t.Fatalf("versions = %d, err = %v", versions, err)
 	}
 	var ledger int
@@ -49,7 +49,7 @@ func TestPointsAvailable(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE points_account SET balance = 70 WHERE id = 1`); err != nil {
 		t.Fatal(err)
 	}
-	svc := newSvc(pool, nil, usecase.Config{})
+	svc := newSvc(pool, nil, usecase.Config{}, newFiles(t))
 	p, err := svc.Points(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestLedgerPaginationStableWithTies(t *testing.T) {
 	insertEntry(t, pool, "a1", base)
 	insertEntry(t, pool, "e0", base.Add(-time.Minute))
 
-	svc := newSvc(pool, nil, usecase.Config{LedgerPageSize: 2})
+	svc := newSvc(pool, nil, usecase.Config{LedgerPageSize: 2}, newFiles(t))
 	ids, pages := collect(t, svc)
 	want := []string{"e5", "a3", "a2", "a1", "e0"}
 	if len(ids) != len(want) {
@@ -122,7 +122,7 @@ func TestLedgerLastPageHasNoCursorAndExactPageSize(t *testing.T) {
 	insertEntry(t, pool, "a", base)
 	insertEntry(t, pool, "b", base.Add(time.Second))
 
-	svc := newSvc(pool, nil, usecase.Config{LedgerPageSize: 2})
+	svc := newSvc(pool, nil, usecase.Config{LedgerPageSize: 2}, newFiles(t))
 	page, err := svc.Ledger(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestLedgerLastPageHasNoCursorAndExactPageSize(t *testing.T) {
 		t.Fatalf("page = %+v, want 2 items and no cursor", page)
 	}
 	empty := newDB(t)
-	page, err = newSvc(empty, nil, usecase.Config{LedgerPageSize: 2}).Ledger(context.Background(), "")
+	page, err = newSvc(empty, nil, usecase.Config{LedgerPageSize: 2}, newFiles(t)).Ledger(context.Background(), "")
 	if err != nil || len(page.Items) != 0 || page.NextCursor != "" {
 		t.Fatalf("empty page = %+v, err = %v", page, err)
 	}
@@ -139,7 +139,7 @@ func TestLedgerLastPageHasNoCursorAndExactPageSize(t *testing.T) {
 
 func TestLedgerInvalidCursor(t *testing.T) {
 	pool := newDB(t)
-	svc := newSvc(pool, nil, usecase.Config{LedgerPageSize: 2})
+	svc := newSvc(pool, nil, usecase.Config{LedgerPageSize: 2}, newFiles(t))
 	for _, c := range []string{"!!!", "bm90LWpzb24", "e30" /* {} */, "eyJ0Ijoibm9wZSIsImkiOiJ4In0" /* bad time */} {
 		if _, err := svc.Ledger(context.Background(), c); err != domain.ErrInvalidCursor {
 			t.Errorf("cursor %q: err = %v, want ErrInvalidCursor", c, err)
@@ -147,6 +147,6 @@ func TestLedgerInvalidCursor(t *testing.T) {
 	}
 }
 
-func newSvc(pool *pgxpool.Pool, clock usecase.Clock, cfg usecase.Config) *usecase.Service {
-	return usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), clock, cfg)
+func newSvc(pool *pgxpool.Pool, clock usecase.Clock, cfg usecase.Config, files usecase.FileStore) *usecase.Service {
+	return usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), clock, cfg, files)
 }

@@ -1,6 +1,6 @@
 # 客串短劇（Kimhit 候選人作業）
 
-> 狀態：進行中。Android App 的片段清單、點數、點數明細（含分頁）已在 API 37 模擬器驗證過。後端另已實作建單（冪等、點數占用、每日額度）、訂單查詢、額度與上傳逾期釋放；Android App 的額度顯示、確認支付（建單）、本機草稿已在 API 37 模擬器接真實後端驗證，涵蓋：額度用完、點數不足、額度達上限、網路錯誤後重試與重用同一個冪等 key、已建單再點同片段拿新 key、CREATE 草稿重用同 key、同 key 回原訂單、`409` 後移除重建、重試進行中不顯示錯誤、逾期重新客串／移除、重開接續。「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬（非真實斷線）。例外與未驗項目：確認時 `401` 的畫面未在模擬器驗證（單元測試涵蓋）；強制停止只驗到 POST 沒到的情況；另有數項未涵蓋與外觀問題，請見 `docs/manual-test-checklist.md` 第 3 輪。拍照、上傳、送出、通知、訂單清單等尚未實作。API 契約中尚未實作的部分仍是設計，未確認的欄位標 `[待確認]`。
+> 狀態：進行中。Android App 的片段清單、點數、點數明細（含分頁）已在 API 37 模擬器驗證過。後端另已實作建單（冪等、點數占用、每日額度）、訂單查詢、額度、上傳自拍、送出（扣點、寫 `CHARGE` 明細）與上傳逾期釋放；Android App 的額度顯示、確認支付（建單）、本機草稿已在 API 37 模擬器接真實後端驗證，涵蓋：額度用完、點數不足、額度達上限、網路錯誤後重試與重用同一個冪等 key、已建單再點同片段拿新 key、CREATE 草稿重用同 key、同 key 回原訂單、`409` 後移除重建、重試進行中不顯示錯誤、逾期重新客串／移除、重開接續。「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬（非真實斷線）。例外與未驗項目：確認時 `401` 的畫面未在模擬器驗證（單元測試涵蓋）；強制停止只驗到 POST 沒到的情況；另有數項未涵蓋與外觀問題，請見 `docs/manual-test-checklist.md` 第 3 輪。App 尚未接上上傳與送出；拍照、生成、通知、訂單清單等尚未實作。API 契約中尚未實作的部分仍是設計，未確認的欄位標 `[待確認]`。
 
 ## 專案介紹
 
@@ -22,6 +22,8 @@ docker compose up --build
 
 會啟動 Postgres（`postgres:17-alpine`）和 `api`（`http://localhost:8080`）。`api` 等 Postgres 健康後才啟動，並自動執行 migration 與 seed（可重複啟動，不會重複插入）。不需要任何帳號或金鑰；連線字串、port 與下列設定可用環境變數覆寫（見 `docker-compose.yml`）。Postgres 只對本機開放 `127.0.0.1:5433`，供測試使用。
 
+升級注意：migration `0004` 遇到懸空的 `cameo_id`，或同一訂單重複的 `CHARGE` 明細時，API 會啟動失敗，並在 log 顯示原因；需先處理資料再啟動。
+
 `api` 的業務設定（皆為環境變數，不寫死在程式碼）：
 
 | 變數 | 預設 | 說明 |
@@ -29,6 +31,8 @@ docker compose up --build
 | `DAILY_LIMIT` | `3` | 每人每日（台北時間）客串次數上限 |
 | `UPLOAD_TTL` | `1h` | 建單後的上傳期限，超過會自動釋放點數與額度（Go duration，例如 `5s`、`30m`） |
 | `EXPIRY_SWEEP_INTERVAL` | `30s` | 逾期掃描間隔 |
+| `SELFIE_DIR` | `/data/selfies` | 自拍存放目錄；`docker-compose.yml` 把 named volume `selfies` 掛在這裡，容器重啟後檔案仍在（容器以 `nobody` 執行，目錄在映像檔內已設為可寫） |
+| `MAX_SELFIE_BYTES` | `10485760` | 自拍檔案大小上限（bytes），超過回 `413 SELFIE_TOO_LARGE` |
 
 例如 `UPLOAD_TTL=5s EXPIRY_SWEEP_INTERVAL=1s docker compose up -d api` 可快速觀察逾期釋放。
 
@@ -42,7 +46,7 @@ curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
 
 後端測試（不需啟動 App）：本機需要 Go 1.27.1（`backend/go.mod` 的 `go` 指令）。測試分兩類，`go test ./...` 兩類都會跑：
 
-- 單元測試放在各自套件旁：`backend/internal/layering_test.go`（import 方向）、`backend/internal/domain`、`backend/internal/usecase`、`backend/internal/adapter/http`。不需要資料庫。
+- 單元測試放在各自套件旁：`backend/internal/layering_test.go`（import 方向）、`backend/internal/domain`、`backend/internal/usecase`、`backend/internal/adapter/http`、`backend/internal/adapter/filestore`。不需要資料庫。
 - 整合測試在 `backend/test/integration`：真實 Postgres 加 HTTP，需要 `TEST_DATABASE_URL`，所以先讓 Postgres 在跑再指定它。測試會在該資料庫建立獨立 schema，結束後刪除，不動其他資料；沒設定時整合測試會失敗。測試用的資料庫工具在 `backend/test/internal/testdb`，Go 的 `internal` 規則讓只有 `backend/test` 底下的程式能引用，正式程式（如 `cmd/api`）無法引用。
 
 ```
@@ -65,7 +69,7 @@ adb shell am start -n com.kimhit.cameo/.MainActivity
 ```
 
 - App 連 `http://10.0.2.2:8080`（模擬器看到的宿主機），測試 token 為 `test-token`，兩者由 `:app` 的 build config 提供；只有 debug build 允許對 `10.0.2.2` 明文 HTTP。`adb reverse` 不是必要步驟。
-- 目前畫面：片段清單（頂端顯示今日額度，額度用完時點片段會跳提示；有未完成的客串時列在清單上方）、確認支付（顯示占用點數，建單後顯示後端回的狀態與上傳期限）、點數（可用／占用、明細分頁載入）。每個區塊有載入中、失敗（顯示後端 `message`，沒有則通用文字）與重試。已在 API 37 模擬器接真實後端驗證其中的額度、確認支付、本機草稿流程（步驟、例外與未驗項目見 `docs/manual-test-checklist.md` 第 3 輪）；上傳、送出尚未實作。
+- 目前畫面：片段清單（頂端顯示今日額度，額度用完時點片段會跳提示；有未完成的客串時列在清單上方）、確認支付（顯示占用點數，建單後顯示後端回的狀態與上傳期限）、點數（可用／占用、明細分頁載入）。每個區塊有載入中、失敗（顯示後端 `message`，沒有則通用文字）與重試。已在 API 37 模擬器接真實後端驗證其中的額度、確認支付、本機草稿流程（步驟、例外與未驗項目見 `docs/manual-test-checklist.md` 第 3 輪）；上傳、送出尚未接上（後端已提供）。
 
 單元測試（不需啟動 App 或後端）：
 
@@ -80,7 +84,7 @@ cd android
 
 以下契約細節尚未確認，不在每列重複標註（`/debug/faults` 端點本身已定案）：
 
-- 訂單資料格式中 `QUEUED` 之後各狀態的 `display` 文字、`video_available`、`share` 的結構（目前後端固定回 `false` 與 `{"active":false,"url":null}`）。
+- 訂單資料格式中 `SUCCEEDED`、`FAILED` 的 `display` 文字、`video_available`、`share` 的結構（目前後端固定回 `false` 與 `{"active":false,"url":null}`）。
 - `X-App-Version` 與 `426` 尚未實作。
 - `POST /webhooks/vendor` 的 header 與 body。
 - 訂單清單 `GET /v1/cameos` 的回應形狀（尚未實作，目前該路徑只接受 `POST`，`GET` 回 `405`）。
@@ -105,8 +109,12 @@ cd android
 | `402 INSUFFICIENT_POINTS` | 可用點數不足；`message`：「點數不足」 |
 | `404 CLIP_NOT_FOUND`、`404 CAMEO_NOT_FOUND` | 片段或訂單不存在（訂單不屬於該使用者也回 `CAMEO_NOT_FOUND`）；id 含 NUL 或不是合法 UTF-8 也視為不存在 |
 | `409 IDEMPOTENCY_CONFLICT` | 同一個 `Idempotency-Key` 用在不同 `clip_id` |
-| `409` | 其他狀態衝突（例如 `INVALID_STATE`，尚未實作） |
-| `410` | 上傳／送出已超過期限，不扣款；App 顯示「上傳期限已過，點數沒有扣款，請重新客串。」 |
+| `400 INVALID_SELFIE` | 上傳內容前 3 bytes 不是 JPEG 標頭（`FF D8 FF`），或 body 為空；`message`：「照片格式不正確」 |
+| `400 INVALID_REQUEST`（`retryable: true`） | 上傳讀取 body 中途失敗（連線中斷、實際內容少於 `Content-Length`）；暫存檔已丟棄、訂單狀態不變，可整檔重傳 |
+| `409 INVALID_STATE` | 訂單已是 `QUEUED` 或之後的狀態，不能再上傳；`message`：「這筆客串目前無法上傳」 |
+| `409 SELFIE_NOT_UPLOADED` | 還沒上傳照片就送出；`message`：「請先上傳照片」 |
+| `410 UPLOAD_EXPIRED` | 上傳／送出已超過期限（或訂單已是 `EXPIRED`），不扣款；`message`：「上傳期限已過，點數沒有扣款，請重新客串。」 |
+| `413 SELFIE_TOO_LARGE` | 上傳超過 `MAX_SELFIE_BYTES`；`message`：「照片太大」 |
 | `426 UPGRADE_REQUIRED` | App 版本過舊 |
 | `429 DAILY_LIMIT_REACHED` | 已達每日上限；`message`：「今日客串次數已達上限，明天再來」 |
 | `5xx` | 後端錯誤，可重試 |
@@ -131,7 +139,7 @@ cd android
 - `status`：`AWAITING_UPLOAD`、`UPLOADED`、`QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED`、`EXPIRED`。
 - `points_state`：`HELD`、`CHARGED`、`REFUNDED`、`RELEASED`。
 - `failure_reason`：`CONTENT_REJECTED` 退點不退額度；其餘值 `[待確認]`。
-- `display`：`AWAITING_UPLOAD` 為 `{"title":"等待上傳","message":"已占用 N 點，送出後才扣款"}`（N 為 `clip.cost`）；`EXPIRED` 為 `{"title":"已過期","message":"上傳期限已過，點數沒有扣款，請重新客串。"}`；`QUEUED`、`GENERATING` 見 `spec.md`（尚未實作）；其餘狀態暫用 `{"title":"處理中","message":""}`。
+- `display`：`AWAITING_UPLOAD` 為 `{"title":"等待上傳","message":"已占用 N 點，送出後才扣款"}`（N 為 `clip.cost`）；`UPLOADED` 為 `{"title":"送出中","message":"照片已上傳，尚未扣款"}`；`QUEUED` 為 `{"title":"排隊中","message":"完成後會通知你"}`；`GENERATING` 為 `{"title":"生成中","message":"完成後會通知你"}`；`EXPIRED` 為 `{"title":"已過期","message":"上傳期限已過，點數沒有扣款，請重新客串。"}`；其餘狀態暫用 `{"title":"處理中","message":""}`。
 - `clip.cost` 是建單當下的快照。
 
 ### 片段
@@ -201,28 +209,54 @@ cd android
 ```
 
 - 上傳期限預設 1 小時（`UPLOAD_TTL`，回在 `upload.expires_at`）；生成期限 30 分鐘。理由：縮短點數被占用的時間；代價：離線太久要重新建單。
-- 逾期（`AWAITING_UPLOAD`、`UPLOADED` 且已過 `upload.expires_at`）由後端定時掃描轉為 `EXPIRED`、`points_state = RELEASED`，點數與額度恢復，不寫明細。
+- 逾期（`AWAITING_UPLOAD`、`UPLOADED` 且 `upload.expires_at` 小於等於現在）由後端定時掃描轉為 `EXPIRED`、`points_state = RELEASED`，點數與額度恢復，不寫明細，並刪除已上傳的自拍。上傳與送出遇到已逾期但尚未被掃到的訂單時，會在同一個交易內做同樣的釋放，再回 `410`；三條路徑使用同一個逾期判斷。
 - `upload` 與 `GET /v1/cameos/{id}` 共用同一格式：`status = AWAITING_UPLOAD` 時為 `{"url":"/v1/cameos/{id}/selfie","expires_at":"..."}`，`url` 是相對路徑；其他狀態（例如重送已 `EXPIRED` 的訂單，仍回 `200` 與同一筆訂單）為 `null`。App 以 `cameo.status` 判斷下一步，不以 `upload` 是否存在推斷。
-- `upload.url` 指向的上傳端點尚未實作。
+- `upload.url` 指向的上傳端點見下節。
 - `426` 尚未實作。
 
 ### 上傳自拍
 
 `PUT {upload.url}`（即 `/v1/cameos/{id}/selfie`）
 
-- Header：`Content-Type: image/jpeg`；`X-Content-SHA256` `[待確認]`。
-- Body：JPEG 整檔（中斷後整檔重傳）。
-- 成功 `200`：`{"cameo":{...}}`
-- 錯誤：`410 UPLOAD_EXPIRED`（釋放占用，`points_state = RELEASED`）、`409 INVALID_STATE`、`413 SELFIE_TOO_LARGE`、`422 CHECKSUM_MISMATCH`（後三者 `[待確認]`）。
+- Body：JPEG 整檔（中斷後整檔重傳）。只收 JPEG，判斷只看內容前 3 bytes 是否為 `FF D8 FF`，不看 `Content-Type`（可省略）；空 body 視為格式錯誤。影片不適用，客串只有相機拍照入口。大小上限 `MAX_SELFIE_BYTES`（預設 10 MiB）。
+- 流程：先查訂單，擋掉明顯不能上傳的（不讀 body）；再串流寫入暫存檔；最後在交易內鎖住訂單列、重新檢查狀態與期限，更新狀態並把暫存檔原子地移到正式位置。程序仍在執行時，所有錯誤路徑都會刪除暫存檔；程序中止（crash、kill）留下的 `.tmp-*` 暫存檔，由下次啟動時 `filestore.New` 清除（前提：同一個目錄同一時間只有一個 API 實例）。
+- 檢查順序：內容檢查（格式、大小、讀取）先於逾期判斷。已逾期但尚未被掃描的訂單，內容不合法或超限時回 `400`／`413`（訂單不變，仍留待掃描釋放）；內容合法才在交易內釋放並回 `410`。掃描會釋放這類訂單。
+- 規則（錯誤皆為 `{code,message,retryable}`，`retryable: false`，除非註明）：
+
+| 情況 | 結果 |
+|---|---|
+| 訂單不存在或不屬於該使用者 | `404 CAMEO_NOT_FOUND` |
+| `AWAITING_UPLOAD`、未逾期 | 存檔，轉 `UPLOADED`，`200` |
+| `UPLOADED`、未逾期 | 新檔覆蓋舊檔，`200` |
+| `AWAITING_UPLOAD`／`UPLOADED` 但已逾期（尚未被掃描） | 同一交易轉 `EXPIRED`／`RELEASED`（點數、額度恢復，不寫明細），刪除檔案，`410 UPLOAD_EXPIRED` |
+| `EXPIRED` | `410 UPLOAD_EXPIRED` |
+| `QUEUED` 或之後 | `409 INVALID_STATE` |
+| 內容前 3 bytes 不是 `FF D8 FF`，或 body 為空 | `400 INVALID_SELFIE` |
+| 超過 `MAX_SELFIE_BYTES` | `413 SELFIE_TOO_LARGE` |
+| 讀 body 中途失敗（連線中斷、實際內容少於 `Content-Length`） | 暫存檔丟棄、狀態不變，`400 INVALID_REQUEST`（`retryable: true`） |
+
+- 成功 `200`：`{"cameo":{...},"upload":null}`（與 `GET /v1/cameos/{id}` 同形狀；`UPLOADED` 的 `upload` 為 `null`）。
+- 目前沒有檔案校驗碼；截斷靠 `Content-Length` 與讀取錯誤發現，整檔重傳。
 
 ### 送出
 
 `POST /v1/cameos/{id}/submit`
 
-- 參數：無 body。
-- 效果：同一交易扣點並寫 `CHARGE`（`points_state = CHARGED`）；可重複呼叫，不重複扣點。
-- 成功 `200`：`{"cameo":{...}}`
-- 錯誤：`410`（送出晚於期限，不扣款）、`409 SELFIE_NOT_UPLOADED`（`[待確認]`）、`404`。
+- 參數：無 body。需要 `Authorization`。
+- 效果：同一交易內先鎖點數帳戶、再鎖訂單列（順序固定）。**先判斷期限、再判斷是否已上傳**：
+
+| 情況 | 結果 |
+|---|---|
+| 不存在 | `404 CAMEO_NOT_FOUND` |
+| `AWAITING_UPLOAD`／`UPLOADED` 但已逾期 | 轉 `EXPIRED`／`RELEASED` 並提交，刪除檔案，`410 UPLOAD_EXPIRED` |
+| `EXPIRED` | `410 UPLOAD_EXPIRED` |
+| `AWAITING_UPLOAD`、未逾期 | `409 SELFIE_NOT_UPLOADED` |
+| `UPLOADED`、未逾期 | 餘額扣除訂單快照的 `cost`、寫一筆 `CHARGE` 明細（`created_at` 取系統時間）、轉 `QUEUED`／`CHARGED`，`200` |
+| `QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED` | `200` 回同一筆，不重複扣款 |
+
+- 成功 `200`：`{"cameo":{...},"upload":null}`。
+- 每筆訂單最多一筆 `CHARGE` 明細（資料庫的 partial unique index 保證），明細的 `cameo_id` 有外鍵指向訂單。
+- 送出後自拍檔案保留。
 
 ### 訂單查詢
 

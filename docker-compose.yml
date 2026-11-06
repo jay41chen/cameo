@@ -27,8 +27,13 @@ services:
       DAILY_LIMIT: ${DAILY_LIMIT:-3}
       UPLOAD_TTL: ${UPLOAD_TTL:-1h}
       EXPIRY_SWEEP_INTERVAL: ${EXPIRY_SWEEP_INTERVAL:-30s}
+      SELFIE_DIR: /data/selfies
+      MAX_SELFIE_BYTES: ${MAX_SELFIE_BYTES:-10485760}
+    volumes:
+      - selfies:/data/selfies
     ports:
       - "${API_PORT:-8080}:8080"
 
 volumes:
   pgdata:
+  selfies:

@@ -90,10 +90,12 @@ func (q *Queries) ListClips(ctx context.Context) ([]domain.Clip, error) {
 	return clips, rows.Err()
 }
 
-func (q *Queries) Balance(ctx context.Context) (int, error) {
-	var balance int
-	err := q.db.QueryRow(ctx, `SELECT balance FROM points_account WHERE id = 1`).Scan(&balance)
-	return balance, err
+// BalanceAndHeld 用單一 SQL 同時讀餘額與占用點數，兩者來自同一個快照。
+func (q *Queries) BalanceAndHeld(ctx context.Context) (balance, held int, err error) {
+	err = q.db.QueryRow(ctx, `SELECT a.balance,
+		COALESCE((SELECT SUM(cost) FROM cameos WHERE user_id = a.id AND points_state = 'HELD'), 0)::int
+		FROM points_account a WHERE a.id = $1`, userID).Scan(&balance, &held)
+	return balance, held, err
 }
 
 func (q *Queries) ListLedger(ctx context.Context, after *domain.LedgerCursor, limit int) ([]domain.LedgerEntry, error) {

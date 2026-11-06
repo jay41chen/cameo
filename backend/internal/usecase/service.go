@@ -19,21 +19,33 @@ type Config struct {
 	LedgerPageSize int
 	DailyLimit     int
 	UploadTTL      time.Duration
+	// MaxSelfieBytes 是自拍檔案上限；0 表示用 DefaultMaxSelfieBytes。
+	MaxSelfieBytes int64
 }
+
+// DefaultMaxSelfieBytes 是自拍檔案大小上限的預設值（10 MiB）。
+const DefaultMaxSelfieBytes = 10 << 20
 
 type Service struct {
 	q     Queries
 	tx    TxRunner
 	clock Clock
 	cfg   Config
+	files FileStore
 }
 
-func NewService(q Queries, tx TxRunner, clock Clock, cfg Config) *Service {
+func NewService(q Queries, tx TxRunner, clock Clock, cfg Config, files FileStore) *Service {
 	if cfg.LedgerPageSize <= 0 {
 		cfg.LedgerPageSize = DefaultLedgerPageSize
 	}
-	return &Service{q: q, tx: tx, clock: clock, cfg: cfg}
+	if cfg.MaxSelfieBytes <= 0 {
+		cfg.MaxSelfieBytes = DefaultMaxSelfieBytes
+	}
+	return &Service{q: q, tx: tx, clock: clock, cfg: cfg, files: files}
 }
+
+// MaxSelfieBytes 是上傳自拍的大小上限。
+func (s *Service) MaxSelfieBytes() int64 { return s.cfg.MaxSelfieBytes }
 
 func (s *Service) Clips(ctx context.Context) ([]domain.Clip, error) {
 	return s.q.ListClips(ctx)
@@ -41,11 +53,7 @@ func (s *Service) Clips(ctx context.Context) ([]domain.Clip, error) {
 
 // Points 回傳可用與占用點數；占用為 HELD 訂單的 cost 總和。
 func (s *Service) Points(ctx context.Context) (domain.Points, error) {
-	balance, err := s.q.Balance(ctx)
-	if err != nil {
-		return domain.Points{}, err
-	}
-	held, err := s.q.HeldPoints(ctx)
+	balance, held, err := s.q.BalanceAndHeld(ctx)
 	if err != nil {
 		return domain.Points{}, err
 	}

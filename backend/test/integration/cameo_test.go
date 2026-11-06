@@ -24,7 +24,7 @@ func setup(t *testing.T, limit int) (*pgxpool.Pool, *usecase.Service, *testdb.Cl
 	t.Helper()
 	pool := newDB(t)
 	clock := testdb.NewClock(t0)
-	return pool, newSvc(pool, clock, usecase.Config{DailyLimit: limit, UploadTTL: ttl}), clock
+	return pool, newSvc(pool, clock, usecase.Config{DailyLimit: limit, UploadTTL: ttl}, newFiles(t)), clock
 }
 
 func count(t *testing.T, pool *pgxpool.Pool, table string) int {
@@ -119,8 +119,8 @@ func TestReplayIgnoresCurrentState(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	clock.Advance(2 * ttl)
-	if n, err := svc.ExpireDue(ctx); err != nil || n != 1 {
-		t.Fatalf("expire = %d %v", n, err)
+	if ids, err := svc.ExpireDue(ctx); err != nil || len(ids) != 1 {
+		t.Fatalf("expire = %v %v", ids, err)
 	}
 	again, err := svc.CreateCameo(ctx, "k1", "c1")
 	if err != nil || again.Created || again.Cameo.ID != first.Cameo.ID || again.Cameo.Status != domain.StatusExpired {
@@ -276,15 +276,15 @@ func TestExpireDue(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock.Advance(ttl - time.Second)
-	if n, err := svc.ExpireDue(ctx); err != nil || n != 0 {
-		t.Fatalf("before deadline: %d %v", n, err)
+	if ids, err := svc.ExpireDue(ctx); err != nil || len(ids) != 0 {
+		t.Fatalf("before deadline: %v %v", ids, err)
 	}
 	if p := points(t, svc); p.Held != 10 {
 		t.Fatalf("points = %+v", p)
 	}
 	clock.Advance(time.Second) // 正好到期限：upload_expires_at <= now
-	if n, err := svc.ExpireDue(ctx); err != nil || n != 1 {
-		t.Fatalf("at deadline: %d %v", n, err)
+	if ids, err := svc.ExpireDue(ctx); err != nil || len(ids) != 1 {
+		t.Fatalf("at deadline: %v %v", ids, err)
 	}
 	var status, ps string
 	if err := pool.QueryRow(ctx, `SELECT status, points_state FROM cameos`).Scan(&status, &ps); err != nil {
@@ -305,8 +305,8 @@ func TestExpireDue(t *testing.T) {
 	var updated time.Time
 	_ = pool.QueryRow(ctx, `SELECT updated_at FROM cameos`).Scan(&updated)
 	clock.Advance(time.Hour)
-	if n, err := svc.ExpireDue(ctx); err != nil || n != 0 {
-		t.Fatalf("second sweep: %d %v", n, err)
+	if ids, err := svc.ExpireDue(ctx); err != nil || len(ids) != 0 {
+		t.Fatalf("second sweep: %v %v", ids, err)
 	}
 	var again time.Time
 	_ = pool.QueryRow(ctx, `SELECT updated_at FROM cameos`).Scan(&again)
@@ -326,8 +326,8 @@ func TestExpireDueLeavesTerminalStatesAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock.Advance(2 * ttl)
-	if n, err := svc.ExpireDue(ctx); err != nil || n != 0 {
-		t.Fatalf("sweep: %d %v", n, err)
+	if ids, err := svc.ExpireDue(ctx); err != nil || len(ids) != 0 {
+		t.Fatalf("sweep: %v %v", ids, err)
 	}
 }
 
@@ -423,8 +423,8 @@ func TestExpireDueReleasesUploaded(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock.Advance(ttl)
-	if n, err := svc.ExpireDue(ctx); err != nil || n != 1 {
-		t.Fatalf("sweep: %d %v", n, err)
+	if ids, err := svc.ExpireDue(ctx); err != nil || len(ids) != 1 {
+		t.Fatalf("sweep: %v %v", ids, err)
 	}
 	var status, ps string
 	if err := pool.QueryRow(ctx, `SELECT status, points_state FROM cameos`).Scan(&status, &ps); err != nil {

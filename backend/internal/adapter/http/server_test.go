@@ -21,8 +21,7 @@ type fakeQueries struct{}
 func (fakeQueries) ListClips(context.Context) ([]domain.Clip, error) {
 	return []domain.Clip{{ID: "c1", Title: "t", Cost: 10}}, nil
 }
-func (fakeQueries) Balance(context.Context) (int, error)    { return 100, nil }
-func (fakeQueries) HeldPoints(context.Context) (int, error) { return 0, nil }
+func (fakeQueries) BalanceAndHeld(context.Context) (int, int, error) { return 100, 0, nil }
 func (fakeQueries) QuotaUsed(context.Context, time.Time, time.Time) (int, error) {
 	return 1, nil
 }
@@ -47,7 +46,7 @@ func (fixedClock) Now() time.Time { return time.Date(2026, 11, 6, 16, 30, 0, 0, 
 
 func do(t *testing.T, method, path, auth string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
-	h := apihttp.Handler(usecase.NewService(fakeQueries{}, nil, fixedClock{}, usecase.Config{LedgerPageSize: 1, DailyLimit: 3}))
+	h := apihttp.Handler(usecase.NewService(fakeQueries{}, nil, fixedClock{}, usecase.Config{LedgerPageSize: 1, DailyLimit: 3}, nil))
 	req := httptest.NewRequest(method, path, nil)
 	if auth != "" {
 		req.Header.Set("Authorization", auth)
@@ -115,7 +114,7 @@ func TestMethodNotAllowedWithoutTokenIs405(t *testing.T) {
 }
 
 func TestHeadClips(t *testing.T) {
-	h := apihttp.Handler(usecase.NewService(fakeQueries{}, nil, fixedClock{}, usecase.Config{LedgerPageSize: 1, DailyLimit: 3}))
+	h := apihttp.Handler(usecase.NewService(fakeQueries{}, nil, fixedClock{}, usecase.Config{LedgerPageSize: 1, DailyLimit: 3}, nil))
 	req := httptest.NewRequest(http.MethodHead, "/v1/clips", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
@@ -187,7 +186,7 @@ func TestLedgerNullCursorAndCameoID(t *testing.T) {
 }
 
 func TestIdempotencyKeyOnlyTrimsASCIIWhitespace(t *testing.T) {
-	h := apihttp.Handler(usecase.NewService(fakeQueries{}, nil, fixedClock{}, usecase.Config{LedgerPageSize: 1, DailyLimit: 3}))
+	h := apihttp.Handler(usecase.NewService(fakeQueries{}, nil, fixedClock{}, usecase.Config{LedgerPageSize: 1, DailyLimit: 3}, nil))
 	for name, key := range map[string]string{
 		"leading NBSP":  "\u00a0abc",
 		"trailing NBSP": "abc\u00a0",

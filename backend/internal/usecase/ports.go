@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"cameo/backend/internal/domain"
@@ -15,10 +16,8 @@ type Clock interface {
 // Queries 是讀取資料的 port。
 type Queries interface {
 	ListClips(ctx context.Context) ([]domain.Clip, error)
-	// Balance 回傳點數餘額（未扣除占用）。
-	Balance(ctx context.Context) (int, error)
-	// HeldPoints 回傳 points_state=HELD 訂單的 cost 總和。
-	HeldPoints(ctx context.Context) (int, error)
+	// BalanceAndHeld 用同一個快照回傳點數餘額（未扣除占用）與 points_state=HELD 訂單的 cost 總和。
+	BalanceAndHeld(ctx context.Context) (balance, held int, err error)
 	// QuotaUsed 回傳建立時間在 [from, to) 且占用額度的訂單數。
 	QuotaUsed(ctx context.Context, from, to time.Time) (int, error)
 	// CameoByID 找不到回 domain.ErrCameoNotFound。
@@ -42,6 +41,31 @@ type Tx interface {
 	QuotaUsed(ctx context.Context, from, to time.Time) (int, error)
 	// InsertCameo 新增訂單並回傳資料庫產生的 id。
 	InsertCameo(ctx context.Context, c domain.Cameo) (id string, err error)
-	// ExpireDue 把已逾期的 AWAITING_UPLOAD／UPLOADED 訂單轉為 EXPIRED／RELEASED，回傳筆數。
-	ExpireDue(ctx context.Context, now time.Time) (int, error)
+	// ExpireDue 把已逾期的 AWAITING_UPLOAD／UPLOADED 訂單轉為 EXPIRED／RELEASED，回傳被轉換的訂單 id。
+	ExpireDue(ctx context.Context, now time.Time) (ids []string, err error)
+	// CameoForUpdate 讀取訂單並鎖住該列（SELECT ... FOR UPDATE）。
+	CameoForUpdate(ctx context.Context, id string) (c domain.Cameo, found bool, err error)
+	// ExpireCameo 若該訂單為 AWAITING_UPLOAD／UPLOADED 且已逾期，轉為 EXPIRED／RELEASED 並回傳 true。
+	// 逾期判斷與 ExpireDue 是同一個規則（upload_expires_at <= now）。
+	ExpireCameo(ctx context.Context, id string, now time.Time) (expired bool, err error)
+	// MarkUploaded 把訂單設為 UPLOADED 並更新 updated_at。
+	MarkUploaded(ctx context.Context, id string, now time.Time) error
+	// DebitAccount 從餘額扣除 amount。
+	DebitAccount(ctx context.Context, amount int) error
+	// InsertLedger 新增一筆點數明細；created_at 取自 e.CreatedAt。
+	InsertLedger(ctx context.Context, e domain.LedgerEntry) error
+	// MarkQueued 把訂單設為 QUEUED／CHARGED 並更新 updated_at。
+	MarkQueued(ctx context.Context, id string, now time.Time) error
+}
+
+// FileStore 存放自拍檔案。暫存檔與正式檔在同一個檔案系統，Commit 是原子覆蓋。
+type FileStore interface {
+	// WriteTemp 把 r 的內容寫成暫存檔並回傳暫存檔名；失敗時不留下暫存檔。
+	WriteTemp(ctx context.Context, r io.Reader) (tempName string, err error)
+	// Commit 把暫存檔原子地移到 cameoID 的正式位置，覆蓋舊檔。
+	Commit(tempName, cameoID string) error
+	// Discard 刪除暫存檔；不存在不算錯。
+	Discard(tempName string) error
+	// Delete 刪除 cameoID 的正式檔；不存在不算錯。
+	Delete(cameoID string) error
 }

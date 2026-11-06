@@ -11,4 +11,8 @@ var (
 	ErrIdempotencyConflict = errors.New("idempotency key reused with a different clip")
 	ErrDailyLimitReached   = errors.New("daily limit reached")
 	ErrInsufficientPoints  = errors.New("insufficient points")
+	ErrUploadExpired       = errors.New("upload window expired")
+	ErrInvalidState        = errors.New("cameo is not in a state that allows this")
+	ErrSelfieNotUploaded   = errors.New("selfie not uploaded")
+	ErrInvalidSelfie       = errors.New("selfie is not a JPEG")
 )

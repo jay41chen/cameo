@@ -48,12 +48,12 @@ func SweepExpired(ctx context.Context, svc *usecase.Service, every time.Duration
 }
 
 func sweepOnce(ctx context.Context, svc *usecase.Service) {
-	n, err := svc.ExpireDue(ctx)
+	ids, err := svc.ExpireDue(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Error("expiry sweep failed", "err", err)
 		}
-	} else if n > 0 {
-		slog.Info("expired cameos", "count", n)
+	} else if len(ids) > 0 {
+		slog.Info("expired cameos", "count", len(ids))
 	}
 }

@@ -71,8 +71,58 @@ func (t *txStore) InsertCameo(ctx context.Context, c domain.Cameo) (string, erro
 	return id, err
 }
 
-func (t *txStore) ExpireDue(ctx context.Context, now time.Time) (int, error) {
+// expiredPredicate 是逾期的唯一判斷規則：ExpireDue 與 ExpireCameo 共用。$1 是 now。
+const expiredPredicate = `status IN ('AWAITING_UPLOAD', 'UPLOADED') AND upload_expires_at <= $1`
+
+func (t *txStore) ExpireDue(ctx context.Context, now time.Time) ([]string, error) {
+	rows, err := t.db.Query(ctx, `UPDATE cameos SET status = 'EXPIRED', points_state = 'RELEASED', updated_at = $1
+		WHERE user_id = $2 AND `+expiredPredicate+` RETURNING id`, now, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (t *txStore) CameoForUpdate(ctx context.Context, id string) (domain.Cameo, bool, error) {
+	c, err := scanCameo(t.db.QueryRow(ctx, cameoSelect+` WHERE c.user_id = $1 AND c.id = $2 FOR UPDATE OF c`, userID, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Cameo{}, false, nil
+	}
+	return c, err == nil, err
+}
+
+func (t *txStore) ExpireCameo(ctx context.Context, id string, now time.Time) (bool, error) {
 	tag, err := t.db.Exec(ctx, `UPDATE cameos SET status = 'EXPIRED', points_state = 'RELEASED', updated_at = $1
-		WHERE user_id = $2 AND status IN ('AWAITING_UPLOAD', 'UPLOADED') AND upload_expires_at <= $1`, now, userID)
-	return int(tag.RowsAffected()), err
+		WHERE user_id = $2 AND id = $3 AND `+expiredPredicate, now, userID, id)
+	return tag.RowsAffected() == 1, err
+}
+
+func (t *txStore) MarkUploaded(ctx context.Context, id string, now time.Time) error {
+	_, err := t.db.Exec(ctx, `UPDATE cameos SET status = 'UPLOADED', updated_at = $1 WHERE user_id = $2 AND id = $3`, now, userID, id)
+	return err
+}
+
+func (t *txStore) DebitAccount(ctx context.Context, amount int) error {
+	_, err := t.db.Exec(ctx, `UPDATE points_account SET balance = balance - $1 WHERE id = $2`, amount, userID)
+	return err
+}
+
+func (t *txStore) InsertLedger(ctx context.Context, e domain.LedgerEntry) error {
+	_, err := t.db.Exec(ctx, `INSERT INTO ledger_entries (type, amount, cameo_id, clip_title, created_at)
+		VALUES ($1, $2, $3, $4, $5)`, string(e.Type), e.Amount, e.CameoID, e.ClipTitle, e.CreatedAt)
+	return err
+}
+
+func (t *txStore) MarkQueued(ctx context.Context, id string, now time.Time) error {
+	_, err := t.db.Exec(ctx, `UPDATE cameos SET status = 'QUEUED', points_state = 'CHARGED', updated_at = $1 WHERE user_id = $2 AND id = $3`, now, userID, id)
+	return err
 }
