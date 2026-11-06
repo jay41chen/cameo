@@ -399,13 +399,13 @@ docker compose -p cameo44 exec -T postgres psql -U cameo -d cameo -c \
 - 實際等滿 35 分鐘上限；多筆訂單同時追蹤；網路中斷時的查詢失敗續查（只由單元測試涵蓋）。
 - 上傳途中進背景；畫面不在前景時送出成功的路徑；權限對話框未回應就離開（PoC 行為，由決定 2 取代）。
 - `VENDOR_FAILED`／生成失敗路徑未在模擬器實測（第 4 項測的是 `CONTENT_REJECTED` 回呼）。
-- 通知內容：`dumpsys` 只驗到標題，內文未驗；點按通知開啟 App 未實測。
+- 通知內容：`dumpsys` 只驗到標題，內文未驗；點按通知開啟 App 當時未實測（5.2b-3 已補最小冒煙）。
 - 通知欄展開畫面的截圖：`input swipe` 在模擬器上沒有可靠截到，通知內容以 `dumpsys notification --noredact`（`r*-notif-dump.txt`）為證。
 - 開啟 App 補發、防重複通知、完成通知點按後的深層連結（只開 launcher）。補發在 5.2 收尾實作。
 
 ### 排到 5.3 補驗
 
-以下項目排到 5.3：真正的 2 分鐘背景（回主畫面後確實等滿 2 分鐘才完成）、`VENDOR_FAILED`、從最近使用畫面滑掉 App、點按通知開啟 App。其餘未涵蓋項目照上面保留。
+以下項目排到 5.3：真正的 2 分鐘背景（回主畫面後確實等滿 2 分鐘才完成）、`VENDOR_FAILED`、從最近使用畫面滑掉 App。點按通知開啟 App 已在 5.2b-3 驗過最小情境。其餘未涵蓋項目照上面保留。
 
 ### 5.2 收尾：通知權限檢查、補發與恢復追蹤
 
@@ -420,7 +420,7 @@ docker compose -p cameo44 exec -T postgres psql -U cameo -d cameo -c \
 - 狀態寫入（`markCreated`、`recordError`、`markUploaded`、`markSubmitted`、清除／附上照片路徑）都是條件式 `UPDATE ... WHERE client_request_id = ?`，列已被認領刪除時不會重建。
 - 回到前景（`MainActivity.onStart`）：對所有有 `cameoId` 的草稿查訂單，`SUCCEEDED`／`FAILED` 認領後通知，`QUEUED`／`GENERATING` 啟動前景服務，其他狀態與查詢失敗不動。
 - 前景服務：`stopSelfResult(最後的 startId)`（回 false 不停）、`onTimeout`（API 35+）停止服務、`startForeground` 被拒不崩潰。
-- 後果：草稿刪除後訂單從未完成清單消失；「我的客串」尚未實作，到 5.2b 前使用者只能從通知文字與點數明細看到結果，點通知目前只開首頁，5.2b 會改。
+- 後果：草稿刪除後訂單從未完成清單消失；「我的客串」尚未實作，到 5.2b 前使用者只能從通知文字與點數明細看到結果，點通知開「我的客串」已在 5.2b-3 實作。
 
 自動測試：`:domain` 認領與恢復、權限判斷三條分支與旗標寫入時機、確認頁 ViewModel 未通過檢查不建單（含權限同意後頻道仍關不建單、可用只建一次）、`:data` 認領只有第一次回 true、`mark*` 的讀寫競爭用 fake DAO 測過（`get` 回傳列後立刻刪列、寫入前先刪列，兩種路徑都斷言不重建；`markSubmitted` 目前不呼叫 `get`，測試守的是不得改回先 `get` 再 `upsert`），這些競爭測試未在真 Room 執行；`AttachCameoPhotoUseCase` 在 `attachPhoto` 回 false 且列已被刪時回 `Gone`。指令 `cd android && ./gradlew :domain:test :data:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --rerun-tasks`，結果 BUILD SUCCESSFUL；從測試 XML 統計：`:domain` 71、`:data` 60、`:app` 98，共 229 筆，0 失敗、0 skipped。`:data` 沒有真 Room 測試環境，認領測的是 repository 搭配記憶體 DAO，`DELETE` 與各條件式 `UPDATE` 的實際回傳筆數／SQL 語意沒有在真 Room 驗證（`FakeDao` 照 SQL 語意模擬；`UPDATE` 的語法只通過 Room 編譯期檢查）。
 
@@ -478,7 +478,7 @@ cd backend && TEST_DATABASE_URL='postgres://cameo:cameo@127.0.0.1:15442/cameo?ss
 
 ### 未涵蓋
 
-- App「我的客串」頁、點通知開此頁（5.2b-2 以後）。
+- App「我的客串」頁（5.2b-2）、點通知開此頁（5.2b-3）。
 - `video_available`、`share` 目前固定 `false`／`{"active":false,"url":null}`（同單筆查詢）。
 - 並行寫入時的分頁一致性（只測了靜態資料）。
 - `user_id` 條件沒有回歸測試（`points_account` 有 `CHECK (id = 1)`，目前 schema 只能有一個使用者）。
@@ -605,4 +605,65 @@ cd backend && TEST_DATABASE_URL='postgres://cameo:cameo@127.0.0.1:15442/cameo?ss
 
 - 空列表、載入更多失敗畫面：只靠單元測試（狀態機層），沒有 Compose UI 測試，畫面接線未在模擬器重現。刷新失敗畫面已在修正輪 V2、V3 於模擬器驗過；翻頁（第 2 頁）只在「回前景捲動」情境 7 看到資料與回前景表現，載入更多失敗畫面仍未驗。
 - `INVALID_CURSOR` 在 App 端的畫面（只驗 data 層轉成 `Failure`）。
-- 點通知開此頁（未實作）；真機；背景與程序被殺後的行為（排 5.3）。
+- 真機；背景與程序被殺後的行為（排 5.3）。點通知開此頁見第 5.2b-3 輪。
+
+## 第 5.2b-3 輪：點完成通知開「我的客串」分頁
+
+### 行為
+- 通知的 `PendingIntent` 指向 `MainActivity`，帶 extra `EXTRA_OPEN_MY_CAMEOS`；`MainActivity` 設 `launchMode="singleTop"`。
+- `MainActivity` 用計數器（`mutableIntStateOf`，只增、不存 saved state）通知 `CameoRoot`；`CameoRoot` 在 `NavHost` 之後的 `LaunchedEffect` 彈回 `main`，`MainTabs` 內的 `LaunchedEffect` 再呼叫 `navigateToTab(ROUTE_MY_CAMEOS)`（與底部分頁共用）；路由分兩層，見下方「路由分層」。
+- 是否跳頁由 `shouldOpenMyCameos(hasExtra, launchedFromHistory, restored)` 決定：有 extra、非從最近使用清單、非 Activity 還原才跳。extra 處理後一律移除。
+- `MyCameosScreen(refreshRequest)`：計數大於 0 時再刷新一次（已在此分頁時點通知可能不觸發 `OnResume`）`[待確認]`。
+- 只開到分頁，不定位單筆。
+
+### 單元測試與建置
+- `:app:testDebugUnitTest --rerun-tasks`：127 個測試、0 失敗（含新增 `OpenFromNotificationTest` 4 個）；`:app:assembleDebug` 成功。
+- Mutation（逐一改 `shouldOpenMyCameos`、跑測試、還原）：固定回 false、拿掉 hasExtra、拿掉 launchedFromHistory、拿掉 restored，各被對應的 1 個測試抓到（各 127 跑 1 失敗）。
+
+### 模擬器最小冒煙（API 37，每情境 1 次，隔離後端 `VENDOR_DELAY_SEC=3`，證據 `~/cameo-iter5-evidence/r52b3-*`）
+| # | 情境 | 實際結果 |
+|---|---|---|
+| 1 | 按 Home 後點通知 | 開到「我的客串」，最上面是剛完成的「雨夜重逢／已完成」。`r52b3-s1-shade.*`、`r52b3-s1-after.*` |
+| 2 | Home 後 `am kill`，`pidof` 為空、通知仍在，再點 | 新程序啟動、開到「我的客串」、crash log 無 FATAL（`pidof` 為空與無 FATAL 為操作當下觀察，無留存檔）。`r52b3-s2-*` |
+| 3 | 在「點數」頁點通知 | 切到「我的客串」。`r52b3-s3-*` |
+| 4 | 已在「我的客串」，進行中等完成再點 | 畫面序列：「生成中」，持續約 9 秒以上（操作當下觀察，無留存檔；期間已超過 3 秒廠商延遲，列表未自動更新），點通知後同頁變「已完成」。無法區分是 `refreshRequest` 還是 `OnResume` 造成刷新。`r52b3-s4-*`；`s4-t1` 的檔名與時間序列相反（只有 `s4-t1.xml`，無 png） |
+| 5 | 跳頁後旋轉；切到「點數」再旋轉 | 兩次旋轉後都留在原頁（「我的客串」、「點數」），未被拉回。`r52b3-s5-*`；旋轉設定已還原 |
+| 6 | force-stop 後從圖示開 | 片段清單，不跳頁（force-stop 為操作當下觀察，無留存檔）。`r52b3-s6.*` |
+
+### 路由分層（證據 `~/cameo-iter5-evidence/r52b3route-*`）
+**問題重現（`r52b3fix-1-*`）：** 原本所有頁面在同一個導覽堆疊，點通知共用切分頁的程式，流程頁被存進分頁狀態。在進度頁點通知後按「片段清單」，回到進度頁、底部列消失、顯示過期的「排隊中」。
+
+**試過但作廢的修法：** 點通知時導覽 `saveState=false`。實測後按「片段清單」反而被導回「我的客串」，只是把被還原的頁面換掉，所以移除。
+
+**現在做法：** 分兩層導覽。外層 `rootNav`（`main`、相機、確認、進度）、內層 `tabNav`（三個分頁，放在 `CameoRoot`，從流程頁返回時分頁狀態才不會遺失）。點通知：`rootNav` 彈回 `main`，`MainTabs` 的 effect 比較 `openMyCameosRequest > handledRequest` 後才切到「我的客串」。流程頁用 `FlowScaffold` 保留系統列留白。
+
+**單元測試與建置：** `./gradlew :app:testDebugUnitTest :app:assembleDebug`：127 個測試、0 失敗（解析 XML），輸出 `r52b3route-build.log`、`r52b3route-postmut-build.log`。
+
+**模擬器情境（API 37，隔離後端 `cameo52b3route`，`DAILY_LIMIT=50`）：**
+| # | 情境 | 實際結果 | 證據 |
+|---|---|---|---|
+| 1 | 進度頁點通知 → 按「片段清單」→ 切各分頁 | 通過：開到「我的客串」顯示「已完成」；按「片段清單」到清單、底部列還在；再切「點數」「我的客串」「片段清單」都正確 | `s1-*` |
+| 2 | 「點數」頁點通知 | 通過：切到「我的客串」顯示最新狀態，切各分頁正確 | `s2-*` |
+| 3 | 已在「我的客串」，進行中、完成後點通知 | 通過：留在此頁並顯示「已完成」。回前景的 `OnResume` 也會刷新，無法單獨證明 `refreshRequest` 有效 | `s3-*` |
+| 4 | 只切分頁，捲動後切走再切回 | 「我的客串」通過（種入 25 筆，位置與內容照舊）；**「點數」頁失敗，見下方已知問題** | `s4-my-*`、`s4-pts-*` |
+| 5 | 片段 → 相機 → 確認 → 進度 → 返回 | 通過：系統返回鍵與「回片段清單」按鈕都回片段清單，不被拉到「我的客串」（第二輪用按鈕時重用了未完成列，非新建單） | `s5-*` |
+| 6 | 點過通知後再走一次第 5 項 | 通過：仍回片段清單 | `s6-*` |
+| 7 | 相機、確認、進度、三個分頁的畫面 | 通過：xml 文字座標都在狀態列下方、導覽列上方；已看截圖（相機、確認、進度、片段清單、我的客串）；「點數」頁只對照 xml，未看截圖 | `s7-*`、`s6-progress2`、`s6-confirm` |
+| 8 | 冷啟動：完成後通知還在，從最近使用清單滑掉再點通知 | 通過：`dumpsys activity activities` 顯示 task 與 `pidof` 都已不存在，`dumpsys notification` 通知仍在；點通知後不崩潰（FATAL 檔為空）、開到「我的客串」。前兩次滑動未成功，第三次成功，以 `s8-activities*.txt`、`s8-notif*.txt` 為準 | `s8-*` |
+| 9 | 確認頁旋轉；「點數」旋轉 | 通過：兩者都留在原頁；旋轉設定已還原（`accelerometer_rotation=1`、`user_rotation=0`） | `s9-*` |
+| 10 | force-stop 後冷啟動 | 通過：片段清單，不跳頁（用 `am force-stop`，不是從圖示滑掉） | `s10-*` |
+
+**Mutation（1 個）：** `MainTabs` effect 的 `> handledRequest` 改成 `> 0`、重建、點通知後再走一次流程頁並返回：被拉到「我的客串」（被抓到，`mut-*`）。還原後 `git diff` 與 mutation 前逐行相同（`r52b3route-premut.diff` 對 `postmut.diff`），重建後同情境回到片段清單（`post-*`）。
+
+### 已知問題：點數頁捲動位置不保留
+點數頁捲動後切到其他分頁再切回，位置不保留：原本最上面是 12:42 或 17:42 的明細，切回後最上面都是 20:42（`r52b3route-s4-pts-scrolled`、`s4-pts-back`、`s4-pts-small`、`s4-pts-small-back`）。原因未查；未對照上一個 commit，不確定是否這次改動造成。排 5.3，時間不夠就留作已知問題。
+
+### 未驗證
+- 流程頁被點通知結束後，從未完成列接續（未實測，排 5.3）。
+- 刪掉 `refreshRequest` 後，已在「我的客串」時點通知是否仍會刷新（`[待確認]`，排 5.3）。
+- 停在進度頁等完成，畫面是否會更新（修正前還原的畫面顯示過期「排隊中」，未直接驗證，排 5.3）。
+- 點數頁捲動位置不保留（見上方已知問題，排 5.3）。
+- 從最近使用清單重開舊 intent、有 saved state 加 `onNewIntent` 同時出現（只靠 `shouldOpenMyCameos` 單元測試與讀碼）。
+- 情境 2 用 `am kill` 驗到「程序死掉後通知仍在」，系統自行回收程序的情況未測；真機未測。
+- 多則通知時各自點按的對應（都只開分頁，不定位單筆）。
+- 操作紀錄：情境 1 之後有兩次建單的 UI 腳本在清單尚未載入時點擊落空，已重跑；不影響各情境結果。

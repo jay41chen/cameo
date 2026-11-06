@@ -27,6 +27,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -44,6 +45,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavController
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -64,25 +66,121 @@ internal const val EXPIRED_TITLE = "已過期"
 internal const val EXPIRED_MESSAGE = "上傳期限已過，點數沒有扣款，請重新客串。"
 
 @Composable
-fun CameoRoot() {
-    val nav = rememberNavController()
+fun CameoRoot(openMyCameosRequest: Int = 0) {
+    // 外層 rootNav：main（三個分頁）與流程頁；內層 tabNav：三個分頁。
+    // tabNav 放在這裡，從流程頁返回 main 時分頁狀態才不會遺失。
+    val rootNav = rememberNavController()
+    val tabNav = rememberNavController()
     val throttle = remember { ClickThrottle(NAV_CLICK_INTERVAL_MS, SystemClock::elapsedRealtime) }
-    val entry by nav.currentBackStackEntryAsState()
+    var handledRequest by remember { mutableIntStateOf(0) }
+    NavHost(rootNav, startDestination = ROUTE_MAIN) {
+        composable(ROUTE_MAIN) {
+            MainTabs(
+                tabNav = tabNav,
+                throttle = throttle,
+                openMyCameosRequest = openMyCameosRequest,
+                handledRequest = handledRequest,
+                onRequestHandled = { handledRequest = it },
+                onStartCamera = { rootNav.navigateSingleTop(cameraRoute(it)) },
+                onContinue = { rootNav.navigateSingleTop(continueRoute(it)) },
+            )
+        }
+        composable(
+            ROUTE_CAMERA,
+            arguments = listOf(
+                navArgument("clipId") { type = NavType.StringType },
+                navArgument("request") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { entry ->
+            val clipId = checkNotNull(entry.arguments?.getString("clipId"))
+            val request = entry.arguments?.getString("request")
+            // 離開相機頁，確認頁／進度頁返回會回清單
+            FlowScaffold {
+                CameraScreen(
+                    onUsePhoto = {
+                        val route = if (request != null) cameoRoute(request, it) else confirmRoute(clipId, it)
+                        rootNav.navigateSingleTop(route, ROUTE_CAMERA)
+                    },
+                )
+            }
+        }
+        composable(
+            ROUTE_CONFIRM,
+            arguments = listOf(
+                navArgument("clipId") { type = NavType.StringType },
+                navArgument("photo") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { entry ->
+            val clipId = checkNotNull(entry.arguments?.getString("clipId"))
+            FlowScaffold {
+                ConfirmScreen(
+                    onBack = { rootNav.navigateUp() },
+                    onRetake = { rootNav.navigateSingleTop(cameraRoute(clipId), ROUTE_CONFIRM) },
+                    onCreated = { rootNav.navigateSingleTop(cameoRoute(it), ROUTE_CONFIRM) },
+                )
+            }
+        }
+        composable(
+            ROUTE_CAMEO,
+            arguments = listOf(
+                navArgument("clientRequestId") { type = NavType.StringType },
+                navArgument("photo") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) {
+            FlowScaffold {
+                CameoProgressScreen(
+                    onBack = { rootNav.navigateUp() },
+                    onRetake = { clipId, key -> rootNav.navigateSingleTop(cameraRoute(clipId, key), ROUTE_CAMEO) },
+                    onRestart = { clipId -> rootNav.navigateSingleTop(cameraRoute(clipId), ROUTE_CAMEO) },
+                    onNotCreated = { clipId -> rootNav.navigateSingleTop(confirmRoute(clipId), ROUTE_CAMEO) },
+                )
+            }
+        }
+    }
+    // 必須在 NavHost 之後 [待確認：冷啟動時 graph 要先設定好才能導覽，放前面是否出錯未驗證]
+    // 點通知：流程頁一律結束，回到 main（分頁由 MainTabs 切到「我的客串」）
+    LaunchedEffect(openMyCameosRequest) {
+        if (openMyCameosRequest > 0) rootNav.popBackStack(ROUTE_MAIN, inclusive = false)
+    }
+}
+
+/** 流程頁（相機、確認、進度）的外框：保留系統列留白。 */
+@Composable
+private fun FlowScaffold(content: @Composable () -> Unit) {
+    Scaffold { padding -> Box(Modifier.padding(padding)) { content() } }
+}
+
+@Composable
+private fun MainTabs(
+    tabNav: NavHostController,
+    throttle: ClickThrottle,
+    openMyCameosRequest: Int,
+    handledRequest: Int,
+    onRequestHandled: (Int) -> Unit,
+    onStartCamera: (String) -> Unit,
+    onContinue: (PendingCameo) -> Unit,
+) {
+    val entry by tabNav.currentBackStackEntryAsState()
     val current = entry?.destination?.route
-    val showBottomBar = current == ROUTE_CLIPS || current == ROUTE_POINTS || current == ROUTE_MY_CAMEOS
     Scaffold(
         bottomBar = {
-            if (showBottomBar) NavigationBar {
+            NavigationBar {
                 listOf(ROUTE_CLIPS to "片段清單", ROUTE_POINTS to "點數", ROUTE_MY_CAMEOS to "我的客串").forEach { (route, label) ->
                     NavigationBarItem(
                         selected = current == route,
-                        onClick = {
-                            nav.navigate(route) {
-                                popUpTo(ROUTE_CLIPS) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
+                        onClick = { tabNav.navigateToTab(route) },
                         icon = {},
                         label = { Text(label) },
                         alwaysShowLabel = true,
@@ -91,74 +189,29 @@ fun CameoRoot() {
             }
         },
     ) { padding ->
-        NavHost(nav, startDestination = ROUTE_CLIPS, modifier = Modifier.padding(padding)) {
+        NavHost(tabNav, startDestination = ROUTE_CLIPS, modifier = Modifier.padding(padding)) {
             composable(ROUTE_CLIPS) {
-                ClipsScreen(
-                    throttle = throttle,
-                    onStartCamera = { nav.navigateSingleTop(cameraRoute(it)) },
-                    onContinue = { nav.navigateSingleTop(continueRoute(it)) },
-                )
+                ClipsScreen(throttle = throttle, onStartCamera = onStartCamera, onContinue = onContinue)
             }
             composable(ROUTE_POINTS) { PointsScreen() }
-            composable(ROUTE_MY_CAMEOS) { MyCameosScreen() }
-            composable(
-                ROUTE_CAMERA,
-                arguments = listOf(
-                    navArgument("clipId") { type = NavType.StringType },
-                    navArgument("request") {
-                        type = NavType.StringType
-                        nullable = true
-                        defaultValue = null
-                    },
-                ),
-            ) { entry ->
-                val clipId = checkNotNull(entry.arguments?.getString("clipId"))
-                val request = entry.arguments?.getString("request")
-                // 離開相機頁，確認頁／進度頁返回會回清單
-                CameraScreen(
-                    onUsePhoto = {
-                        val route = if (request != null) cameoRoute(request, it) else confirmRoute(clipId, it)
-                        nav.navigateSingleTop(route, ROUTE_CAMERA)
-                    },
-                )
-            }
-            composable(
-                ROUTE_CONFIRM,
-                arguments = listOf(
-                    navArgument("clipId") { type = NavType.StringType },
-                    navArgument("photo") {
-                        type = NavType.StringType
-                        nullable = true
-                        defaultValue = null
-                    },
-                ),
-            ) { entry ->
-                val clipId = checkNotNull(entry.arguments?.getString("clipId"))
-                ConfirmScreen(
-                    onBack = { nav.navigateUp() },
-                    onRetake = { nav.navigateSingleTop(cameraRoute(clipId), ROUTE_CONFIRM) },
-                    onCreated = { nav.navigateSingleTop(cameoRoute(it), ROUTE_CONFIRM) },
-                )
-            }
-            composable(
-                ROUTE_CAMEO,
-                arguments = listOf(
-                    navArgument("clientRequestId") { type = NavType.StringType },
-                    navArgument("photo") {
-                        type = NavType.StringType
-                        nullable = true
-                        defaultValue = null
-                    },
-                ),
-            ) {
-                CameoProgressScreen(
-                    onBack = { nav.navigateUp() },
-                    onRetake = { clipId, key -> nav.navigateSingleTop(cameraRoute(clipId, key), ROUTE_CAMEO) },
-                    onRestart = { clipId -> nav.navigateSingleTop(cameraRoute(clipId), ROUTE_CAMEO) },
-                    onNotCreated = { clipId -> nav.navigateSingleTop(confirmRoute(clipId), ROUTE_CAMEO) },
-                )
+            composable(ROUTE_MY_CAMEOS) { MyCameosScreen(openMyCameosRequest) }
+        }
+        // 每次從流程頁返回 main 都會重新進入這個 effect，必須比較已處理的請求，否則會被拉到「我的客串」
+        LaunchedEffect(openMyCameosRequest) {
+            if (openMyCameosRequest > handledRequest) {
+                onRequestHandled(openMyCameosRequest)
+                tabNav.navigateToTab(ROUTE_MY_CAMEOS)
             }
         }
+    }
+}
+
+/** 底部列與點通知共用的分頁切換。 */
+private fun NavController.navigateToTab(route: String) {
+    navigate(route) {
+        popUpTo(ROUTE_CLIPS) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
     }
 }
 
@@ -424,7 +477,7 @@ private fun LazyListScope.pagedFooter(state: PagedUiState<*>, loadMore: () -> Un
 }
 
 @Composable
-fun MyCameosScreen(viewModel: MyCameosViewModel = hiltViewModel()) {
+fun MyCameosScreen(refreshRequest: Int = 0, viewModel: MyCameosViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsState()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -442,6 +495,8 @@ fun MyCameosScreen(viewModel: MyCameosViewModel = hiltViewModel()) {
         if (shouldScroll) listState.animateScrollToItem(0)
     }
     OnResume(viewModel::refresh)
+    // [待確認] 已在此分頁時點通知可能不觸發 OnResume，用請求計數補一次刷新（未驗證）
+    LaunchedEffect(refreshRequest) { if (refreshRequest > 0) viewModel.refresh() }
     when (state.phase) {
         PagePhase.Loading -> LoadingBox()
         PagePhase.Error -> ErrorBox(state.errorMessage, viewModel::loadFirstPage, Modifier.fillMaxSize())

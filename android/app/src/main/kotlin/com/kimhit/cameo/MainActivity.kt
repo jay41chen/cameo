@@ -1,16 +1,22 @@
 package com.kimhit.cameo
 
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import com.kimhit.cameo.domain.usecase.ResumeTrackingUseCase
 import com.kimhit.cameo.tracking.CameoTrackService
 import com.kimhit.cameo.tracking.CompletionNotifier
+import com.kimhit.cameo.tracking.EXTRA_OPEN_MY_CAMEOS
+import com.kimhit.cameo.tracking.shouldOpenMyCameos
 import com.kimhit.cameo.tracking.TRACK_TAG
 import com.kimhit.cameo.ui.CameoRoot
 import dagger.hilt.android.AndroidEntryPoint
@@ -25,13 +31,33 @@ class MainActivity : ComponentActivity() {
     private val notifier by lazy { CompletionNotifier(this) }
     private var resumeJob: Job? = null
 
+    /** 點完成通知時 +1；只增不減、不存 saved state，Activity 重建後歸零（旋轉不會再跳頁）。 */
+    private var openMyCameosRequest by mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleOpenIntent(intent, restored = savedInstanceState != null)
         setContent {
             MaterialTheme {
-                Surface { CameoRoot() }
+                Surface { CameoRoot(openMyCameosRequest) }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleOpenIntent(intent, restored = false)
+    }
+
+    private fun handleOpenIntent(intent: Intent, restored: Boolean) {
+        val open = shouldOpenMyCameos(
+            hasExtra = intent.hasExtra(EXTRA_OPEN_MY_CAMEOS),
+            launchedFromHistory = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0,
+            restored = restored,
+        )
+        if (open) openMyCameosRequest++
+        // 不論結果都清掉，同一個 intent 不會被重複處理
+        intent.removeExtra(EXTRA_OPEN_MY_CAMEOS)
     }
 
     /** 回到前景：對所有未完成草稿查一次訂單，補發完成通知、重新啟動追蹤服務。 */

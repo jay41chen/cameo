@@ -5,9 +5,11 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.kimhit.cameo.MainActivity
 import com.kimhit.cameo.domain.model.CameoOrder
 
 internal const val ONGOING_CHANNEL = "cameo_tracking"
@@ -35,7 +37,9 @@ internal class CompletionNotifier(private val context: Context) {
             return
         }
         ensureChannels()
-        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        val launch = Intent(context, MainActivity::class.java)
+            .putExtra(EXTRA_OPEN_MY_CAMEOS, true)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val tap = PendingIntent.getActivity(
             context, 0, launch, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
