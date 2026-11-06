@@ -108,8 +108,11 @@ stateDiagram-v2
 ## 7. 背景完成通知
 
 - 承諾：App 在背景且未被強制停止時收到通知。
-- App 被終止：開啟時補發，且只發一次。
-- 具體做法待第 5 輪驗證後定案。
+- App 被終止：開啟時補發，且只發一次（尚未實作，排在 5.2 收尾）。
+- 做法已定案：前景服務（`dataSync`）。App 在送出成功後啟動前景服務，每 10 秒查訂單，完成時發本機通知（取捨見 `ARCHITECTURE.md` 第 8 節）。
+- 通知權限（5.2 收尾實作，PoC 尚未有）：按「確認支付」時、`POST /v1/cameos` 之前，用 `areNotificationsEnabled()` 檢查。通知可用就照常建單；不可用時，系統還能顯示對話框就請求，同意才建單，拒絕就停在確認頁不建單；系統不再顯示對話框時，顯示 App 自己的提示「需要開啟通知才能客串」（「前往設定」與「取消」），回來再按一次確認。App 開啟時不主動請求；進度頁不請求。
+- 已建立的訂單（未完成清單的繼續與重試）不擋；訂單進行中才關通知也不擋，這時收不到通知，開啟 App 時補發（補發尚未實作，排在 5.2 收尾）。
+- 代價：拒絕通知的人完全不能用客串功能。原因：讓進度頁「完成後會通知你」與本節承諾成立（使用者決定）。
 - 後端靠廠商 webhook 得知結果；正式推播服務只寫文件，不實作。
 
 ## 8. 異常
@@ -134,7 +137,7 @@ registry 放 adapter 層，提供 debug API。異常用 JSON 情境檔（`backen
 ## 9. 技術基礎
 
 - 後端：Go、Docker、Postgres、`vendor-sim`（模擬廠商）。
-- Android：Kotlin、Jetpack Compose、Hilt、Room、KSP、WorkManager、OkHttp／Retrofit、CameraX（`1.6.2`，`camera-core`、`camera-camera2`、`camera-lifecycle`、`camera-view`）、Media3。
+- Android：Kotlin、Jetpack Compose、Hilt、Room、KSP、OkHttp／Retrofit、CameraX（`1.6.2`，`camera-core`、`camera-camera2`、`camera-lifecycle`、`camera-view`）、Media3。
 - App 與後端都走 Clean Architecture。
 - 廠商 webhook 以 HMAC 驗簽；所有會重送的操作做冪等。
 
@@ -252,5 +255,5 @@ type FileStore interface {
 ## 14. 主要待確認項目
 
 - 後端使用 Go 的理由：專案負責人自述的理由，內容 `[待確認]`。
-- 背景完成通知的具體做法：第 5 輪驗證後定案（見第 7 節）。
+- 背景完成通知：已定案為前景服務（見第 7 節）；35 分鐘追蹤上限的理由 `[待確認]`。
 - 分享連結（token）的細節：見 README，標 `[待確認]`。

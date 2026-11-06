@@ -328,3 +328,81 @@ docker compose -p cameo44 exec -T postgres psql -U cameo -d cameo -c \
 - `CameoProgressViewModel` 轉成 `ProgressUiState.Done`；進度畫面顯示後端 `display.title`／`message`（沒有才顯示「處理中」）加「回片段清單」。所以 App 只會顯示進入畫面當下那一次查到的文字：停在「排隊中」或「生成中」，不會自己更新到「已完成」或「生成失敗」。
 - `GetUnfinishedCameosUseCase` 會對每個未刪的草稿查訂單；清單列顯示後端 `display`。`canContinueOrder` 只在 `AWAITING_UPLOAD`、`UPLOADED` 顯示「繼續」，其餘狀態沒有按鈕；列不會因為 `SUCCEEDED` 或 `FAILED` 自動移除（Room 列要等「通知發出後刪除」，通知尚未實作），只有「移除」入口僅限逾期列與 `cameoId == null` 的列。
 - 沒有針對 `FAILED`／`SUCCEEDED` 的獨立畫面、通知、影片入口；`failure_reason` 沒有被 App 讀取。
+
+## 第 5.2 輪：Android 前景服務（背景完成通知 PoC）
+
+證據在 repo 外的 `~/cameo-iter5-evidence/`，檔名以 `r<編號>-` 開頭（`logcat`、`dumpsys notification`、`dumpsys activity services`、`dumpsys netpolicy`、UI 截圖）。`invalid-*` 資料夾是操作失誤、不計入結果的嘗試，原樣保留。
+
+**哪些有存檔、哪些沒有（如實）：** 下列內容是當場查詢，沒有存檔：訂單 `updated_at`（延遲數字的減數）、第 4 項回呼的簽章內容與 `reason`、訂單 `FAILED/REFUNDED` 狀態、`REFUND` 明細、`printenv VENDOR_DELAY_SEC` 的輸出、把 `balance` 設為 100 的 SQL、`dumpsys activity recents` 的輸出。第 5 項「程序存活」、第 7 項「`force-stop` 後服務與程序消失」沒有事後 dump，只有間接證據（日誌與通知輪詢）。模擬器與後端的時鐘偏差未量測，延遲數字（模擬器 `logcat` 時間減後端 `updated_at`）含這個未知誤差。`r2-logcat`、`r3-logcat` 含後續輪次的內容，統計要依訂單 id 過濾。
+
+**結論範圍：** 長時間背景樣本只有第 3 項一次（n=1）；第 2 項不能視為 2 分鐘背景驗證。
+
+### 範圍
+
+做了什麼：
+
+- `:domain`：`decideTracking(查詢結果, 已追蹤毫秒)` 回「繼續查」「發完成通知並結束」「結束且不通知」。`SUCCEEDED`、`FAILED` 通知並結束；`QUEUED`、`GENERATING`、查詢失敗繼續；其他狀態（`EXPIRED`、`AWAITING_UPLOAD`、`UPLOADED`、`UNKNOWN`）結束且不通知。上限 `TRACK_LIMIT_MS` = 35 分鐘（後端 `GENERATION_TTL` 預設 30 分鐘加 5 分鐘）。單元測試含上限邊界（`TrackCameoTest`）。
+- `:app`：`CameoTrackService`（`@AndroidEntryPoint`、`foregroundServiceType="dataSync"`），每 10 秒對所有追蹤中的訂單呼叫 `CameoRepository.getCameo`（主 client）；以記憶體表追蹤，已在跑時新 id 只加入表、不開第二個輪詢；全部結束才 `stopForeground` 與 `stopSelf`；`START_NOT_STICKY`。常駐通知（低重要度頻道，「生成中，完成後會通知你」）；完成通知（高重要度頻道，內容用後端 `display.title`／`message`，通知 id 由 `cameoId` 衍生，點按開啟 App 的 launcher intent）。
+- 啟動時機（PoC 目前實作）：進度頁進入 `Done` 且訂單為 `QUEUED`／`GENERATING` 時，由 `TrackWhileGenerating`（`CameoProgressScreen` 內）在畫面至少 STARTED 時啟動。API 33+ 第一次先請求 `POST_NOTIFICATIONS`，不論同意與否都啟動服務；請求過一次後以 SharedPreferences 旗標記錄，不再詢問。這段權限流程將由 5.2 收尾實作取代（決定：按「確認支付」時檢查通知，見 `spec.md` 第 7 節）；收尾尚未實作，以上是現況。
+- Manifest：`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_DATA_SYNC`、`POST_NOTIFICATIONS`。
+
+不做：開啟 App 補發通知、防重複通知、訂單結束後刪草稿或清未完成清單、成功／失敗畫面、進度頁自動更新、WebSocket、影片播放、上傳途中進背景的測試、持久化追蹤（程序被殺即不再追蹤）。
+
+### 代價與限制
+
+- `APP_BACKGROUND` 對照：`r2-bg-evidence-t40.txt` 為 `procState=LAST`、`effective=APP_BACKGROUND`（權限對話框沒點掉的那一輪，服務未啟動）。無服務的有效樣本 1 次（作廢資料夾另有 1 份同值，不計入）；有服務的 3 份 dump（第 2、3 項：`r2-bg-evidence-t15`、`r3-bg-evidence-t5min`、`r3-bg-evidence-t9min`）皆為 `procState=FGS`、`effective=NONE`。
+- 服務執行期間有常駐通知。
+- 每 10 秒一次 `GET /v1/cameos/{id}`：耗電與流量；單筆訂單最久追蹤 35 分鐘，約 210 次請求。
+- `am force-stop` 後服務與追蹤一併消失，不會收到通知（第 7 項實測：無通知）。
+- 追蹤上限 35 分鐘；超過不再通知（單元測試涵蓋，沒有實際等滿 35 分鐘）。
+- 只存在記憶體：程序被系統回收或被殺就不再追蹤，沒有補發。
+- 通知權限被拒絕時（PoC 當下的缺口）：服務照跑、訂單照完成，但完成通知被略過（日誌 `notifications disabled, skip`），使用者收不到任何提示，連常駐通知也沒有；進度頁仍寫「完成後會通知你」；因為旗標已寫入，不再詢問，只能到系統設定開啟。這個缺口由 5.2 收尾實作的決定 2（沒開通知就不能建新訂單）處理，尚未實作。
+- 服務只在「畫面在前景時送出成功」才啟動；畫面不在前景時不啟動（避免背景啟動前景服務被系統拒絕），這條路徑沒有實測。
+- 所有實測只在 API 37 模擬器（AVD `Pixel_10_Pro`）進行，不代表真機；各廠牌的省電機制未驗。
+
+### 環境與做法
+
+- 後端：`API_PORT=8080 POSTGRES_HOST_PORT=15441 DAILY_LIMIT=20 VENDOR_DELAY_SEC=<值> docker compose -p cameo52 up -d --build`；換延遲時只重建 `vendor-sim`（`docker compose -p cameo52 up -d --no-deps vendor-sim`），每次以 `printenv VENDOR_DELAY_SEC` 確認。結束 `docker compose -p cameo52 down -v`。
+- 模擬器：`caffeinate` 包著 `emulator -avd Pixel_10_Pro -no-snapshot-save -no-boot-anim -no-audio -camera-front emulated -camera-back virtualscene`；每輪前 `pm clear`、`pm grant CAMERA`。第 1、2、5 項用系統對話框回應通知權限；第 3、4、6、7 項用 `pm grant POST_NOTIFICATIONS` 預先同意（沒有走對話框）。
+- 每一輪實際用 App 操作「片段 → 拍照 → 使用這張 → 確認支付」，進度頁出現後按 Home，之後不再打開 App。通知到達時間以 `dumpsys notification --noredact` 每約 2 秒輪詢（`r*-notif-first-seen.txt`，解析度約 2 秒）與 `logcat` 標籤 `CameoTrack` 的 `notified` 時間（較準）為準。
+- 通知實際到達時間以 `logcat` 的 `notified` 為準；「延遲」＝ `notified` 時間減訂單 `updated_at`（進入 `SUCCEEDED`／`FAILED` 的時間）。
+
+### 實測矩陣與實際結果
+
+| # | 情境 | 結果 | 時間（本機 CST） | 證據 |
+|---|---|---|---|---|
+| 0 | `vendor-sim` 由 compose 啟動並實際回呼 | 通過：訂單到 `SUCCEEDED`（用第 1 項的訂單） | 見第 1 項 | `r1-*` |
+| 1 | 延遲 20 秒，回主畫面 | 通過：通知「已完成」（`dumpsys` 只驗到標題，內文未驗）；延遲 7.1 秒（後端完成 18:28:58.5，通知 18:29:05.6）。回 Home（18:28:57）與後端完成只差約 1.5 秒，所以回 Home 後只經過 1 次輪詢，說服力有限 | 回 Home 18:28:57 | `r1-home.txt`、`r1-logcat.txt`、`r1-notif-dump.txt`、`r1-ui-*.png` |
+| 2 | 延遲 2 分鐘，回主畫面 | 通過：回 Home 18:36:30、後端完成 18:36:52.5、通知 18:36:56.2，延遲 3.7 秒；回主畫面到後端完成僅約 22 秒，不能視為 2 分鐘背景驗證；中間 `procState=FGS`（`r2-bg-evidence-t15.txt`）。注意：此輪通知權限對話框第一次沒點掉（見下），Allow 是在較晚時手動點的，所以服務是點 Allow 後才啟動、回 Home 在其後 | 回 Home 18:36:30 | `r2-*` |
+| 3 | 延遲 10 分鐘，回主畫面（實際等滿） | 通過：回 Home 18:39:51、後端完成 18:49:46.5、通知 18:49:51.7，延遲 5.2 秒；`dumpsys netpolicy` 5 分與 9 分時 `procState=FGS`、`effective=NONE`（即無限制）；該訂單共 61 次輪詢（`r3-logcat` 含後續輪次內容，依訂單 id 過濾後為 61；檔內有 65 筆 poll，含其他訂單，`f3354ed2` 為 61 筆）。長時間背景樣本只有這一次（n=1） | 回 Home 18:39:51 | `r3-*`（含 `r3-bg-evidence-t5min.txt`、`t9min.txt`） |
+| 4 | `VENDOR_DELAY_SEC=600`，簽 `FAILED` 回呼（`CONTENT_REJECTED`） | 通過：通知標題是後端的「無法生成」（`CONTENT_REJECTED` 的後端文字；App 直接用 `display.title`），預期即為此文字。回呼 200；`/v1/points` 由 30 回到 40；訂單 `FAILED/REFUNDED`；明細有 `REFUND` 10。回呼送出 18:52:13.5，通知 18:52:16.5，延遲 2.9 秒（此項基準是回呼送出時間，不是 `updated_at`，與本節其他項的定義不同） | 回 Home 18:51:52 | `r4-*` |
+| 5 | 拒絕通知權限（對話框「Don’t allow」），延遲 20 秒 | 不崩潰：記錄 `permission granted=false`，服務照啟動、輪詢、訂單 `SUCCEEDED` 後 `all finished` 並結束，程序存活；沒有任何通知（連常駐通知也沒有；`dumpsys notification` 查無該 App 通知）；日誌 `notifications disabled, skip` | 18:56 | `r5-*` |
+| 6 | 從最近使用畫面滑掉 App，延遲 60 秒 | **未能驗證**：共 5 輪（4 個作廢資料夾加根目錄 `r6-*` 最後 1 輪），只有 3 輪有滑動紀錄（`r6-swiped.txt` 只在 `invalid-r6-recents-not-opened`、`invalid-r6-swipe-not-dismissed` 與根目錄 `r6-*`）。依當時紀錄任務仍在最近使用清單，但該 dump 未存檔；最後一輪的 `r6-ui-recents-before-swipe.png` 實際是桌面、不是最近使用畫面，所以「任務仍在最近使用」沒有截圖佐證。最後一輪服務照跑、通知於後端完成後 10.2 秒發出（延遲較大，在 10 秒輪詢加請求時間內）。這不能代表「滑掉 App」的行為 | 19:01–19:14（最後一輪為 19:13–19:14） | `r6-*`、`invalid-r6-*` |
+| 7 | `am force-stop`，延遲 60 秒 | 如預期：`force-stop`（19:17:14.9，`r7-forcestop.txt`；19:17:11 是回主畫面）後約 117 秒、後端完成（19:18:02.5）後約 69 秒內，`dumpsys notification` 都沒有該 App 通知，輪詢到 19:19:11（`r7-notif-poll.txt` 最後一筆 `none fgs=0`）；「服務與程序消失」沒有事後 dump，只有這個間接證據；訂單照常 `SUCCEEDED`；重開 App 前不補發（補發在收尾實作） | 19:17 | `r7-*` |
+
+### 操作失誤與重跑（如實）
+
+- 第 1 項前兩次嘗試無效：權限對話框的「Allow」點錯座標（`uiautomator dump` 回報的對話框座標與實際螢幕不同，實際約 (640, 1597)），回 Home 時對話框還在，服務沒啟動，訂單已完成；檔案放在 `invalid-first-attempt`、`invalid-second-attempt`。之後都用截圖座標。
+- 第 2、5 項各有一次相同的點錯（`invalid-r2-dialog-miss`、`invalid-r5-dialog-miss`）；第 2 項最後那次是手動補點 Allow，因此該輪「進度頁出現後立即按 Home」的順序不完整。
+- 這些失誤都是測試腳本問題，不是服務失敗；但也顯示：使用者在權限對話框還沒回應時按 Home，服務不會啟動，也就不會有通知（本輪未針對這個路徑另測，只在失誤中觀察到）。PoC 當下的後果：`ASKED` 旗標在 launch 前寫入，若結果沒回來，之後不會再詢問（推測，未實測）。這條路徑由 5.2 收尾實作的決定 2 取代（檢查點移到按「確認支付」、App 不在進度頁請求權限）。
+- 第 6 項共 5 輪：4 個作廢資料夾（`invalid-r6-late`、`invalid-r6-recents-not-opened`、`invalid-r6-recents-not-opened-2`、`invalid-r6-swipe-not-dismissed`）加根目錄 `r6-*` 最後 1 輪。作廢原因：時間來不及、最近使用畫面沒開（兩次）、或手勢沒把任務滑掉。只有 3 輪有滑動紀錄；recents 的 dump 未保存；最後一輪的 `r6-ui-recents-before-swipe.png` 是桌面。第 6 項仍是「未能驗證」。
+- 第 6 項重試途中測試點數用完（進度頁顯示「點數不足」，該次不計）；對隔離資料庫執行 `update points_account set balance=100` 後繼續，第 6、7 項之後的訂單用重設後的點數；第 4 項的點數數字（40→30→40）是重設之前量的。
+
+### 自動測試
+
+- `./gradlew :domain:test :app:assembleDebug :app:testDebugUnitTest --rerun-tasks`：BUILD SUCCESSFUL（77 個任務、77 個執行）；`:domain` 60 筆、`:app` 82 筆，0 失敗、0 略過（`TrackCameoTest` 6 筆含上限邊界）。服務與 `TrackWhileGenerating` 沒有單元測試，只靠上面的模擬器實測。
+
+### 未涵蓋
+
+- 真機、其他 API 版本、省電模式／Doze／廠牌電源管理。
+- 從最近使用畫面真的滑掉 App（第 6 項未能驗）。
+- 實際等滿 35 分鐘上限；多筆訂單同時追蹤；網路中斷時的查詢失敗續查（只由單元測試涵蓋）。
+- 上傳途中進背景；畫面不在前景時送出成功的路徑；權限對話框未回應就離開（PoC 行為，由決定 2 取代）。
+- `VENDOR_FAILED`／生成失敗路徑未在模擬器實測（第 4 項測的是 `CONTENT_REJECTED` 回呼）。
+- 通知內容：`dumpsys` 只驗到標題，內文未驗；點按通知開啟 App 未實測。
+- 通知欄展開畫面的截圖：`input swipe` 在模擬器上沒有可靠截到，通知內容以 `dumpsys notification --noredact`（`r*-notif-dump.txt`）為證。
+- 開啟 App 補發、防重複通知、完成通知點按後的深層連結（只開 launcher）。補發在 5.2 收尾實作。
+
+### 排到 5.3 補驗
+
+以下項目排到 5.3：真正的 2 分鐘背景（回主畫面後確實等滿 2 分鐘才完成）、`VENDOR_FAILED`、從最近使用畫面滑掉 App、點按通知開啟 App。其餘未涵蓋項目照上面保留。

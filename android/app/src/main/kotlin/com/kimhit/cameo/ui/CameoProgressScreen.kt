@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.dropUnlessResumed
 import com.kimhit.cameo.domain.usecase.CameoStep
+import com.kimhit.cameo.tracking.TrackWhileGenerating
 
 internal const val UPLOADING_TEXT = "上傳中…"
 internal const val SUBMITTING_TEXT = "送出中…"
@@ -35,11 +36,14 @@ fun CameoProgressScreen(
                 Text(SUBMITTING_TEXT, style = MaterialTheme.typography.titleLarge)
             }
         }
-        is ProgressUiState.Done -> Body {
-            val cameo = s.order.cameo
-            Text(cameo.displayTitle ?: "處理中", style = MaterialTheme.typography.titleLarge)
-            cameo.displayMessage?.takeIf { it.isNotEmpty() }?.let { Text(it) }
-            Button(onClick = onBack) { Text("回片段清單") }
+        is ProgressUiState.Done -> {
+            TrackWhileGenerating(s.order)
+            Body {
+                val cameo = s.order.cameo
+                Text(cameo.displayTitle ?: "處理中", style = MaterialTheme.typography.titleLarge)
+                cameo.displayMessage?.takeIf { it.isNotEmpty() }?.let { Text(it) }
+                Button(onClick = onBack) { Text("回片段清單") }
+            }
         }
         is ProgressUiState.Expired -> Body {
             Text(s.title?.takeIf { it.isNotBlank() } ?: EXPIRED_TITLE, style = MaterialTheme.typography.titleLarge)
