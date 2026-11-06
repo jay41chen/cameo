@@ -34,3 +34,32 @@ func TestHandleGETPathParam(t *testing.T) {
 		t.Errorf("POST: %d Allow=%q, want 405 with Allow", rec.Code, rec.Header().Get("Allow"))
 	}
 }
+
+// 同一路徑可同時註冊 GET 與 POST；其他方法回 405，Allow 列出全部（GET 帶 HEAD）。
+func TestHandleMethodsCoexist(t *testing.T) {
+	mux := http.NewServeMux()
+	ok := func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"m": r.Method})
+	}
+	handleMethods(mux, "/p", map[string]http.HandlerFunc{http.MethodGet: ok, http.MethodPost: ok})
+	handleMethods(mux, "/q", map[string]http.HandlerFunc{http.MethodPost: ok})
+	do := func(method, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, nil)
+		req.Header.Set("Authorization", bearerToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := do("GET", "/p"); rec.Code != 200 {
+		t.Errorf("GET /p = %d", rec.Code)
+	}
+	if rec := do("POST", "/p"); rec.Code != 200 {
+		t.Errorf("POST /p = %d", rec.Code)
+	}
+	if rec := do("DELETE", "/p"); rec.Code != 405 || rec.Header().Get("Allow") != "GET, HEAD, POST" {
+		t.Errorf("DELETE /p = %d Allow=%q", rec.Code, rec.Header().Get("Allow"))
+	}
+	if rec := do("GET", "/q"); rec.Code != 405 || rec.Header().Get("Allow") != "POST" {
+		t.Errorf("GET /q = %d Allow=%q", rec.Code, rec.Header().Get("Allow"))
+	}
+}

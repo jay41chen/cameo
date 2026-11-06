@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"testing"
+	"time"
 
 	"cameo/backend/internal/domain"
 	"cameo/backend/internal/usecase"
@@ -14,6 +15,13 @@ type emptyQueries struct{}
 
 func (emptyQueries) ListClips(context.Context) ([]domain.Clip, error) { return nil, nil }
 func (emptyQueries) Balance(context.Context) (int, error)             { return 0, nil }
+func (emptyQueries) HeldPoints(context.Context) (int, error)          { return 0, nil }
+func (emptyQueries) QuotaUsed(context.Context, time.Time, time.Time) (int, error) {
+	return 0, nil
+}
+func (emptyQueries) CameoByID(context.Context, string) (domain.Cameo, error) {
+	return domain.Cameo{}, domain.ErrCameoNotFound
+}
 func (emptyQueries) ListLedger(context.Context, *domain.LedgerCursor, int) ([]domain.LedgerEntry, error) {
 	return nil, nil
 }
@@ -23,7 +31,7 @@ func cursorOf(payload string) string {
 }
 
 func TestLedgerRejectsBadCursorIDs(t *testing.T) {
-	svc := usecase.NewService(emptyQueries{}, 20)
+	svc := usecase.NewService(emptyQueries{}, nil, nil, usecase.Config{LedgerPageSize: 20})
 	cases := map[string]string{
 		"NUL in id (escaped)": cursorOf(`{"t":"2026-11-07T02:00:00Z","i":"a\u0000b"}`),
 		"invalid UTF-8 in id": cursorOf("{\"t\":\"2026-11-07T02:00:00Z\",\"i\":\"a\xffb\"}"),

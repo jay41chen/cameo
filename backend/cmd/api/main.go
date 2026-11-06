@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -40,7 +41,21 @@ func run() error {
 		return err
 	}
 
-	svc := usecase.NewService(postgres.NewQueries(pool), usecase.DefaultLedgerPageSize)
+	cfg := usecase.Config{
+		LedgerPageSize: usecase.DefaultLedgerPageSize,
+		DailyLimit:     getenvInt("DAILY_LIMIT", 3),
+		UploadTTL:      getenvDuration("UPLOAD_TTL", time.Hour),
+	}
+	sweepEvery := getenvDuration("EXPIRY_SWEEP_INTERVAL", 30*time.Second)
+	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), usecase.SystemClock{}, cfg)
+	return serve(ctx, svc, addr, sweepEvery)
+}
+
+// serve 啟動逾期掃描與 HTTP 服務，直到 ctx 結束或服務出錯。
+func serve(ctx context.Context, svc *usecase.Service, addr string, sweepEvery time.Duration) error {
+	sweepCtx, cancelSweep := context.WithCancel(ctx)
+	defer cancelSweep()
+	go sweepExpired(sweepCtx, svc, sweepEvery)
 	srv := &http.Server{Addr: addr, Handler: apihttp.Handler(svc), ReadHeaderTimeout: 10 * time.Second}
 
 	errCh := make(chan error, 1)
@@ -55,6 +70,32 @@ func run() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
+	}
+}
+
+// sweepExpired 啟動時先掃一次，之後每隔 every 掃一次，直到 ctx 結束。
+func sweepExpired(ctx context.Context, svc *usecase.Service, every time.Duration) {
+	sweepOnce(ctx, svc)
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			sweepOnce(ctx, svc)
+		}
+	}
+}
+
+func sweepOnce(ctx context.Context, svc *usecase.Service) {
+	n, err := svc.ExpireDue(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Error("expiry sweep failed", "err", err)
+		}
+	} else if n > 0 {
+		slog.Info("expired cameos", "count", n)
 	}
 }
 
@@ -78,6 +119,33 @@ func connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 		}
 	}
 	return nil, lastErr
+}
+
+// getenvInt 與 getenvDuration 在值無法解析或不為正時直接結束，避免靜默使用錯誤設定。
+func getenvInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		slog.Error("invalid env", "key", key, "value", v)
+		os.Exit(1)
+	}
+	return n
+}
+
+func getenvDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		slog.Error("invalid env", "key", key, "value", v)
+		os.Exit(1)
+	}
+	return d
 }
 
 func getenv(key, def string) string {

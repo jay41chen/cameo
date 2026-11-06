@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +21,14 @@ type fakeQueries struct{}
 func (fakeQueries) ListClips(context.Context) ([]domain.Clip, error) {
 	return []domain.Clip{{ID: "c1", Title: "t", Cost: 10}}, nil
 }
-func (fakeQueries) Balance(context.Context) (int, error) { return 100, nil }
+func (fakeQueries) Balance(context.Context) (int, error)    { return 100, nil }
+func (fakeQueries) HeldPoints(context.Context) (int, error) { return 0, nil }
+func (fakeQueries) QuotaUsed(context.Context, time.Time, time.Time) (int, error) {
+	return 1, nil
+}
+func (fakeQueries) CameoByID(context.Context, string) (domain.Cameo, error) {
+	return domain.Cameo{}, domain.ErrCameoNotFound
+}
 func (fakeQueries) ListLedger(_ context.Context, after *domain.LedgerCursor, limit int) ([]domain.LedgerEntry, error) {
 	if after != nil {
 		return nil, nil
@@ -33,9 +41,13 @@ func (fakeQueries) ListLedger(_ context.Context, after *domain.LedgerCursor, lim
 	}, nil
 }
 
+type fixedClock struct{}
+
+func (fixedClock) Now() time.Time { return time.Date(2026, 11, 6, 16, 30, 0, 0, time.UTC) }
+
 func do(t *testing.T, method, path, auth string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
-	h := apihttp.Handler(usecase.NewService(fakeQueries{}, 1))
+	h := apihttp.Handler(usecase.NewService(fakeQueries{}, nil, fixedClock{}, usecase.Config{LedgerPageSize: 1, DailyLimit: 3}))
 	req := httptest.NewRequest(method, path, nil)
 	if auth != "" {
 		req.Header.Set("Authorization", auth)
@@ -103,7 +115,7 @@ func TestMethodNotAllowedWithoutTokenIs405(t *testing.T) {
 }
 
 func TestHeadClips(t *testing.T) {
-	h := apihttp.Handler(usecase.NewService(fakeQueries{}, 1))
+	h := apihttp.Handler(usecase.NewService(fakeQueries{}, nil, fixedClock{}, usecase.Config{LedgerPageSize: 1, DailyLimit: 3}))
 	req := httptest.NewRequest(http.MethodHead, "/v1/clips", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
 	rec := httptest.NewRecorder()
@@ -171,5 +183,28 @@ func TestLedgerNullCursorAndCameoID(t *testing.T) {
 	}
 	if items := body["items"].([]any); len(items) != 0 {
 		t.Errorf("items = %v, want empty array", items)
+	}
+}
+
+func TestIdempotencyKeyOnlyTrimsASCIIWhitespace(t *testing.T) {
+	h := apihttp.Handler(usecase.NewService(fakeQueries{}, nil, fixedClock{}, usecase.Config{LedgerPageSize: 1, DailyLimit: 3}))
+	for name, key := range map[string]string{
+		"leading NBSP":  "\u00a0abc",
+		"trailing NBSP": "abc\u00a0",
+		"only NBSP":     "\u00a0",
+		"ideographic":   "\u3000abc\u3000",
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/cameos", strings.NewReader(`{"clip_id":"c1"}`))
+			req.Header.Set("Authorization", "Bearer test-token")
+			req.Header.Set("Idempotency-Key", key)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("body is not JSON: %q", rec.Body.String())
+			}
+			assertError(t, rec, body, 400, "INVALID_REQUEST")
+		})
 	}
 }

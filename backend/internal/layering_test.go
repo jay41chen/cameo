@@ -14,7 +14,8 @@ import (
 const modulePath = "cameo/backend/internal/"
 
 // TestImportDirection 檢查分層方向：
-// domain 不依賴 usecase／adapter；usecase 不依賴 adapter；adapter 之間互不依賴。
+// domain 不依賴 usecase／adapter；usecase 不依賴 adapter；adapter 之間互不依賴；
+// 非 _test.go 不得 import internal/testdb。
 func TestImportDirection(t *testing.T) {
 	root, err := os.Getwd()
 	if err != nil {
@@ -38,6 +39,9 @@ func TestImportDirection(t *testing.T) {
 				continue
 			}
 			target := strings.TrimPrefix(p, modulePath)
+			if target == "testdb" && !strings.HasSuffix(path, "_test.go") {
+				t.Errorf("%s imports %s: testdb is for _test.go files only", filepath.ToSlash(filepath.Join("internal", rel)), p)
+			}
 			if reason := violation(rel, target); reason != "" {
 				t.Errorf("%s imports %s: %s", filepath.ToSlash(filepath.Join("internal", rel)), p, reason)
 			}

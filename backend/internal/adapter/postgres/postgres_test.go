@@ -2,68 +2,18 @@ package postgres_test
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"os"
 	"testing"
 	"time"
 
 	"cameo/backend/internal/adapter/postgres"
 	"cameo/backend/internal/domain"
+	"cameo/backend/internal/testdb"
 	"cameo/backend/internal/usecase"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// newDB 在 TEST_DATABASE_URL 指向的資料庫中建立獨立 schema 並套用 migration，
-// 測試結束後整個 schema 刪除，不碰其他資料。
-func newDB(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Fatal("TEST_DATABASE_URL is not set; point it at a Postgres, e.g. " +
-			"TEST_DATABASE_URL='postgres://cameo:cameo@127.0.0.1:5433/cameo?sslmode=disable' go test ./...")
-	}
-	ctx := context.Background()
-	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		t.Fatal(err)
-	}
-	schema := "t_" + hex.EncodeToString(b)
-
-	admin, err := pgxpool.New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
-		admin.Close()
-		t.Fatalf("create schema: %v", err)
-	}
-	cfg, err := pgxpool.ParseConfig(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.ConnConfig.RuntimeParams["search_path"] = schema
-	// 關閉 index scan，讓排序不靠索引順序「碰巧」正確，分頁測試才能抓到排序缺陷。僅測試用。
-	cfg.ConnConfig.RuntimeParams["enable_indexscan"] = "off"
-	cfg.ConnConfig.RuntimeParams["enable_indexonlyscan"] = "off"
-	cfg.ConnConfig.RuntimeParams["enable_bitmapscan"] = "off"
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		pool.Close()
-		if _, err := admin.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
-			t.Errorf("drop schema: %v", err)
-		}
-		admin.Close()
-	})
-	if err := postgres.Migrate(ctx, pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	return pool
-}
+func newDB(t *testing.T) *pgxpool.Pool { return testdb.New(t) }
 
 func TestMigrateIsRepeatableAndSeedsOnce(t *testing.T) {
 	pool := newDB(t)
@@ -84,7 +34,7 @@ func TestMigrateIsRepeatableAndSeedsOnce(t *testing.T) {
 		t.Fatalf("balance = %d, err = %v", balance, err)
 	}
 	var versions int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&versions); err != nil || versions != 2 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&versions); err != nil || versions != 3 {
 		t.Fatalf("versions = %d, err = %v", versions, err)
 	}
 	var ledger int
@@ -99,7 +49,7 @@ func TestPointsAvailable(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE points_account SET balance = 70 WHERE id = 1`); err != nil {
 		t.Fatal(err)
 	}
-	svc := usecase.NewService(postgres.NewQueries(pool), 0)
+	svc := newSvc(pool, nil, usecase.Config{})
 	p, err := svc.Points(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +100,7 @@ func TestLedgerPaginationStableWithTies(t *testing.T) {
 	insertEntry(t, pool, "a1", base)
 	insertEntry(t, pool, "e0", base.Add(-time.Minute))
 
-	svc := usecase.NewService(postgres.NewQueries(pool), 2)
+	svc := newSvc(pool, nil, usecase.Config{LedgerPageSize: 2})
 	ids, pages := collect(t, svc)
 	want := []string{"e5", "a3", "a2", "a1", "e0"}
 	if len(ids) != len(want) {
@@ -172,7 +122,7 @@ func TestLedgerLastPageHasNoCursorAndExactPageSize(t *testing.T) {
 	insertEntry(t, pool, "a", base)
 	insertEntry(t, pool, "b", base.Add(time.Second))
 
-	svc := usecase.NewService(postgres.NewQueries(pool), 2)
+	svc := newSvc(pool, nil, usecase.Config{LedgerPageSize: 2})
 	page, err := svc.Ledger(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +131,7 @@ func TestLedgerLastPageHasNoCursorAndExactPageSize(t *testing.T) {
 		t.Fatalf("page = %+v, want 2 items and no cursor", page)
 	}
 	empty := newDB(t)
-	page, err = usecase.NewService(postgres.NewQueries(empty), 2).Ledger(context.Background(), "")
+	page, err = newSvc(empty, nil, usecase.Config{LedgerPageSize: 2}).Ledger(context.Background(), "")
 	if err != nil || len(page.Items) != 0 || page.NextCursor != "" {
 		t.Fatalf("empty page = %+v, err = %v", page, err)
 	}
@@ -189,10 +139,14 @@ func TestLedgerLastPageHasNoCursorAndExactPageSize(t *testing.T) {
 
 func TestLedgerInvalidCursor(t *testing.T) {
 	pool := newDB(t)
-	svc := usecase.NewService(postgres.NewQueries(pool), 2)
+	svc := newSvc(pool, nil, usecase.Config{LedgerPageSize: 2})
 	for _, c := range []string{"!!!", "bm90LWpzb24", "e30" /* {} */, "eyJ0Ijoibm9wZSIsImkiOiJ4In0" /* bad time */} {
 		if _, err := svc.Ledger(context.Background(), c); err != domain.ErrInvalidCursor {
 			t.Errorf("cursor %q: err = %v, want ErrInvalidCursor", c, err)
 		}
 	}
+}
+
+func newSvc(pool *pgxpool.Pool, clock usecase.Clock, cfg usecase.Config) *usecase.Service {
+	return usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), clock, cfg)
 }

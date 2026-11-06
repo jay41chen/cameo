@@ -14,29 +14,41 @@ import (
 // DefaultLedgerPageSize 是明細每頁筆數。
 const DefaultLedgerPageSize = 20
 
-type Service struct {
-	q              Queries
-	ledgerPageSize int
+// Config 是業務設定，由 cmd 從環境變數讀入。
+type Config struct {
+	LedgerPageSize int
+	DailyLimit     int
+	UploadTTL      time.Duration
 }
 
-func NewService(q Queries, ledgerPageSize int) *Service {
-	if ledgerPageSize <= 0 {
-		ledgerPageSize = DefaultLedgerPageSize
+type Service struct {
+	q     Queries
+	tx    TxRunner
+	clock Clock
+	cfg   Config
+}
+
+func NewService(q Queries, tx TxRunner, clock Clock, cfg Config) *Service {
+	if cfg.LedgerPageSize <= 0 {
+		cfg.LedgerPageSize = DefaultLedgerPageSize
 	}
-	return &Service{q: q, ledgerPageSize: ledgerPageSize}
+	return &Service{q: q, tx: tx, clock: clock, cfg: cfg}
 }
 
 func (s *Service) Clips(ctx context.Context) ([]domain.Clip, error) {
 	return s.q.ListClips(ctx)
 }
 
-// Points 回傳可用與占用點數。目前還沒有訂單，占用固定為 0。
+// Points 回傳可用與占用點數；占用為 HELD 訂單的 cost 總和。
 func (s *Service) Points(ctx context.Context) (domain.Points, error) {
 	balance, err := s.q.Balance(ctx)
 	if err != nil {
 		return domain.Points{}, err
 	}
-	held := 0
+	held, err := s.q.HeldPoints(ctx)
+	if err != nil {
+		return domain.Points{}, err
+	}
 	return domain.NewPoints(balance, held), nil
 }
 
@@ -56,14 +68,14 @@ func (s *Service) Ledger(ctx context.Context, cursor string) (LedgerPage, error)
 		}
 		after = &c
 	}
-	items, err := s.q.ListLedger(ctx, after, s.ledgerPageSize+1)
+	items, err := s.q.ListLedger(ctx, after, s.cfg.LedgerPageSize+1)
 	if err != nil {
 		return LedgerPage{}, err
 	}
 	page := LedgerPage{Items: items}
-	if len(items) > s.ledgerPageSize {
-		page.Items = items[:s.ledgerPageSize]
-		page.NextCursor = encodeCursor(page.Items[s.ledgerPageSize-1])
+	if len(items) > s.cfg.LedgerPageSize {
+		page.Items = items[:s.cfg.LedgerPageSize]
+		page.NextCursor = encodeCursor(page.Items[s.cfg.LedgerPageSize-1])
 	}
 	return page, nil
 }

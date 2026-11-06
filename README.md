@@ -1,6 +1,6 @@
 # 客串短劇（Kimhit 候選人作業）
 
-> 狀態：進行中。第 2 輪已實作 Docker 後端與 Android App 的片段清單、點數、點數明細（含分頁）；其他功能（建單、上傳、送出、通知等）尚未實作。App 只在 API 37 模擬器驗證過。API 契約中尚未實作的部分仍是設計，未確認的欄位標 `[待確認]`。
+> 狀態：進行中。Android App 已實作片段清單、點數、點數明細（含分頁），只在 API 37 模擬器驗證過。後端另已實作建單（冪等、點數占用、每日額度）、訂單查詢、額度與上傳逾期釋放；App 端的建單畫面尚未實作。上傳、送出、通知等尚未實作。API 契約中尚未實作的部分仍是設計，未確認的欄位標 `[待確認]`。
 
 ## 專案介紹
 
@@ -20,7 +20,17 @@
 docker compose up --build
 ```
 
-會啟動 Postgres（`postgres:17-alpine`）和 `api`（`http://localhost:8080`）。`api` 等 Postgres 健康後才啟動，並自動執行 migration 與 seed（可重複啟動，不會重複插入）。不需要任何帳號或金鑰；連線字串、port 可用環境變數覆寫（見 `docker-compose.yml`）。Postgres 只對本機開放 `127.0.0.1:5433`，供測試使用。
+會啟動 Postgres（`postgres:17-alpine`）和 `api`（`http://localhost:8080`）。`api` 等 Postgres 健康後才啟動，並自動執行 migration 與 seed（可重複啟動，不會重複插入）。不需要任何帳號或金鑰；連線字串、port 與下列設定可用環境變數覆寫（見 `docker-compose.yml`）。Postgres 只對本機開放 `127.0.0.1:5433`，供測試使用。
+
+`api` 的業務設定（皆為環境變數，不寫死在程式碼）：
+
+| 變數 | 預設 | 說明 |
+|---|---|---|
+| `DAILY_LIMIT` | `3` | 每人每日（台北時間）客串次數上限 |
+| `UPLOAD_TTL` | `1h` | 建單後的上傳期限，超過會自動釋放點數與額度（Go duration，例如 `5s`、`30m`） |
+| `EXPIRY_SWEEP_INTERVAL` | `30s` | 逾期掃描間隔 |
+
+例如 `UPLOAD_TTL=5s EXPIRY_SWEEP_INTERVAL=1s docker compose up -d api` 可快速觀察逾期釋放。
 
 Seed：測試帳號初始 100 點；3 個片段（`c1` 雨夜重逢、`c2` 屋頂告白、`c3` 最後一班車），每段 10 點；點數明細初始為空。
 
@@ -67,11 +77,10 @@ cd android
 
 以下契約細節尚未確認，不在每列重複標註（`/debug/faults` 端點本身已定案）：
 
-- 訂單資料格式中 `display`、`video_available`、`share` 的結構。
-- `POST /v1/cameos` 的 `Idempotency-Key` header、新建 `201`／重送 `200` 語意，以及 `402 INSUFFICIENT_POINTS`。
+- 訂單資料格式中 `QUEUED` 之後各狀態的 `display` 文字、`video_available`、`share` 的結構（目前後端固定回 `false` 與 `{"active":false,"url":null}`）。
+- `X-App-Version` 與 `426` 尚未實作。
 - `POST /webhooks/vendor` 的 header 與 body。
-- 訂單查詢（`GET /v1/cameos`、`GET /v1/cameos/{id}`）的回應形狀。
-- 錯誤碼 `CLIP_NOT_FOUND`、`CAMEO_NOT_FOUND`、`IDEMPOTENCY_CONFLICT` 等名稱尚未定案。
+- 訂單清單 `GET /v1/cameos` 的回應形狀（尚未實作，目前該路徑只接受 `POST`，`GET` 回 `405`）。
 - `POST /debug/faults` body 的 `target`、`times`、`params`。
 
 ## API 說明
@@ -89,12 +98,14 @@ cd android
 
 | 碼 | 意義 |
 |---|---|
-| `402 INSUFFICIENT_POINTS` | 可用點數不足 |
-| `404` | 資源不存在 |
-| `409` | 狀態衝突或冪等鍵衝突 |
+| `400 INVALID_REQUEST` | `Idempotency-Key` 缺少、去掉前後空白後為空、超過 128 bytes 或含 0x21–0x7E 以外的字元；或 body 不是有效 JSON（`retryable: false`）；含控制字元的 key 可能由 HTTP 層直接回純文字 400，不一定是此 JSON 格式 |
+| `402 INSUFFICIENT_POINTS` | 可用點數不足；`message`：「點數不足」 |
+| `404 CLIP_NOT_FOUND`、`404 CAMEO_NOT_FOUND` | 片段或訂單不存在（訂單不屬於該使用者也回 `CAMEO_NOT_FOUND`）；id 含 NUL 或不是合法 UTF-8 也視為不存在 |
+| `409 IDEMPOTENCY_CONFLICT` | 同一個 `Idempotency-Key` 用在不同 `clip_id` |
+| `409` | 其他狀態衝突（例如 `INVALID_STATE`，尚未實作） |
 | `410` | 上傳／送出已超過期限，不扣款；App 顯示「上傳期限已過，點數沒有扣款，請重新客串。」 |
 | `426 UPGRADE_REQUIRED` | App 版本過舊 |
-| `429 DAILY_LIMIT_REACHED` | 已達每日上限 |
+| `429 DAILY_LIMIT_REACHED` | 已達每日上限；`message`：「今日客串次數已達上限，明天再來」 |
 | `5xx` | 後端錯誤，可重試 |
 
 ### 訂單資料格式
@@ -117,6 +128,8 @@ cd android
 - `status`：`AWAITING_UPLOAD`、`UPLOADED`、`QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED`、`EXPIRED`。
 - `points_state`：`HELD`、`CHARGED`、`REFUNDED`、`RELEASED`。
 - `failure_reason`：`CONTENT_REJECTED` 退點不退額度；其餘值 `[待確認]`。
+- `display`：`AWAITING_UPLOAD` 為 `{"title":"等待上傳","message":"已占用 N 點，送出後才扣款"}`（N 為 `clip.cost`）；`EXPIRED` 為 `{"title":"已過期","message":"上傳期限已過，點數沒有扣款，請重新客串。"}`；`QUEUED`、`GENERATING` 見 `spec.md`（尚未實作）；其餘狀態暫用 `{"title":"處理中","message":""}`。
+- `clip.cost` 是建單當下的快照。
 
 ### 片段
 
@@ -133,7 +146,7 @@ cd android
 
 `GET /v1/points`
 
-- 參數：無。`available = balance - held`。
+- 參數：無。`held` 為 `points_state = HELD` 訂單的 `cost` 總和，`available = balance - held`。
 - 成功 `200`：
 
 ```json
@@ -158,7 +171,8 @@ cd android
 
 `GET /v1/quota`
 
-- 參數：無。
+- 參數：無。額度由訂單計算，不存計數器：已用 = 建立時間落在當前台北日的訂單，排除 `EXPIRED`，也排除 `FAILED` 且 `failure_reason` 不是 `CONTENT_REJECTED` 的訂單；`remaining = max(DAILY_LIMIT - 已用, 0)`；`resets_at` 為下一個台北午夜。
+- `display`：`remaining > 0` 為「今日還可客串 N 次」，等於 0 為「今日客串次數已用完」。
 - 成功 `200`：
 
 ```json
@@ -169,18 +183,25 @@ cd android
 
 `POST /v1/cameos`
 
-- Header：`Idempotency-Key`（即 App 的 `client_request_id`）。
+- Header：`Idempotency-Key`（即 App 的 `client_request_id`），必填；去掉前後空白後須為 1–128 bytes、且只含 0x21–0x7E 的可見 ASCII，否則回 `400 INVALID_REQUEST`（`retryable: false`）。
 - Body：`{"clip_id":"c1"}`
-- 效果：占用點數與額度（`points_state = HELD`），不寫明細。
-- 成功：新建 `201`、重送 `200`：
+- 效果：整個流程在同一個資料庫交易內，先鎖住使用者的點數帳戶讓同一使用者的建單依序處理，再依序檢查：
+  1. 同一 key 已存在：`clip_id` 相同回 `200` 和原訂單（不論它目前狀態，不重複占用，也不再檢查點數和額度）；`clip_id` 不同回 `409 IDEMPOTENCY_CONFLICT`。
+  2. 片段不存在回 `404 CLIP_NOT_FOUND`（`clip_id` 含 NUL 或不是合法 UTF-8 也視為不存在）。
+  3. 當日額度用完回 `429 DAILY_LIMIT_REACHED`。
+  4. 可用點數不足回 `402 INSUFFICIENT_POINTS`。
+  5. 建立訂單：`status = AWAITING_UPLOAD`、`points_state = HELD`，新建回 `201`。不寫明細。
+- 成功：新建 `201`、重送 `200`，body 相同形狀：
 
 ```json
-{"cameo":{"id":"uuid","status":"AWAITING_UPLOAD","points_state":"HELD"},"upload":{"url":"/v1/cameos/uuid/selfie","expires_at":"2026-11-07T11:00:00+08:00"}}
+{"cameo":{"id":"uuid","clip":{"id":"c1","title":"雨夜重逢","cost":10},"status":"AWAITING_UPLOAD","display":{"title":"等待上傳","message":"已占用 10 點，送出後才扣款"},"points_state":"HELD","failure_reason":null,"video_available":false,"share":{"active":false,"url":null},"created_at":"2026-11-07T10:00:00+08:00","updated_at":"2026-11-07T10:00:00+08:00"},"upload":{"url":"/v1/cameos/uuid/selfie","expires_at":"2026-11-07T11:00:00+08:00"}}
 ```
 
-- 錯誤：`402 INSUFFICIENT_POINTS`、`429 DAILY_LIMIT_REACHED`、`409 IDEMPOTENCY_CONFLICT`（同 key 不同 `clip_id`）、`404 CLIP_NOT_FOUND`、`426`。
-- 上傳期限 1 小時（`upload.expires_at`）；生成期限 30 分鐘。理由：縮短點數被占用的時間；代價：離線太久要重新建單。
-- `upload.url` 可能是相對或絕對網址 `[待確認]`。
+- 上傳期限預設 1 小時（`UPLOAD_TTL`，回在 `upload.expires_at`）；生成期限 30 分鐘。理由：縮短點數被占用的時間；代價：離線太久要重新建單。
+- 逾期（`AWAITING_UPLOAD`、`UPLOADED` 且已過 `upload.expires_at`）由後端定時掃描轉為 `EXPIRED`、`points_state = RELEASED`，點數與額度恢復，不寫明細。
+- `upload` 與 `GET /v1/cameos/{id}` 共用同一格式：`status = AWAITING_UPLOAD` 時為 `{"url":"/v1/cameos/{id}/selfie","expires_at":"..."}`，`url` 是相對路徑；其他狀態（例如重送已 `EXPIRED` 的訂單，仍回 `200` 與同一筆訂單）為 `null`。App 以 `cameo.status` 判斷下一步，不以 `upload` 是否存在推斷。
+- `upload.url` 指向的上傳端點尚未實作。
+- `426` 尚未實作。
 
 ### 上傳自拍
 
@@ -202,8 +223,8 @@ cd android
 
 ### 訂單查詢
 
-- `GET /v1/cameos?cursor=`：`{"items":[cameo],"next_cursor":null}`
-- `GET /v1/cameos/{id}`：`{"cameo":{...}}`；`404 CAMEO_NOT_FOUND`
+- `GET /v1/cameos?cursor=`：`{"items":[cameo],"next_cursor":null}`（尚未實作）
+- `GET /v1/cameos/{id}`：`{"cameo":{...},"upload":...}`（`upload` 規則同 `POST /v1/cameos`）；不存在、不屬於該使用者、或 id 含 NUL／非法 UTF-8 回 `404 CAMEO_NOT_FOUND`。
 - 失敗後 `points_state = REFUNDED` 並有 `REFUND` 明細。
 
 ### 影片與分享

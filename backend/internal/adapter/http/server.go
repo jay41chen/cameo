@@ -6,6 +6,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"cameo/backend/internal/domain"
@@ -14,7 +16,7 @@ import (
 
 const bearerToken = "Bearer test-token"
 
-var taipei = time.FixedZone("+08:00", 8*60*60)
+var taipei = domain.Taipei
 
 type errorBody struct {
 	Code      string `json:"code"`
@@ -32,15 +34,33 @@ func Handler(svc *usecase.Service) http.Handler {
 	handleGET(mux, "/v1/clips", s.clips)
 	handleGET(mux, "/v1/points", s.points)
 	handleGET(mux, "/v1/points/ledger", s.ledger)
+	handleGET(mux, "/v1/quota", s.quota)
+	handleMethods(mux, "/v1/cameos", map[string]http.HandlerFunc{http.MethodPost: s.createCameo})
+	handleMethods(mux, "/v1/cameos/{id}", map[string]http.HandlerFunc{http.MethodGet: s.getCameo})
 	return mux
 }
 
 // handleGET 註冊一條只收 GET（含 HEAD）、需要 token 的路由；path 可含 {id} 等路徑參數。
 // 其他方法回 405 並帶 Allow。
 func handleGET(mux *http.ServeMux, path string, h http.HandlerFunc) {
-	mux.Handle("GET "+path, requireAuth(h))
+	handleMethods(mux, path, map[string]http.HandlerFunc{http.MethodGet: h})
+}
+
+// handleMethods 在同一路徑註冊多個方法（都需要 token）。其他方法回 405 並帶 Allow；
+// 有 GET 時 Allow 也列出 HEAD。
+func handleMethods(mux *http.ServeMux, path string, handlers map[string]http.HandlerFunc) {
+	methods := make([]string, 0, len(handlers))
+	for m, h := range handlers {
+		mux.Handle(m+" "+path, requireAuth(h))
+		methods = append(methods, m)
+		if m == http.MethodGet {
+			methods = append(methods, http.MethodHead)
+		}
+	}
+	sort.Strings(methods)
+	allow := strings.Join(methods, ", ")
 	mux.HandleFunc(path, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Allow", "GET, HEAD")
+		w.Header().Set("Allow", allow)
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "不支援這個方法", false)
 	})
 }
@@ -117,6 +137,142 @@ func (s *server) ledger(w http.ResponseWriter, r *http.Request) {
 		next = &page.NextCursor
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": next})
+}
+
+func (s *server) quota(w http.ResponseWriter, r *http.Request) {
+	q, err := s.svc.Quota(r.Context())
+	if err != nil {
+		writeInternal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Remaining int    `json:"remaining"`
+		ResetsAt  string `json:"resets_at"`
+		Display   string `json:"display"`
+	}{q.Remaining, q.ResetsAt.In(taipei).Format(time.RFC3339), q.Display})
+}
+
+type cameoJSON struct {
+	ID   string `json:"id"`
+	Clip struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+		Cost  int    `json:"cost"`
+	} `json:"clip"`
+	Status  string `json:"status"`
+	Display struct {
+		Title   string `json:"title"`
+		Message string `json:"message"`
+	} `json:"display"`
+	PointsState    string  `json:"points_state"`
+	FailureReason  *string `json:"failure_reason"`
+	VideoAvailable bool    `json:"video_available"`
+	Share          struct {
+		Active bool    `json:"active"`
+		URL    *string `json:"url"`
+	} `json:"share"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// cameoResponse 是 POST 與 GET 訂單共用的回應：upload 只在 AWAITING_UPLOAD 時有值，其餘為 null。
+type cameoResponse struct {
+	Cameo  cameoJSON   `json:"cameo"`
+	Upload *uploadJSON `json:"upload"`
+}
+
+type uploadJSON struct {
+	URL       string `json:"url"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+func toCameoResponse(c domain.Cameo) cameoResponse {
+	resp := cameoResponse{Cameo: toCameoJSON(c)}
+	if c.Status == domain.StatusAwaitingUpload {
+		resp.Upload = &uploadJSON{
+			URL:       "/v1/cameos/" + c.ID + "/selfie",
+			ExpiresAt: c.UploadExpiresAt.In(taipei).Format(time.RFC3339),
+		}
+	}
+	return resp
+}
+
+// validIdempotencyKey 只接受去除前後 ASCII 空白（空格、Tab）後 1 到 128 bytes、且皆為 0x21–0x7E 的可見 ASCII。
+func validIdempotencyKey(key string) bool {
+	if key == "" || len(key) > 128 {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		if key[i] < 0x21 || key[i] > 0x7E {
+			return false
+		}
+	}
+	return true
+}
+
+func toCameoJSON(c domain.Cameo) cameoJSON {
+	var j cameoJSON
+	j.ID = c.ID
+	j.Clip.ID, j.Clip.Title, j.Clip.Cost = c.Clip.ID, c.Clip.Title, c.Clip.Cost
+	j.Status = c.Status
+	d := c.Display()
+	j.Display.Title, j.Display.Message = d.Title, d.Message
+	j.PointsState = c.PointsState
+	j.FailureReason = c.FailureReason
+	j.CreatedAt = c.CreatedAt.In(taipei).Format(time.RFC3339)
+	j.UpdatedAt = c.UpdatedAt.In(taipei).Format(time.RFC3339)
+	return j
+}
+
+func (s *server) createCameo(w http.ResponseWriter, r *http.Request) {
+	key := strings.Trim(r.Header.Get("Idempotency-Key"), " \t")
+	if !validIdempotencyKey(key) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Idempotency-Key 缺少或格式無效", false)
+		return
+	}
+	var body struct {
+		ClipID string `json:"clip_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "請求內容無效", false)
+		return
+	}
+	res, err := s.svc.CreateCameo(r.Context(), key, body.ClipID)
+	switch {
+	case errors.Is(err, domain.ErrIdempotencyConflict):
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "同一個請求編號不能用於不同片段", false)
+		return
+	case errors.Is(err, domain.ErrClipNotFound):
+		writeError(w, http.StatusNotFound, "CLIP_NOT_FOUND", "找不到這個片段", false)
+		return
+	case errors.Is(err, domain.ErrDailyLimitReached):
+		writeError(w, http.StatusTooManyRequests, "DAILY_LIMIT_REACHED", "今日客串次數已達上限，明天再來", false)
+		return
+	case errors.Is(err, domain.ErrInsufficientPoints):
+		writeError(w, http.StatusPaymentRequired, "INSUFFICIENT_POINTS", "點數不足", false)
+		return
+	case err != nil:
+		writeInternal(w, r, err)
+		return
+	}
+	status := http.StatusOK
+	if res.Created {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, toCameoResponse(res.Cameo))
+}
+
+func (s *server) getCameo(w http.ResponseWriter, r *http.Request) {
+	c, err := s.svc.Cameo(r.Context(), r.PathValue("id"))
+	if errors.Is(err, domain.ErrCameoNotFound) {
+		writeError(w, http.StatusNotFound, "CAMEO_NOT_FOUND", "找不到這筆客串", false)
+		return
+	}
+	if err != nil {
+		writeInternal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toCameoResponse(c))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
