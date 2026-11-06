@@ -7,6 +7,7 @@ import com.kimhit.cameo.domain.model.LedgerPage
 import com.kimhit.cameo.domain.model.CameoOrder
 import com.kimhit.cameo.domain.model.CameoPage
 import com.kimhit.cameo.domain.model.CameoStatus
+import com.kimhit.cameo.domain.model.PendingStep
 import com.kimhit.cameo.domain.model.Points
 import com.kimhit.cameo.domain.model.Quota
 import com.kimhit.cameo.domain.model.UnfinishedCameo
@@ -95,7 +96,11 @@ private fun photoMissing() =
 /** 後端都在查過冪等鍵之後才回這些錯誤，所以確定此 key 沒有訂單，草稿可以刪。 */
 private val NO_ORDER_CODES = setOf("INSUFFICIENT_POINTS", "DAILY_LIMIT_REACHED", "CLIP_NOT_FOUND")
 
-/** 列出本機未完成的客串，並向後端補上目前狀態。 */
+/**
+ * 列出本機未完成的客串，並向後端補上目前狀態。
+ * 排除已送出（QUEUED、GENERATING、SUCCEEDED、FAILED）與查不到狀態但步驟為 TRACK 的草稿，這些草稿不刪；
+ * CAMEO_NOT_FOUND 刪草稿。
+ */
 class GetUnfinishedCameosUseCase(
     private val pending: PendingCameoRepository,
     private val cameos: CameoRepository,
@@ -110,21 +115,23 @@ class GetUnfinishedCameosUseCase(
                 continue
             }
             when (val r = cameos.getCameo(cameoId)) {
-                is DomainResult.Success -> {
+                is DomainResult.Success -> when (r.value.cameo.status) {
+                    // 已送出：不列、不動草稿（草稿仍負責通知去重）
+                    CameoStatus.QUEUED, CameoStatus.GENERATING, CameoStatus.SUCCEEDED, CameoStatus.FAILED -> Unit
                     // 過期訂單用不到照片，順手刪掉（資料列保留供使用者看到並選擇重來／移除）
-                    if (r.value.cameo.status == CameoStatus.EXPIRED) {
+                    CameoStatus.EXPIRED -> {
                         pending.deletePhoto(row.clientRequestId)
                         out += UnfinishedCameo(row.copy(photoPath = null), r.value)
-                    } else {
+                    }
+                    CameoStatus.AWAITING_UPLOAD, CameoStatus.UPLOADED, CameoStatus.UNKNOWN ->
                         out += UnfinishedCameo(row, r.value)
-                    }
                 }
-                is DomainResult.Failure ->
-                    if (r.error.code == "CAMEO_NOT_FOUND") {
-                        pending.delete(row.clientRequestId)
-                    } else {
-                        out += UnfinishedCameo(row, null)
-                    }
+                is DomainResult.Failure -> when {
+                    r.error.code == "CAMEO_NOT_FOUND" -> pending.delete(row.clientRequestId)
+                    // 查不到狀態但本機已送出：不列、不動草稿
+                    row.step == PendingStep.TRACK -> Unit
+                    else -> out += UnfinishedCameo(row, null)
+                }
             }
         }
         return out

@@ -391,4 +391,98 @@ class CameoUseCasesTest {
         assertTrue(pending.events.none { it.startsWith("deletePhoto") })
         assertEquals("/photos/k1.jpg", pending.rows[0].photoPath)
     }
+
+    private fun row(key: String = "k1", cameoId: String = "u1", step: PendingStep = PendingStep.UPLOAD, photo: String? = "/photos/k1.jpg") =
+        PendingCameo(key, "c1", cameoId, step, null, photo)
+
+    @Test
+    fun unfinished_submittedStatusesAreNotListedAndDraftKept() = runTest {
+        for (st in listOf(CameoStatus.QUEUED, CameoStatus.GENERATING, CameoStatus.SUCCEEDED, CameoStatus.FAILED)) {
+            val p = FakePending()
+            p.rows += row()
+            val c = FakeCameos(p.events, gets = mutableMapOf("u1" to DomainResult.Success(order(st))))
+            val out = GetUnfinishedCameosUseCase(p, c)()
+            assertEquals("$st", 1, c.getCalls.size)
+            assertTrue("$st", out.isEmpty())
+            assertEquals("$st", 1, p.rows.size)
+            assertEquals("$st", "/photos/k1.jpg", p.rows[0].photoPath)
+            assertTrue("$st", p.events.none { it.startsWith("deletePhoto") })
+            assertTrue("$st", p.events.none { it.startsWith("delete:") })
+        }
+    }
+
+    @Test
+    fun unfinished_trackWithFetchFailureIsNotListedAndDraftKept() = runTest {
+        for (f in listOf(fail(true), fail(false, "UNAUTHORIZED"))) {
+            val p = FakePending()
+            p.rows += row(step = PendingStep.TRACK)
+            val c = FakeCameos(p.events, gets = mutableMapOf("u1" to f))
+            val out = GetUnfinishedCameosUseCase(p, c)()
+            assertTrue(out.isEmpty())
+            assertEquals(1, p.rows.size)
+            assertTrue(p.events.none { it.startsWith("delete") })
+        }
+    }
+
+    @Test
+    fun unfinished_trackWithCameoNotFoundDeletesRow() = runTest {
+        pending.rows += row(step = PendingStep.TRACK)
+        val c = FakeCameos(pending.events, gets = mutableMapOf("u1" to fail(false, "CAMEO_NOT_FOUND")))
+        val out = GetUnfinishedCameosUseCase(pending, c)()
+        assertTrue(out.isEmpty())
+        assertTrue(pending.rows.isEmpty())
+    }
+
+    @Test
+    fun unfinished_unsubmittedStatusesStillListedAtTrackStep() = runTest {
+        for (st in listOf(CameoStatus.AWAITING_UPLOAD, CameoStatus.UPLOADED, CameoStatus.EXPIRED, CameoStatus.UNKNOWN)) {
+            val p = FakePending()
+            p.rows += row(step = PendingStep.TRACK)
+            val c = FakeCameos(p.events, gets = mutableMapOf("u1" to DomainResult.Success(order(st))))
+            val out = GetUnfinishedCameosUseCase(p, c)()
+            assertEquals("$st", 1, out.size)
+            assertEquals("$st", st, out[0].order?.cameo?.status)
+            assertEquals("$st", 1, p.rows.size)
+        }
+    }
+
+    @Test
+    fun unfinished_mixedRowsKeepOnlyPendingAndKeepExcludedDrafts() = runTest {
+        pending.rows += row("k1", "u1", PendingStep.TRACK)
+        pending.rows += row("k2", "u2", PendingStep.UPLOAD)
+        pending.rows += row("k3", "u3", PendingStep.TRACK)
+        pending.rows += row("k4", "u4", PendingStep.TRACK)
+        pending.rows += row("k5", "u5", PendingStep.SUBMIT)
+        val c = FakeCameos(
+            pending.events,
+            gets = mutableMapOf(
+                "u1" to DomainResult.Success(order(CameoStatus.SUCCEEDED, "u1")),
+                "u2" to DomainResult.Success(order(CameoStatus.AWAITING_UPLOAD, "u2")),
+                "u3" to fail(true),
+                "u4" to DomainResult.Success(order(CameoStatus.GENERATING, "u4")),
+                "u5" to fail(true),
+            ),
+        )
+        val out = GetUnfinishedCameosUseCase(pending, c)()
+        assertEquals(listOf("k2", "k5"), out.map { it.pending.clientRequestId })
+        assertNull(out[1].order)
+        assertEquals(listOf("k1", "k2", "k3", "k4", "k5"), pending.rows.map { it.clientRequestId })
+    }
+
+    @Test
+    fun unfinished_cancellationAtTrackRowPropagatesAndKeepsDraft() = runTest {
+        pending.rows += row("k1", "u1", PendingStep.UPLOAD)
+        pending.rows += row("k2", "u2", PendingStep.TRACK)
+        val c = FakeCameos(pending.events, gets = mutableMapOf("u1" to DomainResult.Success(order(CameoStatus.AWAITING_UPLOAD))))
+        c.getScript += { DomainResult.Success(order(CameoStatus.AWAITING_UPLOAD)) }
+        c.getScript += { throw CancellationException("left screen") }
+        try {
+            GetUnfinishedCameosUseCase(pending, c)()
+            fail("expected CancellationException")
+        } catch (e: CancellationException) {
+            // expected
+        }
+        assertEquals(listOf("k1", "k2"), pending.rows.map { it.clientRequestId })
+        assertTrue(pending.events.none { it.startsWith("delete") })
+    }
 }
