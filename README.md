@@ -1,6 +1,6 @@
 # 客串短劇（Kimhit 候選人作業）
 
-> 狀態：進行中。Android App 已實作片段清單、點數、點數明細（含分頁），只在 API 37 模擬器驗證過。後端另已實作建單（冪等、點數占用、每日額度）、訂單查詢、額度與上傳逾期釋放；App 端的建單畫面尚未實作。上傳、送出、通知等尚未實作。API 契約中尚未實作的部分仍是設計，未確認的欄位標 `[待確認]`。
+> 狀態：進行中。Android App 的片段清單、點數、點數明細（含分頁）已在 API 37 模擬器驗證過。後端另已實作建單（冪等、點數占用、每日額度）、訂單查詢、額度與上傳逾期釋放；Android App 另有額度顯示、確認支付（建單）與本機草稿，但這部分只有單元測試驗證，尚未接真實後端驗證。拍照、上傳、送出、通知、訂單清單等尚未實作。API 契約中尚未實作的部分仍是設計，未確認的欄位標 `[待確認]`。
 
 ## 專案介紹
 
@@ -40,7 +40,10 @@ Seed：測試帳號初始 100 點；3 個片段（`c1` 雨夜重逢、`c2` 屋�
 curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
 ```
 
-後端測試（不需啟動 App）：本機需要 Go 1.27.1（`backend/go.mod` 的 `go` 指令）。`domain`、`usecase`、`adapter/http` 的單元測試與 `go test ./...` 同在原處；`backend/test/integration` 是真實 Postgres 加 HTTP 的整合測試，需要 `TEST_DATABASE_URL`，所以先讓 Postgres 在跑再指定它。測試會在該資料庫建立獨立 schema，結束後刪除，不動其他資料；沒設定時整合測試會失敗。測試用的資料庫工具在 `backend/test/internal/testdb`，Go 的 `internal` 規則讓只有 `backend/test` 底下的程式能引用，正式程式（如 `cmd/api`）無法引用。
+後端測試（不需啟動 App）：本機需要 Go 1.27.1（`backend/go.mod` 的 `go` 指令）。測試分兩類，`go test ./...` 兩類都會跑：
+
+- 單元測試放在各自套件旁：`backend/internal/layering_test.go`（import 方向）、`backend/internal/domain`、`backend/internal/usecase`、`backend/internal/adapter/http`。不需要資料庫。
+- 整合測試在 `backend/test/integration`：真實 Postgres 加 HTTP，需要 `TEST_DATABASE_URL`，所以先讓 Postgres 在跑再指定它。測試會在該資料庫建立獨立 schema，結束後刪除，不動其他資料；沒設定時整合測試會失敗。測試用的資料庫工具在 `backend/test/internal/testdb`，Go 的 `internal` 規則讓只有 `backend/test` 底下的程式能引用，正式程式（如 `cmd/api`）無法引用。
 
 ```
 cd backend
@@ -62,7 +65,7 @@ adb shell am start -n com.kimhit.cameo/.MainActivity
 ```
 
 - App 連 `http://10.0.2.2:8080`（模擬器看到的宿主機），測試 token 為 `test-token`，兩者由 `:app` 的 build config 提供；只有 debug build 允許對 `10.0.2.2` 明文 HTTP。`adb reverse` 不是必要步驟。
-- 目前畫面：片段清單、點數（可用／占用、明細分頁載入）。每個區塊有載入中、失敗（顯示後端 `message`，沒有則通用文字）與重試。
+- 目前畫面：片段清單（頂端顯示今日額度，額度用完時點片段會跳提示；有未完成的客串時列在清單上方）、確認支付（顯示占用點數，建單後顯示後端回的狀態與上傳期限）、點數（可用／占用、明細分頁載入）。每個區塊有載入中、失敗（顯示後端 `message`，沒有則通用文字）與重試。
 
 單元測試（不需啟動 App 或後端）：
 

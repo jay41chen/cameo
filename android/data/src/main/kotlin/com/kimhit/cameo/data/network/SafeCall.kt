@@ -44,5 +44,6 @@ private fun parseError(response: Response<*>): DomainError {
     return DomainError(
         message = parsed?.message?.takeIf { it.isNotBlank() },
         retryable = parsed?.retryable ?: default,
+        code = parsed?.code?.takeIf { it.isNotBlank() },
     )
 }

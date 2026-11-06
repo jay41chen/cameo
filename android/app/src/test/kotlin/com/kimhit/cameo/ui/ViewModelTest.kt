@@ -7,11 +7,14 @@ import com.kimhit.cameo.domain.model.LedgerEntry
 import com.kimhit.cameo.domain.model.LedgerPage
 import com.kimhit.cameo.domain.model.LedgerType
 import com.kimhit.cameo.domain.model.Points
-import com.kimhit.cameo.domain.repository.ClipRepository
 import com.kimhit.cameo.domain.repository.PointsRepository
+import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
 import com.kimhit.cameo.domain.usecase.GetLedgerPageUseCase
 import com.kimhit.cameo.domain.usecase.GetPointsUseCase
+import com.kimhit.cameo.domain.usecase.GetQuotaUseCase
+import com.kimhit.cameo.domain.usecase.GetUnfinishedCameosUseCase
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -23,10 +26,6 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
-
-private class FakeClips(val results: ArrayDeque<DomainResult<List<Clip>>>) : ClipRepository {
-    override suspend fun getClips() = results.removeFirst()
-}
 
 private class FakePoints(
     val points: ArrayDeque<DomainResult<Points>> = ArrayDeque(),
@@ -43,6 +42,14 @@ private class FakePoints(
 private fun entry(id: String) =
     LedgerEntry(id, LedgerType.CHARGE, 10, null, "雨夜重逢", "2026-11-07T10:01:00+08:00")
 
+/** 這幾個測試只驗片段清單，額度與草稿相關的依賴用不會被呼叫的空 fake。 */
+internal fun clipsVm(clips: FakeClips) = ClipsViewModel(
+    GetClipsUseCase(clips),
+    GetQuotaUseCase(FakeQuota()),
+    GetUnfinishedCameosUseCase(FakePendingRepo(), FakeCameoRepo()),
+    DeletePendingCameoUseCase(FakePendingRepo()),
+)
+
 private val failure = DomainResult.Failure(DomainError("後端訊息", true))
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -56,7 +63,7 @@ class ViewModelTest {
     @Test
     fun clips_loadingThenSuccess() = runTest {
         val clips = listOf(Clip("c1", "雨夜重逢", 10))
-        val vm = ClipsViewModel(GetClipsUseCase(FakeClips(ArrayDeque(listOf(DomainResult.Success(clips))))))
+        val vm = clipsVm(FakeClips(ArrayDeque(listOf(DomainResult.Success(clips)))))
         assertEquals(Load.Loading, vm.state.value)
         advanceUntilIdle()
         assertEquals(Load.Success(clips), vm.state.value)
@@ -65,9 +72,7 @@ class ViewModelTest {
     @Test
     fun clips_failureThenRetrySuccess() = runTest {
         val clips = listOf(Clip("c1", "雨夜重逢", 10))
-        val vm = ClipsViewModel(
-            GetClipsUseCase(FakeClips(ArrayDeque(listOf(failure, DomainResult.Success(clips))))),
-        )
+        val vm = clipsVm(FakeClips(ArrayDeque(listOf(failure, DomainResult.Success(clips)))))
         advanceUntilIdle()
         assertEquals(Load.Error("後端訊息"), vm.state.value)
         vm.load()
@@ -78,9 +83,7 @@ class ViewModelTest {
 
     @Test
     fun clips_failureWithoutMessageKeepsNullMessage() = runTest {
-        val vm = ClipsViewModel(
-            GetClipsUseCase(FakeClips(ArrayDeque(listOf(DomainResult.Failure(DomainError(null, false)))))),
-        )
+        val vm = clipsVm(FakeClips(ArrayDeque(listOf(DomainResult.Failure(DomainError(null, false))))))
         advanceUntilIdle()
         assertEquals(Load.Error(null), vm.state.value)
     }
@@ -185,5 +188,82 @@ class ViewModelTest {
         vm.loadMore()
         advanceUntilIdle()
         assertEquals(listOf(null, "cur1"), fake.cursors)
+    }
+
+    @Test
+    fun refreshPoints_keepsSuccessWhileReloading_andDoesNotReloadLedger() = runTest {
+        val fake = FakePoints(
+            ArrayDeque(listOf(DomainResult.Success(Points(100, 0)), DomainResult.Success(Points(90, 10)))),
+            ArrayDeque(listOf(DomainResult.Success(LedgerPage(listOf(entry("l1")), null)))),
+        )
+        val vm = pointsVm(fake)
+        advanceUntilIdle()
+        vm.refreshPoints()
+        assertEquals(Load.Success(Points(100, 0)), vm.points.value)
+        advanceUntilIdle()
+        assertEquals(Load.Success(Points(90, 10)), vm.points.value)
+        assertEquals(listOf<String?>(null), fake.cursors)
+        assertEquals(listOf("l1"), vm.ledger.value.items.map { it.id })
+    }
+
+    @Test
+    fun refreshPoints_failureBecomesError() = runTest {
+        val fake = FakePoints(
+            ArrayDeque(listOf(DomainResult.Success(Points(100, 0)), failure)),
+            ArrayDeque(listOf(DomainResult.Success(LedgerPage(emptyList(), null)))),
+        )
+        val vm = pointsVm(fake)
+        advanceUntilIdle()
+        vm.refreshPoints()
+        advanceUntilIdle()
+        assertEquals(Load.Error("後端訊息"), vm.points.value)
+    }
+
+    private val pointsOf = { a: Int -> DomainResult.Success(Points(a, 0)) }
+
+    /** 以可控制完成時機的 fake 驗證舊回應不能蓋掉新回應。 */
+    private class GatedPoints(val gates: ArrayDeque<CompletableDeferred<DomainResult<Points>>>) : PointsRepository {
+        override suspend fun getPoints() = gates.removeFirst().await()
+        override suspend fun getLedger(cursor: String?): DomainResult<LedgerPage> =
+            DomainResult.Success(LedgerPage(emptyList(), null))
+    }
+
+    private fun gatedVm(vararg g: CompletableDeferred<DomainResult<Points>>): PointsViewModel {
+        val fake = GatedPoints(ArrayDeque(g.toList()))
+        return PointsViewModel(GetPointsUseCase(fake), GetLedgerPageUseCase(fake))
+    }
+
+    @Test
+    fun loadPoints_olderResponseDoesNotOverwriteRefreshPoints() = runTest {
+        val a = CompletableDeferred<DomainResult<Points>>()
+        val b = CompletableDeferred<DomainResult<Points>>()
+        val vm = gatedVm(a, b) // a 由 init 的 loadPoints 使用
+        advanceUntilIdle()
+        vm.refreshPoints()
+        advanceUntilIdle()
+        b.complete(pointsOf(90))
+        advanceUntilIdle()
+        a.complete(pointsOf(100)) // 舊回應晚到
+        advanceUntilIdle()
+        assertEquals(Load.Success(Points(90, 0)), vm.points.value)
+    }
+
+    @Test
+    fun refreshPoints_olderResponseDoesNotOverwriteLoadPoints() = runTest {
+        val first = CompletableDeferred<DomainResult<Points>>()
+        val a = CompletableDeferred<DomainResult<Points>>()
+        val b = CompletableDeferred<DomainResult<Points>>()
+        val vm = gatedVm(first, a, b)
+        first.complete(pointsOf(1))
+        advanceUntilIdle()
+        vm.refreshPoints() // a
+        advanceUntilIdle()
+        vm.loadPoints() // b
+        advanceUntilIdle()
+        b.complete(pointsOf(90))
+        advanceUntilIdle()
+        a.complete(pointsOf(100)) // 舊回應晚到
+        advanceUntilIdle()
+        assertEquals(Load.Success(Points(90, 0)), vm.points.value)
     }
 }

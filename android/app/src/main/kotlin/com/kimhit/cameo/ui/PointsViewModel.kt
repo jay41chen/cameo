@@ -9,6 +9,7 @@ import com.kimhit.cameo.domain.usecase.GetLedgerPageUseCase
 import com.kimhit.cameo.domain.usecase.GetPointsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -34,6 +35,8 @@ class PointsViewModel @Inject constructor(
     private val _ledger = MutableStateFlow(LedgerUiState())
     val ledger: StateFlow<LedgerUiState> = _ledger
 
+    private var pointsJob: Job? = null
+
     init {
         refresh()
     }
@@ -44,9 +47,19 @@ class PointsViewModel @Inject constructor(
         loadFirstPage()
     }
 
-    fun loadPoints() {
-        _points.value = Load.Loading
-        viewModelScope.launch {
+    fun loadPoints() = startPointsQuery(showLoading = true)
+
+    /**
+     * 回到畫面時只重查點數（建單會改變占用點數，但不寫明細）。
+     * 目前是 Success 時不切 Loading，失敗才變 Error。
+     */
+    fun refreshPoints() = startPointsQuery(showLoading = _points.value !is Load.Success)
+
+    /** loadPoints 與 refreshPoints 共用同一個 Job：新的查詢取消前一次，舊回應不能覆蓋新回應。 */
+    private fun startPointsQuery(showLoading: Boolean) {
+        pointsJob?.cancel()
+        if (showLoading) _points.value = Load.Loading
+        pointsJob = viewModelScope.launch {
             _points.value = when (val r = getPoints()) {
                 is DomainResult.Success -> Load.Success(r.value)
                 is DomainResult.Failure -> Load.Error(r.error.message)

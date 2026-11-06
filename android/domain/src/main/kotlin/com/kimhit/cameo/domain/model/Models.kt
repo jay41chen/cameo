@@ -17,3 +17,34 @@ data class LedgerEntry(
 )
 
 data class LedgerPage(val items: List<LedgerEntry>, val nextCursor: String?)
+
+/** [resetsAt] 保留後端的 ISO 8601 字串；[display] 為後端給的顯示文字。 */
+data class Quota(val remaining: Int, val resetsAt: String, val display: String)
+
+enum class CameoStatus { AWAITING_UPLOAD, UPLOADED, QUEUED, GENERATING, SUCCEEDED, FAILED, EXPIRED, UNKNOWN }
+
+data class Cameo(
+    val id: String,
+    val clip: Clip,
+    val status: CameoStatus,
+    val displayTitle: String?,
+    val displayMessage: String?,
+)
+
+data class CameoUpload(val url: String, val expiresAt: String)
+
+data class CameoOrder(val cameo: Cameo, val upload: CameoUpload?)
+
+enum class PendingStep { CREATE, UPLOAD, SUBMIT, TRACK }
+
+/** 本機草稿。[clientRequestId] 即建單的 Idempotency-Key。 */
+data class PendingCameo(
+    val clientRequestId: String,
+    val clipId: String,
+    val cameoId: String?,
+    val step: PendingStep,
+    val lastError: String?,
+)
+
+/** [order] 為 null 表示沒有 cameoId，或暫時查不到狀態。 */
+data class UnfinishedCameo(val pending: PendingCameo, val order: CameoOrder?)

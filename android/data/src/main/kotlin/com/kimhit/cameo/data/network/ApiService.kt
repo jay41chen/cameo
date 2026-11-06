@@ -3,7 +3,11 @@ package com.kimhit.cameo.data.network
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import retrofit2.Response
+import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.Header
+import retrofit2.http.POST
+import retrofit2.http.Path
 import retrofit2.http.Query
 
 @Serializable
@@ -32,6 +36,33 @@ internal data class LedgerResponse(
 )
 
 @Serializable
+internal data class QuotaResponse(
+    val remaining: Int,
+    @SerialName("resets_at") val resetsAt: String,
+    val display: String,
+)
+
+@Serializable
+internal data class CreateCameoRequest(@SerialName("clip_id") val clipId: String)
+
+@Serializable
+internal data class CameoDisplayDto(val title: String? = null, val message: String? = null)
+
+@Serializable
+internal data class CameoDto(
+    val id: String,
+    val clip: ClipDto,
+    val status: String,
+    val display: CameoDisplayDto? = null,
+)
+
+@Serializable
+internal data class UploadDto(val url: String, @SerialName("expires_at") val expiresAt: String)
+
+@Serializable
+internal data class CameoOrderResponse(val cameo: CameoDto, val upload: UploadDto? = null)
+
+@Serializable
 internal data class ErrorBody(
     val code: String? = null,
     val message: String? = null,
@@ -47,4 +78,16 @@ internal interface ApiService {
 
     @GET("v1/points/ledger")
     suspend fun ledger(@Query("cursor") cursor: String?): Response<LedgerResponse>
+
+    @GET("v1/quota")
+    suspend fun quota(): Response<QuotaResponse>
+
+    @POST("v1/cameos")
+    suspend fun createCameo(
+        @Header("Idempotency-Key") idempotencyKey: String,
+        @Body body: CreateCameoRequest,
+    ): Response<CameoOrderResponse>
+
+    @GET("v1/cameos/{id}")
+    suspend fun getCameo(@Path("id") id: String): Response<CameoOrderResponse>
 }

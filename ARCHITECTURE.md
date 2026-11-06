@@ -50,7 +50,7 @@ flowchart LR
 | 只能用當場自拍 | App 負責只提供相機入口；後端不驗來源；裝置驗證只寫文件 | App 守不住：來源無法由後端驗證，真正防堵需要平台完整性檢查，只寫文件 `[待確認]`（其餘理由） |
 | 生成短片一律帶浮水印 | 後端 | 後端只保存帶浮水印的成品，不提供無浮水印版本；真實情境由誰燒錄 `[待確認]` |
 | 預設僅本人可看；分享後拿連結者可看；可隨時取消分享 | 後端（連結與取消） | 權限判斷必須在後端；細節待實作後補，連結設計 `[待確認]` |
-| 每人每天最多 N 次（與點數無關） | 後端（`DAILY_LIMIT`、台北時間、建單占用）；App 只顯示 | App 守不住的規則；App 依 `GET /v1/quota` 顯示並停用入口，`429` 時重查 |
+| 每人每天最多 N 次（與點數無關） | 後端（`DAILY_LIMIT`、台北時間、建單占用）；App 只顯示 | App 守不住的規則；App 依 `GET /v1/quota` 在清單上方顯示；`remaining = 0` 時片段仍可點，點了跳提示、不進確認支付，`429` 時回清單重查 |
 | 生成失敗退點 | 後端（同一交易退點寫 `REFUND`） | 點數正確性必須由單一事實來源在交易內保證 `[待確認]` |
 | 點數使用明細 | 後端提供明細（`CHARGE`、`REFUND`）；App 顯示 | 明細與點數同一交易寫入，避免不一致 `[待確認]` |
 | 照片隱私 | App 上傳成功刪本機照片；後端訂單結束後刪自拍 | 兩邊各自在持有端清理 `[待確認]` |
@@ -64,7 +64,7 @@ flowchart LR
 - `:domain`：純 Kotlin（只依賴 Kotlin 標準庫與 coroutines），放 usecase、repository 介面與模型；視為可獨立成 repo 的 submodule；無 `@Inject`；不用 `java.*`。
 - `:data`：repository 實作，預設 `internal`，依功能分資料夾。
 - `:app`：View／ViewModel、Hilt 組裝、平台實作（相機、通知、WorkManager 等）。
-- 後端同樣走 Clean Architecture：`backend/internal/{domain,usecase,adapter/...}`，Port 在 `usecase`，由 Go 測試檢查 import 方向。
+- 後端同樣走 Clean Architecture：`backend/internal/{domain,usecase,adapter/...,app}`（`app` 提供服務啟動與逾期掃描，`backend/cmd` 負責組裝）與 `backend/test`（整合測試、測試用資料庫工具），Port 在 `usecase`，由 Go 測試檢查 import 方向。
 
 **明年做另一個平台（iOS）可不用重新設計的部分：** 後端與 API 契約、狀態機與點數／額度規則、`:domain` 的規則與模型概念（以 Swift 重新表達）。需重寫的是 View、平台實作（相機、推播、背景任務）。`[待確認]`（iOS 實際重用程度）
 

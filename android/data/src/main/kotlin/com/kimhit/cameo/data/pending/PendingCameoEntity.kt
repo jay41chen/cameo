@@ -4,7 +4,7 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
-/** 對應 spec.md「Room pending_cameos」。這一輪只驗建置，尚未接流程。 */
+/** 對應 spec.md「Room pending_cameos」。目前由確認支付流程寫入 CREATE／UPLOAD 兩個 step，其餘 step 與 [photoPath] 尚未使用。 */
 @Entity(tableName = "pending_cameos")
 internal data class PendingCameoEntity(
     @PrimaryKey @ColumnInfo(name = "client_request_id") val clientRequestId: String,

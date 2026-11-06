@@ -1,6 +1,6 @@
 # 客串短劇：規格
 
-> 狀態：進行中。本文件描述「將實作」的內容；第 2 輪的片段、點數、點數明細已實作並驗證（API 37 模擬器）；第 3 輪後端的建單、額度、逾期釋放已實作，App 端與其餘尚未實作。設計由討論決定。推論出、尚未確認的理由標 `[待確認]`。
+> 狀態：進行中。本文件描述「將實作」的內容；第 2 輪的片段、點數、點數明細已實作並驗證（API 37 模擬器）；第 3 輪後端的建單、額度、逾期釋放已實作；App 已有額度顯示、確認支付、本機草稿，但只有單元測試驗證，尚未接真實後端驗證。其餘（拍照、上傳、送出、通知、訂單清單）尚未實作。設計由討論決定。推論出、尚未確認的理由標 `[待確認]`。
 
 ## 1. 問題定義
 
@@ -36,7 +36,7 @@
 App 行為：
 
 - `remaining > 0`：片段清單顯示 `display`。
-- `remaining = 0`：顯示已用完並停用新客串入口；未完成的送出不受影響。
+- `remaining = 0`：清單上方顯示已用完與重置時間；片段仍可點，點了跳提示，不進確認支付、不建單；未完成的客串不受影響。
 - 建單遇 `429`：顯示後端 `message` 並重新查詢 quota。
 - 與訂單同步時機一起查（開啟 App、回前景、收到提醒、重連），建單後也查。
 
@@ -50,7 +50,7 @@ App 行為：
 - 送出後失敗：退點並寫 `REFUND` 明細。
 - 送出晚於期限：回 `410`，不扣款。
 - `GET /v1/points` 回 `{available, held}`，`available = balance - held`。
-- 確認支付提示：「已占用 10 點，送出後才扣款」。
+- 確認支付提示：確認前顯示「確認後會占用 N 點，送出後才扣款」；建單後顯示後端 `display`（「已占用 N 點，送出後才扣款」）。
 - 訂單回傳 `points_state`：`HELD`、`CHARGED`、`REFUNDED`、`RELEASED`。
 - 轉為終態、寫入退點／釋放占用、退還額度，都在同一個資料庫交易內完成。
 
@@ -169,9 +169,19 @@ registry 放 adapter 層，提供 debug API。異常用 JSON 情境檔（`backen
 
 訂單結束且通知發出後，在同一交易刪除該列（列不存在即已通知）。點數、額度、訂單狀態、片段、明細不放 Room。
 
+建單失敗時草稿的處理：
+
+| 錯誤 | 此 key 有訂單嗎 | 草稿 | 畫面 |
+|---|---|---|---|
+| `402`、`429`、`404 CLIP_NOT_FOUND` | 確定沒有（後端查過冪等鍵才回） | 刪除 | 顯示訊息，回片段清單 |
+| `5xx`、網路錯誤、回應遺失 | 不確定 | 保留 | 顯示「重試」，用同一個 key |
+| 其他 `retryable=false`（`400`、`401`、`409`、`426`、非 JSON 4xx） | 不確定 | 保留並記錄錯誤 | 顯示訊息，不顯示重試；未完成列可「繼續」（同一個 key）或「移除」 |
+
+移除後，如果該 key 其實已建單，訂單只占用點數與當日額度、沒有扣款，由後端在上傳期限後釋放。
+
 ## 11. 後端架構
 
-目錄：`backend/internal/{domain,usecase,adapter/{http,postgres,vendor,realtime}}`，`cmd` 負責組裝。以 Go 測試檢查 import 方向。`vendor-sim` 不套分層。
+目錄：`backend/internal/{domain,usecase,adapter/{http,postgres,vendor,realtime},app}`，`cmd` 負責組裝；測試用的整合測試與資料庫工具在 `backend/test`。以 Go 測試檢查 import 方向。`vendor-sim` 不套分層。
 
 Port 定義在 `usecase`：`TxRunner`、`Tx`、`Queries`、`FileStore`、`VendorClient`、`EventPublisher`、`Clock`。
 
@@ -186,6 +196,7 @@ type TxRunner interface {
 ## 12. Backlog
 
 - 位元組續傳。
+- access token／refresh token：MVP 假設已登入、使用固定測試 token，沒有登入畫面；做完 MVP 再評估。
 - 離線優先：快取只用於顯示，事實來源仍是後端 API；離線時標示更新時間；不憑快取判斷能否建單。
 
 ## 13. Iteration
