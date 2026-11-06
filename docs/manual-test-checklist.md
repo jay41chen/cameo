@@ -95,3 +95,60 @@ Room 草稿：`adb exec-out run-as com.kimhit.cameo cat databases/pending.db`（
 - 確認頁載入失敗的整頁錯誤沒有截圖（見上方「後端停機時直接點片段」一項，也未作為預期行為）。
 - 外觀問題（留待後續 UI 修正，本輪不改程式）：狀態列在淺色背景幾乎看不見（時間與圖示為白色）、底部導覽列沒有圖示。回清單時曾拍到確認頁內容與底部導覽列同框（s17-0s.png）；先後順序與持續時間未測，判斷只影響外觀 [待確認]。
 - 上傳、送出、通知、背景同步、訂單清單尚未實作。
+
+## 第 4 輪：拍照
+
+### 環境
+
+- 模擬器：AVD `Pixel_10_Pro`（API 37），以 `-no-snapshot-save -no-boot-anim -no-audio -camera-front emulated -camera-back virtualscene` 啟動；相機畫面是模擬器的虛擬畫面，不是真實鏡頭，方向測試力道有限（見未涵蓋）。
+- 後端：`docker compose -p cameo42 up --build -d`；步驟 10 另以 `UPLOAD_TTL=45s EXPIRY_SWEEP_INTERVAL=2s DAILY_LIMIT=10 docker compose -p cameo42 up -d api` 重建 api（沿用同一個 DB）。
+- CameraX `1.6.2`；以 uiautomator 與 `adb shell input tap` 操作；證據在 repo 外的 `~/cameo-iter4-evidence/`。
+- 步驟 7 之後的「確認失敗」做法：先在 api 正常時進確認頁（頁面載入需要 api），再 `stop api`，按「確認支付」。api 停著時進確認頁只會看到整頁「發生錯誤，請稍後再試」＋「重試」（確認頁載入片段失敗，非本輪功能）。
+- 未完成列「繼續」是否進相機依列載入當下的 `photoPath`；刪檔後需讓清單重新載入（Home 後回前景）才會改判。
+
+### 步驟
+
+| # | 步驟 | 預期 | 實際與證據 |
+|---|---|---|---|
+| 1 | 新安裝，點「雨夜重逢」 | 進相機頁、出現權限對話框；按「Don't allow」後顯示「需要相機權限才能拍攝自拍」、「允許相機」「前往設定」 | 符合。再按「前往設定」開啟系統 App info 頁。`02-permission-dialog.png`、`02-ui.txt`、`03-denied.png`、`04-settings.png` |
+| 2 | 以 `pm grant` 授權（代替在設定頁手動開啟），按返回 | 回 App 後權限重查，顯示取景畫面（非黑畫面） | 符合，顯示虛擬相機畫面與「拍照」。`05-camera-viewfinder.png` |
+| 3 | 拍照 →「重拍」→ 再拍 →「使用這張」 | 預覽方向正常；重拍後舊暫存被刪；進確認頁 | 符合：`cache/captures` 重拍後為空，再拍有新檔；確認頁顯示片段名與「確認支付」。EXIF `Orientation=8（ROTATE_270）`（`file` 顯示為 lower-left；原圖 1440x1080），預覽以轉正後顯示。取景（Preview）為鏡像，存檔與預覽（使用者按「使用這張」前看到的照片）不鏡像；鏡像分支（`FLIP_*`、`TRANSPOSE`、`TRANSVERSE`）沒有在模擬器驗到。`06-*`、`08-*`、`09-confirm.png`、`10-jpeg-check.txt` |
+| 4 | 預覽時旋轉（`user_rotation 1`，之後改回） | 照片仍在 | 符合，橫向仍顯示同一張、暫存檔同一個。`07-preview-rotated.png`、`07-captures.txt` |
+| 5 | 確認支付 | 畫面「等待上傳」；`files/selfies/<key>.jpg` 存在且為 JPEG；Room `photo_path` 正確；DB `AWAITING_UPLOAD`/`HELD`；暫存檔已移走 | 符合：檔案 `FFD8FF`（`file` 判定 JPEG 1440x1080）；Room `step=UPLOAD`、`photo_path=/data/user/0/com.kimhit.cameo/files/selfies/<key>.jpg`；DB `idempotency_key`＝Room key；`cache/captures` 為空。`10-*` |
+| 6 | 強制停止後重開 | 未完成列與照片仍在 | 符合。`11-*` |
+| 7 | 停 api 後確認失敗；回清單；「繼續」；`start api`；確認 | Room `CREATE` 且有 `photo_path`；「繼續」直接進確認頁；成功且同 key | 符合：失敗後 Room 為 `CREATE`、有 `photo_path`、`files/selfies` 有檔、`cache/captures` 為空；「繼續」進確認頁（非相機）；成功後 DB 只有 1 筆該 key。`13-*`、`14-*`、`15-*`、`16-*` |
+| 8 | CREATE 草稿按「移除」 | 列與檔案消失 | 符合：Room 少一列、`files/selfies` 少一檔。`19-*` |
+| 9 | 刪掉 CREATE 草稿的照片（`run-as rm`）、Home 後回前景，按「繼續」 | 進相機，不是確認頁 | 符合（Room 欄位 `photo_path` 仍留舊值，但 list 回傳 null）。`18-*`。之後在相機重拍並確認，同一 key（`11ac807f-…`）的 `files/selfies` 檔案由刪除前的 14:29／38382 bytes 變為 14:31／38597 bytes，Room 列仍為 `CREATE` 且 `photo_path` 指向同一路徑（`17-selfies-draft.txt`、`19-selfies-before-remove.txt`、`19-room-before-remove.txt`）；步驟 8 的「移除」是在這之後做的 |
+| 10 | 逾期設定下建單，等逾期，按「重新客串」 | 舊檔被刪、進相機 | 符合：逾期前 `files/selfies` 有該檔，按後該檔消失，畫面為相機。`21-*`、`22-*` |
+| 11 | 額度用完時點片段 | 提示、不進相機 | 符合：顯示「今日客串次數已用完，2026-11-07 00:00 重置」。`20-quota-zero.png`、`20-ui.txt` |
+| 12 | 一次指令連點同一片段 3 下，按一次返回 | 只有一層相機頁 | 符合：返回後直接回清單。`12-*` |
+
+### 單元測試與 mutation（JVM）
+
+修正後（相機例外處理、過期刪照片、文案、Manifest）的全量結果：`:domain:test` 27 筆、`:data:testDebugUnitTest` 36 筆、`:app:testDebugUnitTest` 60 筆，共 123 筆，0 失敗、0 錯誤、0 略過（`./gradlew :domain:test :data:testDebugUnitTest :app:testDebugUnitTest --rerun-tasks`，筆數取自各模組 `build/test-results` XML）。
+
+修正後跑過的 mutation（各自只改一處、確認真的改到、跑對應模組、還原後 `cmp` 一致），均被測試抓到：
+
+| 改動 | 被抓到的測試 |
+|---|---|
+| `markCreated` 清掉 `photoPath` | `PendingCameoRepositoryTest.markCreated_keepsPhotoPath` |
+| `CaptureFilesImpl.deleteOthers` 忽略 `keep` | `CaptureFilesImplTest.deleteOthers_keepsKeepAndDeletesOthers` |
+| `GetUnfinishedCameosUseCase` 不刪 EXPIRED 照片 | `CameoUseCasesTest.unfinished_expiredDeletesPhotoButKeepsRow` |
+| `cameraCatching` 吞掉 `CancellationException` | `CameraCatchingTest.cancellation_isRethrown` |
+
+未被測試抓到：`PendingCameoRepositoryImpl.delete` 把 `NonCancellable` 拿掉（刪檔被取消打斷）；取消時序難以穩定重現，沒有寫測試，只靠讀碼。
+
+此前（修正前）的 mutation 輸出仍存於 `~/cameo-iter4-evidence/mut-a.txt` 至 `mut-e.txt`，修正後沒有重跑。
+
+### 未涵蓋
+
+- `PhotoMissing` 畫面（「照片已遺失，請重新拍照」）未在模擬器出現過；只有單元測試涵蓋。步驟 9 驗到的是列的判斷提前改走相機。
+- 拍照失敗畫面（「拍照失敗，請再試一次」）、「這台裝置無法使用相機」、永久拒絕後的系統行為、從系統設定手動開啟權限（步驟 2 用 `pm grant` 代替）未在模擬器驗證。
+- 預覽方向只用虛擬相機（EXIF `Orientation=8（ROTATE_270）`）驗到一種；鏡像分支沒有在模擬器驗到；其他方向、真機未驗。取景為鏡像、存檔與預覽不鏡像（自拍水平鏡射已列 spec 第 12 節 Backlog）。
+- 程序在確認途中被系統回收，可能誤判「照片已遺失」，最多多拍一次。
+- 程序被回收後回到 Ready 再按確認，可能建出第二張單（只占用點數、不扣款；第 3 輪已存在，預計 4.3 處理）。
+- 本輪審查後的修正（相機初始化／綁定失敗不閃退並顯示「這台裝置無法使用相機」、過期訂單刪照片、「照片不存在，請重新拍照」文案、Manifest 的 `camera` 改為非必要）只有單元測試或讀碼，沒有在模擬器重驗，留到 4.4。
+- 相機頁處理程序被系統回收後的 `SavedStateHandle` 還原，只有單元測試涵蓋；模擬器只驗旋轉。
+- 逾期確認頁的「重新客串」按鈕現在會導到相機；此路徑未在模擬器驗證，且逾期列「移除」後舊檔被刪也未在模擬器驗（只驗「重新客串」）。
+- 不加 `-camera-front emulated` 的 AVD 預設相機未測。
+- 上傳、送出、通知尚未實作。

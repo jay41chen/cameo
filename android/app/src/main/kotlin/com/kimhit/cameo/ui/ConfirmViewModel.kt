@@ -9,6 +9,7 @@ import com.kimhit.cameo.domain.model.Clip
 import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.usecase.ConfirmCameoUseCase
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
+import com.kimhit.cameo.domain.usecase.PHOTO_MISSING
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,15 +28,23 @@ sealed interface ConfirmUiState {
     data class Created(val order: CameoOrder) : ConfirmUiState
     data class Rejected(val message: String?) : ConfirmUiState
     data class Expired(val clip: Clip, val title: String?, val message: String?) : ConfirmUiState
+    /** 本機照片遺失，需要重新拍照。 */
+    data object PhotoMissing : ConfirmUiState
 }
 
 @HiltViewModel
 class ConfirmViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
     private val getClips: GetClipsUseCase,
     private val confirmCameo: ConfirmCameoUseCase,
 ) : ViewModel() {
     private val clipId: String = checkNotNull(savedStateHandle["clipId"])
+
+    /**
+     * 相機暫存檔路徑。第一次確認（PHOTO_MISSING 以外的結果）之後檔案已被移走，
+     * 之後的重試改用草稿已有的照片，所以清掉。
+     */
+    private var photo: String? = savedStateHandle[PHOTO_KEY]
 
     private val _state = MutableStateFlow<ConfirmUiState>(ConfirmUiState.Loading)
     val state: StateFlow<ConfirmUiState> = _state
@@ -62,7 +71,12 @@ class ConfirmViewModel @Inject constructor(
         if (current.submitting) return
         _state.value = current.copy(submitting = true, error = null)
         viewModelScope.launch {
-            _state.value = when (val r = confirmCameo(current.clip.id)) {
+            val result = confirmCameo(current.clip.id, photo)
+            if (!(result is DomainResult.Failure && result.error.code == PHOTO_MISSING)) {
+                photo = null
+                savedStateHandle[PHOTO_KEY] = null
+            }
+            _state.value = when (val r = result) {
                 is DomainResult.Success ->
                     if (r.value.cameo.status == CameoStatus.EXPIRED) {
                         ConfirmUiState.Expired(current.clip, r.value.cameo.displayTitle, r.value.cameo.displayMessage)
@@ -70,7 +84,9 @@ class ConfirmViewModel @Inject constructor(
                         ConfirmUiState.Created(r.value)
                     }
                 is DomainResult.Failure ->
-                    if (r.error.retryable) {
+                    if (r.error.code == PHOTO_MISSING) {
+                        ConfirmUiState.PhotoMissing
+                    } else if (r.error.retryable) {
                         current.copy(submitting = false, error = r.error.message, failed = true)
                     } else {
                         ConfirmUiState.Rejected(r.error.message)
@@ -78,10 +94,6 @@ class ConfirmViewModel @Inject constructor(
             }
         }
     }
-
-    /** Expired 後重新客串；草稿已被 use case 刪除，下次確認會產生新 key。 */
-    fun restart() {
-        val current = _state.value as? ConfirmUiState.Expired ?: return
-        _state.value = ConfirmUiState.Ready(current.clip)
-    }
 }
+
+private const val PHOTO_KEY = "photo"

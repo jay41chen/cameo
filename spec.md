@@ -1,6 +1,6 @@
 # 客串短劇：規格
 
-> 狀態：進行中。本文件描述「將實作」的內容；第 2 輪的片段、點數、點數明細已實作並驗證（API 37 模擬器）；第 3 輪後端的建單、額度、逾期釋放已實作；第 4 輪後端的上傳自拍、送出（扣點、寫 `CHARGE` 明細）已實作並以真實 Postgres 與 Docker 驗證，App 尚未接上；App 的額度顯示、確認支付、本機草稿已在 API 37 模擬器接真實後端驗證（含已建單再點同片段拿新 key、CREATE 草稿重用同 key；確認時 `401` 未在模擬器驗證，只由單元測試涵蓋；「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬，非真實斷線；其他例外與未驗項目見 `docs/manual-test-checklist.md` 第 3 輪）。其餘（App 的拍照、上傳、送出、通知、訂單清單）尚未實作。設計由討論決定。推論出、尚未確認的理由標 `[待確認]`。
+> 狀態：進行中。本文件描述「將實作」的內容；第 2 輪的片段、點數、點數明細已實作並驗證（API 37 模擬器）；第 3 輪後端的建單、額度、逾期釋放已實作；第 4 輪後端的上傳自拍、送出（扣點、寫 `CHARGE` 明細）已實作並以真實 Postgres 與 Docker 驗證，App 尚未接上；App 的額度顯示、確認支付、本機草稿已在 API 37 模擬器接真實後端驗證（含已建單再點同片段拿新 key、CREATE 草稿重用同 key；確認時 `401` 未在模擬器驗證，只由單元測試涵蓋；「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬，非真實斷線；其他例外與未驗項目見 `docs/manual-test-checklist.md` 第 3 輪）。第 4 輪 App 的拍照（CameraX 前鏡頭拍照、預覽、重拍、確認支付時把照片移入 `filesDir/selfies`）已在 API 37 模擬器驗證（相機為模擬器虛擬相機；相機權限拒絕與設定返回、旋轉、強制停止、草稿續拍、逾期清檔見 `docs/manual-test-checklist.md` 第 4 輪）。其餘（App 的上傳、送出、通知、訂單清單）尚未實作。設計由討論決定。推論出、尚未確認的理由標 `[待確認]`。
 
 ## 1. 問題定義
 
@@ -128,7 +128,7 @@ registry 放 adapter 層，提供 debug API。異常用 JSON 情境檔（`backen
 ## 9. 技術基礎
 
 - 後端：Go、Docker、Postgres、`vendor-sim`（模擬廠商）。
-- Android：Kotlin、Jetpack Compose、Hilt、Room、KSP、WorkManager、OkHttp／Retrofit、CameraX、Media3。
+- Android：Kotlin、Jetpack Compose、Hilt、Room、KSP、WorkManager、OkHttp／Retrofit、CameraX（`1.6.2`，`camera-core`、`camera-camera2`、`camera-lifecycle`、`camera-view`）、Media3。
 - App 與後端都走 Clean Architecture。
 - 廠商 webhook 以 HMAC 驗簽；所有會重送的操作做冪等。
 
@@ -164,7 +164,7 @@ registry 放 adapter 層，提供 debug API。異常用 JSON 情境檔（`backen
 | `clip_id` | 片段 |
 | `cameo_id` | 建單後取得 |
 | `step` | `CREATE`、`UPLOAD`、`SUBMIT`、`TRACK` |
-| `photo_path` | 照片在私有目錄；上傳成功刪檔並清空 |
+| `photo_path` | 照片在私有目錄；上傳成功刪檔並清空；查到訂單為 `EXPIRED` 時也刪檔並清空（資料列保留，讓使用者看到過期並選擇重新客串或移除） |
 | `last_error` | 最近一次錯誤 |
 | `updated_at` | 更新時間 |
 
@@ -213,11 +213,12 @@ type FileStore interface {
 - 自拍 checksum（X-Content-SHA256、422）：目前靠 Content-Length 發現截斷並整檔重傳，先不做。
 - access token／refresh token：MVP 假設已登入、使用固定測試 token，沒有登入畫面；做完 MVP 再評估。
 - 離線優先：快取只用於顯示，事實來源仍是後端 API；離線時標示更新時間；不憑快取判斷能否建單。
+- 自拍水平鏡射：讓預覽與取景方向一致；上傳給廠商的檔案是否也鏡射，實作時再決定。
 - 自拍儲存的崩潰一致性：rename 後當機未 fsync 目錄可能遺失檔案；掃描 commit 後、刪檔前當機，EXPIRED 訂單的檔案不會再被刪。MVP 只記錄，不處理。
 
 ## 13. Iteration
 
-每輪都做後端與 App，文件更新列入驗收。
+每輪都做後端與 App，文件更新列入驗收。模擬器 e2e 只在第 4、5、8、9 輪跑；其他階段跑單元測試和建置，單元測試碰不到的部分才做最小冒煙測試。
 
 | # | 內容 | 預估 |
 |---|---|---|

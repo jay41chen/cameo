@@ -63,7 +63,44 @@ class FakePendingRepo : PendingCameoRepository {
         rows.removeAll { it.clientRequestId == clientRequestId }
     }
 
+    override suspend fun deletePhoto(clientRequestId: String) {
+        val i = rows.indexOfFirst { it.clientRequestId == clientRequestId }
+        if (i >= 0) rows[i] = rows[i].copy(photoPath = null)
+    }
+
+    /** 這些來源路徑視為不存在，attachPhoto 回 false。 */
+    val missingSources = mutableSetOf<String>()
+    val attached = mutableListOf<Pair<String, String>>()
+
+    override suspend fun attachPhoto(clientRequestId: String, sourcePath: String): Boolean {
+        if (sourcePath in missingSources) return false
+        val i = rows.indexOfFirst { it.clientRequestId == clientRequestId }
+        if (i < 0) return false
+        attached += clientRequestId to sourcePath
+        rows[i] = rows[i].copy(photoPath = "/photos/$clientRequestId.jpg")
+        return true
+    }
+
     override suspend fun list(): List<PendingCameo> = rows.toList()
+}
+
+/** 記錄檔案操作，不碰真實檔案系統。 */
+class FakeCaptureFiles(val existing: MutableSet<String> = mutableSetOf()) : CaptureFiles {
+    val deleted = mutableListOf<String>()
+    var keptByCleanup: String? = "unset"
+    private var n = 0
+
+    override fun newFile(): String = "/cache/captures/${++n}.jpg".also { existing += it }
+    override fun exists(path: String) = path in existing
+    override fun delete(path: String) {
+        deleted += path
+        existing -= path
+    }
+
+    override fun deleteOthers(keep: String?) {
+        keptByCleanup = keep
+        existing.filter { it != keep }.forEach { delete(it) }
+    }
 }
 
 fun testOrder(status: CameoStatus = CameoStatus.AWAITING_UPLOAD, id: String = "u1") =

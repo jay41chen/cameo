@@ -44,6 +44,8 @@ data class PendingCameo(
     val cameoId: String?,
     val step: PendingStep,
     val lastError: String?,
+    /** 正式路徑的照片；沒有照片或檔案已遺失時為 null。路徑由資料層決定。 */
+    val photoPath: String? = null,
 )
 
 /** [order] 為 null 表示沒有 cameoId，或暫時查不到狀態。 */

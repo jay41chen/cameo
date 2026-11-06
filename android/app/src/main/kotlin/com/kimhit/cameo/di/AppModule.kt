@@ -14,16 +14,25 @@ import com.kimhit.cameo.domain.usecase.GetLedgerPageUseCase
 import com.kimhit.cameo.domain.usecase.GetPointsUseCase
 import com.kimhit.cameo.domain.usecase.GetQuotaUseCase
 import com.kimhit.cameo.domain.usecase.GetUnfinishedCameosUseCase
+import android.content.Context
+import com.kimhit.cameo.ui.CaptureFiles
+import com.kimhit.cameo.ui.CaptureFilesImpl
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import java.io.File
 
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
     @Provides
     fun provideDataConfig(): DataConfig = DataConfig(BuildConfig.BASE_URL, BuildConfig.API_TOKEN)
+
+    @Provides
+    fun provideCaptureFiles(@ApplicationContext context: Context): CaptureFiles =
+        CaptureFilesImpl(File(context.cacheDir, "captures"))
 
     @Provides
     fun provideGetClips(repository: ClipRepository) = GetClipsUseCase(repository)

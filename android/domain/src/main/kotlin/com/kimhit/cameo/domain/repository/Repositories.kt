@@ -31,6 +31,16 @@ interface PendingCameoRepository {
     suspend fun getOrCreateDraft(clipId: String): PendingCameo
     suspend fun markCreated(clientRequestId: String, cameoId: String)
     suspend fun recordError(clientRequestId: String, message: String?)
+    /** 同時刪除照片檔。 */
     suspend fun delete(clientRequestId: String)
+
+    /** 只刪照片檔並把照片路徑設為 null，資料列保留；檔案不存在不算錯。 */
+    suspend fun deletePhoto(clientRequestId: String)
+
+    /**
+     * 把 [sourcePath] 的檔案移到正式位置並更新草稿的照片路徑，覆蓋舊照片。成功回 true。
+     * 來源檔不存在回 false，且不動既有照片與資料列。[sourcePath] 已是正式路徑時直接回 true。
+     */
+    suspend fun attachPhoto(clientRequestId: String, sourcePath: String): Boolean
     suspend fun list(): List<PendingCameo>
 }

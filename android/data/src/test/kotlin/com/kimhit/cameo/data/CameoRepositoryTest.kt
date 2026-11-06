@@ -12,6 +12,7 @@ import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.model.PendingStep
 import com.kimhit.cameo.domain.model.Quota
+import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -27,9 +28,13 @@ import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
+import org.junit.rules.TemporaryFolder
 import org.junit.Test
 
 class CameoRepositoryTest {
@@ -178,7 +183,14 @@ class PendingCameoRepositoryTest {
     private val dao = FakeDao()
     private var n = 0
     private var clock = 1000L
-    private val repo = PendingCameoRepositoryImpl(dao, newId = { "id-${++n}" }, now = { clock++ })
+    @get:Rule
+    val tmp = TemporaryFolder()
+
+    private val photoDir by lazy { File(tmp.root, "selfies") }
+    private val repo by lazy { PendingCameoRepositoryImpl(dao, photoDir, newId = { "id-${++n}" }, now = { clock++ }) }
+
+    private fun source(name: String, content: String): File =
+        File(tmp.newFolder(), name).apply { writeText(content) }
 
     @Test
     fun reusesCreateDraftForSameClip() = runTest {
@@ -226,5 +238,139 @@ class PendingCameoRepositoryTest {
         repo.markCreated("ghost", "u1")
         repo.recordError("ghost", "x")
         assertTrue(dao.rows.isEmpty())
+    }
+
+    @Test
+    fun attachPhoto_movesFileToCanonicalPath_andUpdatesRow() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        val src = source("shot.jpg", "AAA")
+        assertTrue(repo.attachPhoto(d.clientRequestId, src.path))
+        val target = File(photoDir, "${d.clientRequestId}.jpg")
+        assertEquals("AAA", target.readText())
+        assertFalse(src.exists())
+        assertEquals(target.path, dao.rows.getValue(d.clientRequestId).photoPath)
+        assertEquals(target.path, repo.getOrCreateDraft("c1").photoPath)
+        assertFalse(File(photoDir, "${d.clientRequestId}.jpg.tmp").exists())
+    }
+
+    @Test
+    fun attachPhoto_missingSource_returnsFalse_keepsOldPhotoAndRow() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        assertTrue(repo.attachPhoto(d.clientRequestId, source("a.jpg", "OLD").path))
+        val before = dao.rows.getValue(d.clientRequestId)
+        assertFalse(repo.attachPhoto(d.clientRequestId, File(tmp.root, "nope.jpg").path))
+        assertEquals("OLD", File(photoDir, "${d.clientRequestId}.jpg").readText())
+        assertEquals(before, dao.rows.getValue(d.clientRequestId))
+    }
+
+    @Test
+    fun attachPhoto_overwritesOldPhoto() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        assertTrue(repo.attachPhoto(d.clientRequestId, source("a.jpg", "OLD").path))
+        assertTrue(repo.attachPhoto(d.clientRequestId, source("b.jpg", "NEW").path))
+        assertEquals("NEW", File(photoDir, "${d.clientRequestId}.jpg").readText())
+        assertEquals(listOf("${d.clientRequestId}.jpg"), photoDir.list()!!.toList())
+    }
+
+    @Test
+    fun attachPhoto_samePathAsCanonical_isNoOpTrue() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        assertTrue(repo.attachPhoto(d.clientRequestId, source("a.jpg", "X").path))
+        val canonical = File(photoDir, "${d.clientRequestId}.jpg")
+        assertTrue(repo.attachPhoto(d.clientRequestId, canonical.path))
+        assertEquals("X", canonical.readText())
+    }
+
+    @Test
+    fun attachPhoto_unknownDraft_returnsFalse_leavesSource() = runTest {
+        val src = source("a.jpg", "X")
+        assertFalse(repo.attachPhoto("ghost", src.path))
+        assertTrue(src.exists())
+    }
+
+    @Test
+    fun delete_removesRowAndPhotoFile() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.attachPhoto(d.clientRequestId, source("a.jpg", "X").path)
+        val canonical = File(photoDir, "${d.clientRequestId}.jpg")
+        assertTrue(canonical.exists())
+        repo.delete(d.clientRequestId)
+        assertFalse(canonical.exists())
+        assertTrue(dao.rows.isEmpty())
+    }
+
+    @Test
+    fun delete_withoutPhotoFile_isNotAnError() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.delete(d.clientRequestId)
+        assertTrue(dao.rows.isEmpty())
+    }
+
+    @Test
+    fun list_and_draft_returnNullPhotoWhenFileLost() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.attachPhoto(d.clientRequestId, source("a.jpg", "X").path)
+        assertEquals(1, repo.list().count { it.photoPath != null })
+        File(photoDir, "${d.clientRequestId}.jpg").delete()
+        assertNull(repo.list()[0].photoPath)
+        assertNull(repo.getOrCreateDraft("c1").photoPath)
+        assertEquals(1, dao.rows.size) // 資料列不動
+    }
+
+    @Test
+    fun markCreated_keepsPhotoPath() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.attachPhoto(d.clientRequestId, source("a.jpg", "X").path)
+        val before = dao.rows.getValue(d.clientRequestId).photoPath
+        assertNotNull(before)
+        repo.markCreated(d.clientRequestId, "u1")
+        assertEquals(before, dao.rows.getValue(d.clientRequestId).photoPath)
+    }
+
+    @Test
+    fun recordError_keepsPhotoPath() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.attachPhoto(d.clientRequestId, source("a.jpg", "X").path)
+        val before = dao.rows.getValue(d.clientRequestId).photoPath
+        assertNotNull(before)
+        repo.recordError(d.clientRequestId, "err")
+        assertEquals(before, dao.rows.getValue(d.clientRequestId).photoPath)
+    }
+
+    @Test
+    fun deletePhoto_removesFileAndNullsPath_keepsRow() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.attachPhoto(d.clientRequestId, source("a.jpg", "X").path)
+        repo.markCreated(d.clientRequestId, "u1")
+        val canonical = File(photoDir, "${d.clientRequestId}.jpg")
+        assertTrue(canonical.exists())
+        repo.deletePhoto(d.clientRequestId)
+        assertFalse(canonical.exists())
+        val row = dao.rows.getValue(d.clientRequestId)
+        assertNull(row.photoPath)
+        assertEquals("u1", row.cameoId)
+        assertEquals("UPLOAD", row.step)
+        assertEquals(1, repo.list().size)
+    }
+
+    @Test
+    fun deletePhoto_twice_secondCallDoesNotTouchUpdatedAt() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.attachPhoto(d.clientRequestId, source("a.jpg", "X").path)
+        repo.deletePhoto(d.clientRequestId)
+        val after1 = dao.rows.getValue(d.clientRequestId)
+        assertNull(after1.photoPath)
+        repo.deletePhoto(d.clientRequestId)
+        val after2 = dao.rows.getValue(d.clientRequestId)
+        assertEquals(after1.updatedAt, after2.updatedAt)
+    }
+
+    @Test
+    fun deletePhoto_withoutFileOrRow_isNotAnError() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.deletePhoto(d.clientRequestId)
+        assertNull(dao.rows.getValue(d.clientRequestId).photoPath)
+        repo.deletePhoto("ghost")
+        assertEquals(1, dao.rows.size)
     }
 }

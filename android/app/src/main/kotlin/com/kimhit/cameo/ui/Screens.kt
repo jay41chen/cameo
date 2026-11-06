@@ -44,14 +44,12 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.kimhit.cameo.domain.model.LedgerEntry
 import com.kimhit.cameo.domain.model.LedgerType
+import com.kimhit.cameo.domain.model.PendingCameo
 import com.kimhit.cameo.domain.model.UnfinishedCameo
 import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.Quota
 import com.kimhit.cameo.domain.model.Clip
 
-private const val ROUTE_CLIPS = "clips"
-private const val ROUTE_POINTS = "points"
-private const val ROUTE_CONFIRM = "confirm/{clipId}"
 internal const val GENERIC_ERROR = "發生錯誤，請稍後再試"
 internal const val EXPIRED_TITLE = "已過期"
 internal const val EXPIRED_MESSAGE = "上傳期限已過，點數沒有扣款，請重新客串。"
@@ -85,24 +83,54 @@ fun CameoRoot() {
         },
     ) { padding ->
         NavHost(nav, startDestination = ROUTE_CLIPS, modifier = Modifier.padding(padding)) {
-            composable(ROUTE_CLIPS) { ClipsScreen(throttle = throttle, onStartConfirm = { nav.navigateToConfirm(it) }) }
+            composable(ROUTE_CLIPS) {
+                ClipsScreen(
+                    throttle = throttle,
+                    onStartCamera = { nav.navigateSingleTop(cameraRoute(it)) },
+                    onContinue = { nav.navigateSingleTop(continueRoute(it)) },
+                )
+            }
             composable(ROUTE_POINTS) { PointsScreen() }
             composable(
-                ROUTE_CONFIRM,
+                ROUTE_CAMERA,
                 arguments = listOf(navArgument("clipId") { type = NavType.StringType }),
-            ) { ConfirmScreen(onBack = { nav.navigateUp() }) }
+            ) { entry ->
+                val clipId = checkNotNull(entry.arguments?.getString("clipId"))
+                // 離開相機頁，確認頁返回會回清單
+                CameraScreen(onUsePhoto = { nav.navigateSingleTop(confirmRoute(clipId, it), ROUTE_CAMERA) })
+            }
+            composable(
+                ROUTE_CONFIRM,
+                arguments = listOf(
+                    navArgument("clipId") { type = NavType.StringType },
+                    navArgument("photo") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
+            ) { entry ->
+                val clipId = checkNotNull(entry.arguments?.getString("clipId"))
+                ConfirmScreen(
+                    onBack = { nav.navigateUp() },
+                    onRetake = { nav.navigateSingleTop(cameraRoute(clipId), ROUTE_CONFIRM) },
+                )
+            }
         }
     }
 }
 
-/** launchSingleTop：快速連點不會推兩層確認頁。 */
-private fun NavController.navigateToConfirm(clipId: String) {
-    navigate("confirm/$clipId") { launchSingleTop = true }
+/** launchSingleTop：快速連點不會推兩層頁面。[popUpToRoute] 不為 null 時連同該頁一起彈出。 */
+private fun NavController.navigateSingleTop(route: String, popUpToRoute: String? = null) {
+    navigate(route) {
+        launchSingleTop = true
+        if (popUpToRoute != null) popUpTo(popUpToRoute) { inclusive = true }
+    }
 }
 
 /** 畫面回到前景（ON_RESUME）時呼叫 [action]；涵蓋首次進入、回前景、從其他畫面返回。 */
 @Composable
-private fun OnResume(action: () -> Unit) {
+internal fun OnResume(action: () -> Unit) {
     val owner = LocalLifecycleOwner.current
     val latest by rememberUpdatedState(action)
     DisposableEffect(owner) {
@@ -134,7 +162,8 @@ internal fun ErrorBox(message: String?, onRetry: () -> Unit, modifier: Modifier 
 @Composable
 fun ClipsScreen(
     throttle: ClickThrottle,
-    onStartConfirm: (String) -> Unit,
+    onStartCamera: (String) -> Unit,
+    onContinue: (PendingCameo) -> Unit,
     viewModel: ClipsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
@@ -159,9 +188,9 @@ fun ClipsScreen(
                     UnfinishedRow(
                         row = row,
                         clips = s.value,
-                        onContinue = { throttle.guarded { onStartConfirm(row.pending.clipId) } },
+                        onContinue = { throttle.guarded { onContinue(row.pending) } },
                         onRestart = {
-                            throttle.guarded { if (viewModel.restart(row)) onStartConfirm(row.pending.clipId) }
+                            throttle.guarded { if (viewModel.restart(row)) onStartCamera(row.pending.clipId) }
                         },
                         onRemove = { viewModel.remove(row) },
                     )
@@ -171,7 +200,7 @@ fun ClipsScreen(
                 Row(
                     Modifier.fillMaxWidth()
                         .clickable {
-                            throttle.guarded { if (viewModel.tryStart()) onStartConfirm(clip.id) }
+                            throttle.guarded { if (viewModel.tryStart()) onStartCamera(clip.id) }
                         }
                         .padding(16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -214,6 +243,13 @@ private fun QuotaHeader(quota: Load<Quota>, onRetry: () -> Unit) {
     HorizontalDivider()
 }
 
+/** 尚未建立訂單（cameoId == null）的未完成列文字。 */
+internal fun pendingNoOrderText(p: PendingCameo): String = when {
+    p.lastError != null -> p.lastError!!
+    p.photoPath == null -> "照片不存在，請重新拍照"
+    else -> "尚未確認是否建立成功"
+}
+
 @Composable
 private fun UnfinishedRow(
     row: UnfinishedCameo,
@@ -230,7 +266,7 @@ private fun UnfinishedRow(
         Text(clipName, style = MaterialTheme.typography.titleSmall)
         when {
             row.pending.cameoId == null -> {
-                Text(row.pending.lastError ?: "尚未確認是否建立成功")
+                Text(pendingNoOrderText(row.pending))
                 // 不經 tryStart：同 key 重送，後端會回原訂單
                 Row {
                     TextButton(onClick = onContinue) { Text("繼續") }

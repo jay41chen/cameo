@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 
 @Composable
-fun ConfirmScreen(onBack: () -> Unit, viewModel: ConfirmViewModel = hiltViewModel()) {
+fun ConfirmScreen(onBack: () -> Unit, onRetake: () -> Unit, viewModel: ConfirmViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsState()
     when (val s = state) {
         ConfirmUiState.Loading -> LoadingBox()
@@ -39,10 +39,15 @@ fun ConfirmScreen(onBack: () -> Unit, viewModel: ConfirmViewModel = hiltViewMode
             Text(s.message ?: GENERIC_ERROR)
             Button(onClick = onBack) { Text("回片段清單") }
         }
+        ConfirmUiState.PhotoMissing -> Body {
+            Text("照片已遺失，請重新拍照")
+            Button(onClick = onRetake) { Text("重新拍照") }
+        }
         is ConfirmUiState.Expired -> Body {
             Text(s.title?.takeIf { it.isNotBlank() } ?: EXPIRED_TITLE, style = MaterialTheme.typography.titleLarge)
             Text(s.message?.takeIf { it.isNotBlank() } ?: EXPIRED_MESSAGE)
-            Button(onClick = viewModel::restart) { Text("重新客串") }
+            // 逾期的草稿與照片已刪除，重新客串要重新拍照
+            Button(onClick = onRetake) { Text("重新客串") }
         }
     }
 }

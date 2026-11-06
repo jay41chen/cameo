@@ -1,6 +1,7 @@
 package com.kimhit.cameo.domain.usecase
 
 import com.kimhit.cameo.domain.model.Clip
+import com.kimhit.cameo.domain.model.DomainError
 import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.model.LedgerPage
 import com.kimhit.cameo.domain.model.CameoOrder
@@ -33,7 +34,9 @@ class GetQuotaUseCase(private val repository: QuotaRepository) {
 }
 
 /**
- * 確認支付並建單。順序固定：先寫本機草稿，才送 POST。
+ * 確認支付並建單。順序固定：先寫本機草稿，再附上照片，才送 POST。
+ * - [photoSourcePath] 不為 null 時先 attachPhoto；失敗，或沒帶路徑且草稿沒有照片，
+ *   回 [PHOTO_MISSING]、不送 POST、保留草稿。
  * - 成功且 EXPIRED：後端不會再接受這張單，刪草稿。
  * - 成功其他狀態：草稿標記為已建立（等待上傳）。
  * - 失敗且 code 屬於 [NO_ORDER_CODES]：確定沒有建單，刪草稿，下次用新 key。
@@ -44,8 +47,13 @@ class ConfirmCameoUseCase(
     private val cameos: CameoRepository,
     private val pending: PendingCameoRepository,
 ) {
-    suspend operator fun invoke(clipId: String): DomainResult<CameoOrder> {
+    suspend operator fun invoke(clipId: String, photoSourcePath: String?): DomainResult<CameoOrder> {
         val draft = pending.getOrCreateDraft(clipId)
+        if (photoSourcePath != null) {
+            if (!pending.attachPhoto(draft.clientRequestId, photoSourcePath)) return photoMissing()
+        } else if (draft.photoPath == null) {
+            return photoMissing()
+        }
         val result = cameos.createCameo(draft.clientRequestId, clipId)
         when (result) {
             is DomainResult.Success ->
@@ -65,6 +73,12 @@ class ConfirmCameoUseCase(
     }
 }
 
+/** 本機照片遺失，無法送出；不是後端錯誤，也不會送 POST。 */
+const val PHOTO_MISSING = "PHOTO_MISSING"
+
+private fun photoMissing() =
+    DomainResult.Failure(DomainError(message = null, retryable = false, code = PHOTO_MISSING))
+
 /** 後端都在查過冪等鍵之後才回這些錯誤，所以確定此 key 沒有訂單，草稿可以刪。 */
 private val NO_ORDER_CODES = setOf("INSUFFICIENT_POINTS", "DAILY_LIMIT_REACHED", "CLIP_NOT_FOUND")
 
@@ -83,7 +97,15 @@ class GetUnfinishedCameosUseCase(
                 continue
             }
             when (val r = cameos.getCameo(cameoId)) {
-                is DomainResult.Success -> out += UnfinishedCameo(row, r.value)
+                is DomainResult.Success -> {
+                    // 過期訂單用不到照片，順手刪掉（資料列保留供使用者看到並選擇重來／移除）
+                    if (r.value.cameo.status == CameoStatus.EXPIRED) {
+                        pending.deletePhoto(row.clientRequestId)
+                        out += UnfinishedCameo(row.copy(photoPath = null), r.value)
+                    } else {
+                        out += UnfinishedCameo(row, r.value)
+                    }
+                }
                 is DomainResult.Failure ->
                     if (r.error.code == "CAMEO_NOT_FOUND") {
                         pending.delete(row.clientRequestId)
