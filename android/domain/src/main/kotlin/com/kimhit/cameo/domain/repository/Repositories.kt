@@ -39,12 +39,18 @@ interface PendingCameoRepository {
     /** 同時刪除照片檔。 */
     suspend fun delete(clientRequestId: String)
 
+    /**
+     * 訂單已結束（`SUCCEEDED`／`FAILED`）：原子刪除 [cameoId] 對應的草稿列，並刪除它的本機照片。
+     * 真的刪到列才回 true；已被刪過或沒有對應草稿回 false。完成通知「只發一次」靠這個回傳值。
+     */
+    suspend fun claimFinishedCameo(cameoId: String): Boolean
+
     /** 只刪照片檔並把照片路徑設為 null，資料列保留；檔案不存在不算錯。 */
     suspend fun deletePhoto(clientRequestId: String)
 
     /**
      * 把 [sourcePath] 的檔案移到正式位置並更新草稿的照片路徑，覆蓋舊照片。成功回 true。
-     * 來源檔不存在回 false，且不動既有照片與資料列。[sourcePath] 已是正式路徑時直接回 true。
+     * 來源檔不存在回 false，且不動既有照片與資料列；列不存在或搬檔期間列被刪（認領）也回 false，且不重建列。[sourcePath] 已是正式路徑時直接回 true。
      */
     suspend fun attachPhoto(clientRequestId: String, sourcePath: String): Boolean
     suspend fun list(): List<PendingCameo>

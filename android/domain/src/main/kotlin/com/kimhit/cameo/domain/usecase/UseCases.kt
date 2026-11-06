@@ -127,3 +127,8 @@ class GetUnfinishedCameosUseCase(
 class DeletePendingCameoUseCase(private val pending: PendingCameoRepository) {
     suspend operator fun invoke(clientRequestId: String) = pending.delete(clientRequestId)
 }
+
+/** 訂單結束後認領草稿：刪除成功才回 true，呼叫端只在 true 時發完成通知。 */
+class ClaimFinishedCameoUseCase(private val pending: PendingCameoRepository) {
+    suspend operator fun invoke(cameoId: String): Boolean = pending.claimFinishedCameo(cameoId)
+}

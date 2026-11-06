@@ -31,20 +31,11 @@ internal class PendingCameoRepositoryImpl(
         ).toDomain()
 
     override suspend fun markCreated(clientRequestId: String, cameoId: String) {
-        val row = dao.get(clientRequestId) ?: return
-        dao.upsert(
-            row.copy(
-                step = PendingStep.UPLOAD.name,
-                cameoId = cameoId,
-                lastError = null,
-                updatedAt = now(),
-            ),
-        )
+        dao.markCreated(clientRequestId, cameoId, now())
     }
 
     override suspend fun recordError(clientRequestId: String, message: String?) {
-        val row = dao.get(clientRequestId) ?: return
-        dao.upsert(row.copy(lastError = message, updatedAt = now()))
+        dao.updateError(clientRequestId, message, now())
     }
 
     override suspend fun delete(clientRequestId: String) {
@@ -56,17 +47,28 @@ internal class PendingCameoRepositoryImpl(
         }
     }
 
+    override suspend fun claimFinishedCameo(cameoId: String): Boolean =
+        withContext(NonCancellable + Dispatchers.IO) {
+            // 先記下 key（刪列後就查不到），再用 DELETE 的回傳筆數當唯一的認領依據
+            val key = dao.findByCameoId(cameoId)?.clientRequestId
+            val claimed = dao.deleteByCameoId(cameoId) >= 1
+            if (claimed && key != null) {
+                photoFile(key)?.delete()
+                tempFile(key)?.delete()
+            }
+            claimed
+        }
+
     override suspend fun deletePhoto(clientRequestId: String) {
         withContext(Dispatchers.IO) {
             photoFile(clientRequestId)?.delete()
             tempFile(clientRequestId)?.delete()
         }
-        val row = dao.get(clientRequestId) ?: return
-        if (row.photoPath != null) dao.upsert(row.copy(photoPath = null, updatedAt = now()))
+        dao.clearPhotoPath(clientRequestId, now())
     }
 
     override suspend fun attachPhoto(clientRequestId: String, sourcePath: String): Boolean {
-        val row = dao.get(clientRequestId) ?: return false
+        if (dao.get(clientRequestId) == null) return false
         val target = photoFile(clientRequestId) ?: return false
         val temp = tempFile(clientRequestId) ?: return false
         val source = File(sourcePath)
@@ -91,8 +93,13 @@ internal class PendingCameoRepositoryImpl(
             }
         }
         if (!moved) return false
-        if (row.photoPath != target.path) {
-            dao.upsert(row.copy(photoPath = target.path, updatedAt = now()))
+        // 條件式 UPDATE：搬檔期間列若被刪（認領），不重建列，並清掉剛搬進來的照片
+        if (dao.updatePhotoPath(clientRequestId, target.path, now()) == 0) {
+            withContext(Dispatchers.IO) {
+                target.delete()
+                temp.delete()
+            }
+            return false
         }
         return true
     }
@@ -102,24 +109,16 @@ internal class PendingCameoRepositoryImpl(
     override suspend fun get(clientRequestId: String): PendingCameo? = dao.get(clientRequestId)?.toDomain()
 
     override suspend fun markUploaded(clientRequestId: String) {
-        val row = dao.get(clientRequestId) ?: return
+        if (dao.get(clientRequestId) == null) return
         withContext(Dispatchers.IO) {
             photoFile(clientRequestId)?.delete()
             tempFile(clientRequestId)?.delete()
         }
-        dao.upsert(
-            row.copy(
-                step = PendingStep.SUBMIT.name,
-                photoPath = null,
-                lastError = null,
-                updatedAt = now(),
-            ),
-        )
+        dao.markUploaded(clientRequestId, now())
     }
 
     override suspend fun markSubmitted(clientRequestId: String) {
-        val row = dao.get(clientRequestId) ?: return
-        dao.upsert(row.copy(step = PendingStep.TRACK.name, lastError = null, updatedAt = now()))
+        dao.markSubmitted(clientRequestId, now())
     }
 
     /** key 是 App 自己產生的 UUID；仍只接受安全字元，固定檔名組合，不讓路徑穿越。 */

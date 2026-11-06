@@ -8,6 +8,7 @@ import com.kimhit.cameo.domain.model.Clip
 import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.model.PendingCameo
 import com.kimhit.cameo.domain.model.PendingStep
+import com.kimhit.cameo.domain.repository.PendingCameoRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -338,5 +339,18 @@ class AdvanceCameoUseCaseTest {
         pending.missingSources += "/cache/gone.jpg"
         assertEquals(AttachResult.NeedPhoto("c1"), attach("k1", "/cache/gone.jpg"))
         assertEquals(AttachResult.Gone, attach("ghost", "/cache/a.jpg"))
+    }
+
+    @Test
+    fun attachPhoto_rowDeletedDuringAttach_returnsGone() = runTest {
+        row(photo = null)
+        // 搬檔期間列被認領刪除：attachPhoto 回 false，但 get 已查不到列
+        val racing = object : PendingCameoRepository by pending {
+            override suspend fun attachPhoto(clientRequestId: String, sourcePath: String): Boolean {
+                pending.rows.clear()
+                return false
+            }
+        }
+        assertEquals(AttachResult.Gone, AttachCameoPhotoUseCase(racing)("k1", "/cache/a.jpg"))
     }
 }

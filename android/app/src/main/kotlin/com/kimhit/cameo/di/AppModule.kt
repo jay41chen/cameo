@@ -9,6 +9,7 @@ import com.kimhit.cameo.domain.repository.PointsRepository
 import com.kimhit.cameo.domain.repository.QuotaRepository
 import com.kimhit.cameo.domain.usecase.AdvanceCameoUseCase
 import com.kimhit.cameo.domain.usecase.AttachCameoPhotoUseCase
+import com.kimhit.cameo.domain.usecase.ClaimFinishedCameoUseCase
 import com.kimhit.cameo.domain.usecase.ConfirmCameoUseCase
 import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
@@ -16,6 +17,7 @@ import com.kimhit.cameo.domain.usecase.GetLedgerPageUseCase
 import com.kimhit.cameo.domain.usecase.GetPointsUseCase
 import com.kimhit.cameo.domain.usecase.GetQuotaUseCase
 import com.kimhit.cameo.domain.usecase.GetUnfinishedCameosUseCase
+import com.kimhit.cameo.domain.usecase.ResumeTrackingUseCase
 import android.content.Context
 import com.kimhit.cameo.ui.CaptureFiles
 import com.kimhit.cameo.ui.CaptureFilesImpl
@@ -65,4 +67,11 @@ object AppModule {
 
     @Provides
     fun provideAttachCameoPhoto(pending: PendingCameoRepository) = AttachCameoPhotoUseCase(pending)
+
+    @Provides
+    fun provideClaimFinishedCameo(pending: PendingCameoRepository) = ClaimFinishedCameoUseCase(pending)
+
+    @Provides
+    fun provideResumeTracking(pending: PendingCameoRepository, cameos: CameoRepository) =
+        ResumeTrackingUseCase(pending, cameos)
 }

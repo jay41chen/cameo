@@ -15,7 +15,7 @@ import com.kimhit.cameo.tracking.TrackWhileGenerating
 internal const val UPLOADING_TEXT = "上傳中…"
 internal const val SUBMITTING_TEXT = "送出中…"
 internal const val NEED_PHOTO_TEXT = "照片無法使用，請重新拍照"
-internal const val GONE_TEXT = "這筆客串已不存在"
+internal const val GONE_TEXT = "這筆客串已結束"
 
 @Composable
 fun CameoProgressScreen(

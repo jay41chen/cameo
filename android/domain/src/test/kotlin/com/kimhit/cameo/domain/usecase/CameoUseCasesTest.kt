@@ -46,6 +46,15 @@ internal class FakePending(val events: MutableList<String> = mutableListOf()) : 
         rows.removeAll { it.clientRequestId == clientRequestId }
     }
 
+    val claims = mutableListOf<String>()
+
+    override suspend fun claimFinishedCameo(cameoId: String): Boolean {
+        events += "claim:$cameoId"
+        claims += cameoId
+        val removed = rows.removeAll { it.cameoId == cameoId }
+        return removed
+    }
+
     override suspend fun deletePhoto(clientRequestId: String) {
         events += "deletePhoto:$clientRequestId"
         val i = rows.indexOfFirst { it.clientRequestId == clientRequestId }

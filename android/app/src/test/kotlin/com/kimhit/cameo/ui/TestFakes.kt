@@ -78,6 +78,14 @@ class FakePendingRepo : PendingCameoRepository {
         rows.removeAll { it.clientRequestId == clientRequestId }
     }
 
+    val claims = mutableListOf<String>()
+
+    override suspend fun claimFinishedCameo(cameoId: String): Boolean {
+        claims += cameoId
+        val removed = rows.removeAll { it.cameoId == cameoId }
+        return removed
+    }
+
     override suspend fun deletePhoto(clientRequestId: String) {
         val i = rows.indexOfFirst { it.clientRequestId == clientRequestId }
         if (i >= 0) rows[i] = rows[i].copy(photoPath = null)

@@ -342,11 +342,11 @@ docker compose -p cameo44 exec -T postgres psql -U cameo -d cameo -c \
 做了什麼：
 
 - `:domain`：`decideTracking(查詢結果, 已追蹤毫秒)` 回「繼續查」「發完成通知並結束」「結束且不通知」。`SUCCEEDED`、`FAILED` 通知並結束；`QUEUED`、`GENERATING`、查詢失敗繼續；其他狀態（`EXPIRED`、`AWAITING_UPLOAD`、`UPLOADED`、`UNKNOWN`）結束且不通知。上限 `TRACK_LIMIT_MS` = 35 分鐘（後端 `GENERATION_TTL` 預設 30 分鐘加 5 分鐘）。單元測試含上限邊界（`TrackCameoTest`）。
-- `:app`：`CameoTrackService`（`@AndroidEntryPoint`、`foregroundServiceType="dataSync"`），每 10 秒對所有追蹤中的訂單呼叫 `CameoRepository.getCameo`（主 client）；以記憶體表追蹤，已在跑時新 id 只加入表、不開第二個輪詢；全部結束才 `stopForeground` 與 `stopSelf`；`START_NOT_STICKY`。常駐通知（低重要度頻道，「生成中，完成後會通知你」）；完成通知（高重要度頻道，內容用後端 `display.title`／`message`，通知 id 由 `cameoId` 衍生，點按開啟 App 的 launcher intent）。
-- 啟動時機（PoC 目前實作）：進度頁進入 `Done` 且訂單為 `QUEUED`／`GENERATING` 時，由 `TrackWhileGenerating`（`CameoProgressScreen` 內）在畫面至少 STARTED 時啟動。API 33+ 第一次先請求 `POST_NOTIFICATIONS`，不論同意與否都啟動服務；請求過一次後以 SharedPreferences 旗標記錄，不再詢問。這段權限流程將由 5.2 收尾實作取代（決定：按「確認支付」時檢查通知，見 `spec.md` 第 7 節）；收尾尚未實作，以上是現況。
+- `:app`：`CameoTrackService`（`@AndroidEntryPoint`、`foregroundServiceType="dataSync"`），每 10 秒對所有追蹤中的訂單呼叫 `CameoRepository.getCameo`（主 client）；以記憶體表追蹤，已在跑時新 id 只加入表、不開第二個輪詢；全部結束才呼叫 `stopSelfResult(最後的 startId)`，回 true 才 `stopForeground`；`START_NOT_STICKY`。常駐通知（低重要度頻道，「生成中，完成後會通知你」）；完成通知（高重要度頻道，內容用後端 `display.title`／`message`，通知 id 由 `cameoId` 衍生，點按開啟 App 的 launcher intent）。
+- 啟動時機：進度頁進入 `Done` 且訂單為 `QUEUED`／`GENERATING` 時，由 `TrackWhileGenerating`（`CameoProgressScreen` 內）在畫面至少 STARTED 時啟動，不請求通知權限；回到前景的恢復追蹤也會啟動（見「5.2 收尾」）。下方實測矩陣是第 5.2 輪實測矩陣當時的行為：進度頁請求權限。
 - Manifest：`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_DATA_SYNC`、`POST_NOTIFICATIONS`。
 
-不做：開啟 App 補發通知、防重複通知、訂單結束後刪草稿或清未完成清單、成功／失敗畫面、進度頁自動更新、WebSocket、影片播放、上傳途中進背景的測試、持久化追蹤（程序被殺即不再追蹤）。
+不做（第 5.2 輪實測矩陣當時的範圍；補發、防重複、刪草稿已由「5.2 收尾」實作）：開啟 App 補發通知、防重複通知、訂單結束後刪草稿或清未完成清單、成功／失敗畫面、進度頁自動更新、WebSocket、影片播放、上傳途中進背景的測試、持久化追蹤（程序被殺即不再追蹤）。
 
 ### 代價與限制
 
@@ -355,8 +355,8 @@ docker compose -p cameo44 exec -T postgres psql -U cameo -d cameo -c \
 - 每 10 秒一次 `GET /v1/cameos/{id}`：耗電與流量；單筆訂單最久追蹤 35 分鐘，約 210 次請求。
 - `am force-stop` 後服務與追蹤一併消失，不會收到通知（第 7 項實測：無通知）。
 - 追蹤上限 35 分鐘；超過不再通知（單元測試涵蓋，沒有實際等滿 35 分鐘）。
-- 只存在記憶體：程序被系統回收或被殺就不再追蹤，沒有補發。
-- 通知權限被拒絕時（PoC 當下的缺口）：服務照跑、訂單照完成，但完成通知被略過（日誌 `notifications disabled, skip`），使用者收不到任何提示，連常駐通知也沒有；進度頁仍寫「完成後會通知你」；因為旗標已寫入，不再詢問，只能到系統設定開啟。這個缺口由 5.2 收尾實作的決定 2（沒開通知就不能建新訂單）處理，尚未實作。
+- 只存在記憶體：程序被系統回收或被殺就不再追蹤，沒有補發（第 5.2 輪實測矩陣當時；補發見 5.2 收尾）。
+- 通知權限被拒絕時（PoC 當下的缺口）：服務照跑、訂單照完成，但完成通知被略過（日誌 `notifications disabled, skip`），使用者收不到任何提示，連常駐通知也沒有；進度頁仍寫「完成後會通知你」；因為旗標已寫入，不再詢問，只能到系統設定開啟。這個缺口由 5.2 收尾實作的決定 2（沒開通知就不能建新訂單）處理，已由 5.2 收尾實作，模擬器實測排在 5.3。
 - 服務只在「畫面在前景時送出成功」才啟動；畫面不在前景時不啟動（避免背景啟動前景服務被系統拒絕），這條路徑沒有實測。
 - 所有實測只在 API 37 模擬器（AVD `Pixel_10_Pro`）進行，不代表真機；各廠牌的省電機制未驗。
 
@@ -406,3 +406,39 @@ docker compose -p cameo44 exec -T postgres psql -U cameo -d cameo -c \
 ### 排到 5.3 補驗
 
 以下項目排到 5.3：真正的 2 分鐘背景（回主畫面後確實等滿 2 分鐘才完成）、`VENDOR_FAILED`、從最近使用畫面滑掉 App、點按通知開啟 App。其餘未涵蓋項目照上面保留。
+
+### 5.2 收尾：通知權限檢查、補發與恢復追蹤
+
+結論範圍：只有單元測試與組建，沒有啟動 App、沒有開模擬器、沒有跑 Docker。以下行為在模擬器的實測排在 5.3。
+
+範圍（實際行為）：
+
+- 確認頁按「確認支付」，在建單（`POST /v1/cameos`）之前檢查「通知可用」：`areNotificationsEnabled()` 且「生成結果」頻道 importance 不是 `IMPORTANCE_NONE`（頻道還沒建立視為可用；保留 `dropUnlessResumed`）。可用就建單；App 通知開著但頻道被關，一律直接顯示提示（不請求權限）；App 通知關閉且 API 33+、系統還能顯示對話框（沒請求過，或 `shouldShowRequestPermissionRationale` 為 true）就請求 `POST_NOTIFICATIONS`，同意後重新檢查，通知可用才建單、頻道仍關就顯示提示，拒絕就停在確認頁、不建單，並顯示 App 自己的提示；其餘情況（含 API 33 以下）直接顯示提示「需要開啟通知才能客串」／「生成完成時要用通知告訴你。」，按鈕「前往設定」（`ACTION_APP_NOTIFICATION_SETTINGS`）與「取消」。從設定回來不自動建單。「已請求過」旗標只在收到權限結果後寫入。
+- App 開啟與進度頁不請求權限；有 `cameoId` 的訂單（未完成清單的繼續、重試）不檢查；還不確定是否建單的 `CREATE` 草稿會到確認頁並經過通知檢查，代價是通知關著時，這筆可能要等上傳期限才釋放點數。通知關閉時保留的草稿在未完成清單沒有「移除」按鈕，但這時也建不了新單，不會累積。
+- 「已請求過」旗標在收到權限結果時寫入，對話框被取消時也會寫入，之後走「前往設定」路徑（Android 行為為推論，未實測）。
+- 訂單結束（`SUCCEEDED`／`FAILED`）：前景服務與回前景恢復都先 `claimFinishedCameo`（刪草稿列與本機照片，依單一 `DELETE` 的回傳筆數），刪到才發完成通知；每筆認領成功立刻通知，「認領＋通知」在 `withContext(NonCancellable)` 內，取消不會漏發。通知不可用（App 通知或結果頻道被關）時不認領、不通知，草稿保留。少發範圍：除了程序在認領之後、發通知之前被殺之外，還有回前景判斷「通知可用」到實際認領之間，使用者剛好關掉通知的極窄窗口，這時草稿已刪、不補發（讀碼推論，未實測）；協程取消不會少發。細節見 `ARCHITECTURE.md` 第 8 節。
+- 狀態寫入（`markCreated`、`recordError`、`markUploaded`、`markSubmitted`、清除／附上照片路徑）都是條件式 `UPDATE ... WHERE client_request_id = ?`，列已被認領刪除時不會重建。
+- 回到前景（`MainActivity.onStart`）：對所有有 `cameoId` 的草稿查訂單，`SUCCEEDED`／`FAILED` 認領後通知，`QUEUED`／`GENERATING` 啟動前景服務，其他狀態與查詢失敗不動。
+- 前景服務：`stopSelfResult(最後的 startId)`（回 false 不停）、`onTimeout`（API 35+）停止服務、`startForeground` 被拒不崩潰。
+- 後果：草稿刪除後訂單從未完成清單消失；「我的客串」尚未實作，到 5.2b 前使用者只能從通知文字與點數明細看到結果，點通知目前只開首頁，5.2b 會改。
+
+自動測試：`:domain` 認領與恢復、權限判斷三條分支與旗標寫入時機、確認頁 ViewModel 未通過檢查不建單（含權限同意後頻道仍關不建單、可用只建一次）、`:data` 認領只有第一次回 true、`mark*` 的讀寫競爭用 fake DAO 測過（`get` 回傳列後立刻刪列、寫入前先刪列，兩種路徑都斷言不重建；`markSubmitted` 目前不呼叫 `get`，測試守的是不得改回先 `get` 再 `upsert`），這些競爭測試未在真 Room 執行；`AttachCameoPhotoUseCase` 在 `attachPhoto` 回 false 且列已被刪時回 `Gone`。指令 `cd android && ./gradlew :domain:test :data:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --rerun-tasks`，結果 BUILD SUCCESSFUL；從測試 XML 統計：`:domain` 71、`:data` 60、`:app` 98，共 229 筆，0 失敗、0 skipped。`:data` 沒有真 Room 測試環境，認領測的是 repository 搭配記憶體 DAO，`DELETE` 與各條件式 `UPDATE` 的實際回傳筆數／SQL 語意沒有在真 Room 驗證（`FakeDao` 照 SQL 語意模擬；`UPDATE` 的語法只通過 Room 編譯期檢查）。
+
+未驗證：
+
+- 服務、`MainActivity` 回前景、權限對話框、設定頁往返、通知實際發出，全部沒有單元測試也沒有實測。
+- `onTimeout`（API 35+）、`stopSelfResult` 回 false 的分支、`startForeground` 被拒的分支。
+- 草稿被刪後進度頁與未完成清單的畫面。
+- 真機、其他 API 版本。
+
+交給 5.3 的操作：
+
+0. 先 `adb shell pm clear <applicationId>` 或重新安裝，清掉舊的「已請求過」旗標。
+1. 權限對話框三條路徑：(a) API 33+ 從未請求過，按「確認支付」跳系統對話框，同意後建單（頻道未被關時；頻道仍關就顯示提示、不建單）；(b) 拒絕後留在確認頁、不建單、顯示「需要開啟通知才能客串」提示；再按一次確認若系統仍可顯示對話框（`shouldShowRequestPermissionRationale`）就再跳，第二次拒絕後改直接顯示提示；(c) 系統通知關閉（含 API 33 以下）時不跳對話框，直接顯示提示。
+2. 「前往設定」開啟本 App 的通知設定；開啟通知後返回，確認不會自動建單，再按「確認支付」才建單；按「取消」關閉提示且不建單。
+3. 補發只發一次：訂單完成時 App 被殺（或服務被殺），重開 App 收到一則完成通知；再次進出前景不重複通知；未完成清單中該筆消失。
+4. 回前景恢復追蹤：送出後殺 App 程序（訂單仍在 `QUEUED`／`GENERATING`），重開 App 後前景服務重啟、完成時發通知；與進度頁 `TrackWhileGenerating` 同時存在時不重複輪詢。
+5. 已刪草稿的畫面：通知發出後草稿已刪；在進度頁停留時不報錯；程序被殺、訂單完成後回到 App、導覽還原到進度頁時會看到「這筆客串已結束」（導覽還原未實測，排 5.3；結果將由「我的客串」提供）；未完成清單不崩潰。
+6. 訂單進行中才關通知：不阻擋，完成時不發通知也不刪草稿；重新開啟通知後開啟 App 補發一則。
+7. 頻道被關：App 通知開著、只關「生成結果」頻道，按「確認支付」直接顯示提示（不跳權限對話框），「前往設定」開到 App 通知設定；服務與回前景此時不認領、不通知。
+8. 另列：`startForeground` 被拒、`onTimeout`、`stopSelfResult` 回 false 的情境能否製造需另評估。

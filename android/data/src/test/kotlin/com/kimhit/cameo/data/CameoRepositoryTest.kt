@@ -292,6 +292,32 @@ private class FakeDao : PendingCameoDao {
     override suspend fun delete(id: String) {
         rows.remove(id)
     }
+    override suspend fun findByCameoId(cameoId: String) = rows.values.firstOrNull { it.cameoId == cameoId }
+    override suspend fun deleteByCameoId(cameoId: String): Int {
+        val keys = rows.values.filter { it.cameoId == cameoId }.map { it.clientRequestId }
+        keys.forEach { rows.remove(it) }
+        return keys.size
+    }
+    // 照 SQL 語意：UPDATE ... WHERE client_request_id = ?，列不存在回 0、不新增
+    private fun update(id: String, f: (PendingCameoEntity) -> PendingCameoEntity): Int {
+        val row = rows[id] ?: return 0
+        rows[id] = f(row)
+        return 1
+    }
+    override suspend fun markCreated(id: String, cameoId: String, now: Long) =
+        update(id) { it.copy(step = "UPLOAD", cameoId = cameoId, lastError = null, updatedAt = now) }
+    override suspend fun updateError(id: String, message: String?, now: Long) =
+        update(id) { it.copy(lastError = message, updatedAt = now) }
+    override suspend fun updatePhotoPath(id: String, path: String?, now: Long) =
+        update(id) { it.copy(photoPath = path, updatedAt = now) }
+    override suspend fun clearPhotoPath(id: String, now: Long): Int {
+        if (rows[id]?.photoPath == null) return 0
+        return update(id) { it.copy(photoPath = null, updatedAt = now) }
+    }
+    override suspend fun markUploaded(id: String, now: Long) =
+        update(id) { it.copy(step = "SUBMIT", photoPath = null, lastError = null, updatedAt = now) }
+    override suspend fun markSubmitted(id: String, now: Long) =
+        update(id) { it.copy(step = "TRACK", lastError = null, updatedAt = now) }
     override suspend fun findDraft(clipId: String) =
         rows.values.filter { it.step == "CREATE" && it.clipId == clipId }.maxByOrNull { it.updatedAt }
     override suspend fun list() = rows.values.sortedByDescending { it.updatedAt }
@@ -415,6 +441,132 @@ class PendingCameoRepositoryTest {
         repo.delete(d.clientRequestId)
         assertFalse(canonical.exists())
         assertTrue(dao.rows.isEmpty())
+    }
+
+    @Test
+    fun claimFinishedCameo_onlyFirstCallReturnsTrue_andDeletesRowAndPhoto() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.attachPhoto(d.clientRequestId, source("a.jpg", "X").path)
+        repo.markCreated(d.clientRequestId, "u1")
+        val canonical = File(photoDir, "${d.clientRequestId}.jpg")
+        assertTrue(canonical.exists())
+        assertTrue(repo.claimFinishedCameo("u1"))
+        assertFalse(canonical.exists())
+        assertTrue(dao.rows.isEmpty())
+        assertFalse(repo.claimFinishedCameo("u1"))
+    }
+
+    @Test
+    fun markFunctions_onDeletedRow_doNotRecreateIt() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        val id = d.clientRequestId
+        repo.attachPhoto(id, source("a.jpg", "X").path)
+        repo.markCreated(id, "u1")
+        assertTrue(repo.claimFinishedCameo("u1"))
+        assertTrue(dao.rows.isEmpty())
+        repo.markCreated(id, "u1")
+        repo.recordError(id, "x")
+        repo.markUploaded(id)
+        repo.markSubmitted(id)
+        repo.deletePhoto(id)
+        assertTrue(dao.rows.isEmpty())
+        assertNull(repo.get(id))
+    }
+
+    @Test
+    fun attachPhoto_rowDeletedBeforeWrite_returnsFalse_doesNotRecreate_removesFile() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        val id = d.clientRequestId
+        // 搬檔之後、寫列之前列被認領刪除：用 DAO 子類模擬
+        val racing = object : PendingCameoDao by dao {
+            override suspend fun updatePhotoPath(id: String, path: String?, now: Long): Int {
+                dao.rows.remove(id)
+                return dao.updatePhotoPath(id, path, now)
+            }
+        }
+        val r = PendingCameoRepositoryImpl(racing, photoDir, newId = { "x" }, now = { clock++ })
+        assertFalse(r.attachPhoto(id, source("a.jpg", "X").path))
+        assertTrue(dao.rows.isEmpty())
+        assertFalse(File(photoDir, "$id.jpg").exists())
+    }
+
+    /**
+     * `get` 回傳列之後立刻刪列（模擬讀到之後被認領）。不經過 `get` 的寫入（條件式 UPDATE）
+     * 則在執行前先刪列，兩種路徑都模擬「寫入時列已不在」；其餘委派給 [dao]。
+     */
+    private fun readThenDeleteRepo() = PendingCameoRepositoryImpl(
+        object : PendingCameoDao by dao {
+            override suspend fun get(id: String): PendingCameoEntity? {
+                val row = dao.get(id)
+                dao.rows.remove(id)
+                return row
+            }
+            override suspend fun markCreated(id: String, cameoId: String, now: Long): Int {
+                dao.rows.remove(id)
+                return dao.markCreated(id, cameoId, now)
+            }
+            override suspend fun updateError(id: String, message: String?, now: Long): Int {
+                dao.rows.remove(id)
+                return dao.updateError(id, message, now)
+            }
+            override suspend fun markUploaded(id: String, now: Long): Int {
+                dao.rows.remove(id)
+                return dao.markUploaded(id, now)
+            }
+            override suspend fun markSubmitted(id: String, now: Long): Int {
+                dao.rows.remove(id)
+                return dao.markSubmitted(id, now)
+            }
+        },
+        photoDir,
+        newId = { "x" },
+        now = { clock++ },
+    )
+
+    @Test
+    fun markCreated_rowDeletedAfterRead_doesNotRecreate() = runTest {
+        val id = repo.getOrCreateDraft("c1").clientRequestId
+        readThenDeleteRepo().markCreated(id, "u1")
+        assertTrue(dao.rows.isEmpty())
+    }
+
+    @Test
+    fun recordError_rowDeletedAfterRead_doesNotRecreate() = runTest {
+        val id = repo.getOrCreateDraft("c1").clientRequestId
+        readThenDeleteRepo().recordError(id, "boom")
+        assertTrue(dao.rows.isEmpty())
+    }
+
+    @Test
+    fun markUploaded_rowDeletedAfterRead_doesNotRecreate() = runTest {
+        val id = repo.getOrCreateDraft("c1").clientRequestId
+        repo.markCreated(id, "u1")
+        readThenDeleteRepo().markUploaded(id)
+        assertTrue(dao.rows.isEmpty())
+    }
+
+    // markSubmitted 目前不呼叫 get；測試守的是「不得先 get 再 upsert」
+    @Test
+    fun markSubmitted_rowDeletedAfterRead_doesNotRecreate() = runTest {
+        val id = repo.getOrCreateDraft("c1").clientRequestId
+        repo.markCreated(id, "u1")
+        readThenDeleteRepo().markSubmitted(id)
+        assertTrue(dao.rows.isEmpty())
+    }
+
+    @Test
+    fun claimFinishedCameo_unknownCameo_returnsFalse_keepsOtherRows() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.markCreated(d.clientRequestId, "u1")
+        assertFalse(repo.claimFinishedCameo("other"))
+        assertEquals(1, dao.rows.size)
+    }
+
+    @Test
+    fun claimFinishedCameo_withoutPhoto_isNotAnError() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.markCreated(d.clientRequestId, "u1")
+        assertTrue(repo.claimFinishedCameo("u1"))
     }
 
     @Test

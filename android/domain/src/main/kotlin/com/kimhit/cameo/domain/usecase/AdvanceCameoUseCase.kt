@@ -143,10 +143,8 @@ sealed interface AttachResult {
 class AttachCameoPhotoUseCase(private val pending: PendingCameoRepository) {
     suspend operator fun invoke(clientRequestId: String, sourcePath: String): AttachResult {
         val row = pending.get(clientRequestId) ?: return AttachResult.Gone
-        return if (pending.attachPhoto(clientRequestId, sourcePath)) {
-            AttachResult.Attached
-        } else {
-            AttachResult.NeedPhoto(row.clipId)
-        }
+        if (pending.attachPhoto(clientRequestId, sourcePath)) return AttachResult.Attached
+        // false 也可能是搬檔期間列被刪（認領）：再查一次，列不在就是 Gone
+        return if (pending.get(clientRequestId) == null) AttachResult.Gone else AttachResult.NeedPhoto(row.clipId)
     }
 }
