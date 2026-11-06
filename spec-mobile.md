@@ -196,8 +196,9 @@ App 用到的其他端點（路徑來自 `README.md`）：
 - `POST /v1/cameos/{id}/submit`
 - `GET /v1/cameos?cursor=`
 - `GET /v1/cameos/{id}`
-- `GET /v1/cameos/{id}/video`（第 7 輪）
-- `PUT`、`DELETE /v1/cameos/{id}/share`（第 7 輪）
+- `GET /v1/cameos/{id}/video`（第 7 輪）：不存在回 `404 CAMEO_NOT_FOUND`，非 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`
+- `PUT`、`DELETE /v1/cameos/{id}/share`（第 7 輪）：`PUT` 成功回 `200`，非 `SUCCEEDED` 回 `409 NOT_SHAREABLE`，分享中重複 `PUT` 得到同一個 URL；`DELETE` 冪等回 `204`；訂單不存在兩者都回 `404 CAMEO_NOT_FOUND`
+- 第 7 輪起播放與分享入口依訂單的 `video_available`（`SUCCEEDED` 時為 true）和 `share`（`{"active":...,"url":...}`）判斷；約定細節見 `README.md`「影片與分享」
 
 ## 6. App 架構（§10）
 

@@ -1,6 +1,6 @@
 # 客串短劇（Kimhit 候選人作業）
 
-> 狀態：進行中。Android App 的片段清單、點數、點數明細（含分頁）已在 API 37 模擬器驗證過。後端另已實作建單（冪等、點數占用、每日額度）、訂單查詢、額度、上傳自拍、送出（扣點、寫 `CHARGE` 明細）與上傳逾期釋放；Android App 的額度顯示、確認支付（建單）、本機草稿已在 API 37 模擬器接真實後端驗證，涵蓋：額度用完、點數不足、額度達上限、網路錯誤後重試與重用同一個冪等 key、已建單再點同片段拿新 key、CREATE 草稿重用同 key、同 key 回原訂單、`409` 後移除重建、重試進行中不顯示錯誤、逾期重新客串／移除、重開接續。「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬（非真實斷線）。例外與未驗項目：確認時 `401` 的畫面未在模擬器驗證（單元測試涵蓋）；強制停止只驗到 POST 沒到的情況；另有數項未涵蓋與外觀問題，請見 `docs/manual-test-checklist.md` 第 3 輪。App 已有拍照與預覽（CameraX），詳見 `docs/manual-test-checklist.md` 第 4 輪；App 已接上上傳與送出，並在 API 37 模擬器接真實後端驗證（4.4，詳見 `docs/manual-test-checklist.md` 第 4 輪「Integration」：主流程到「排隊中」、上傳／送出回應遺失後接續且只扣一次（以 curl 模擬）、重試、離開畫面、強制停止、逾期、照片遺失、後端回「照片太大」時引導重拍；上傳途中進背景、真實斷線、`401`、真機未驗）；後端已實作派工給模擬廠商、廠商 webhook 回呼、生成逾時與退點（第 5.1 輪，當時未接 App，只以後端測試與 curl 驗證，見 `docs/manual-test-checklist.md` 第 5.1 輪）；App 已有生成進度畫面、前景服務與完成通知（第 5.2 輪，只在 API 37 模擬器驗證，見 `docs/manual-test-checklist.md` 第 5.2 輪）；通知權限檢查（確認支付前）、開啟 App 回前景時補發與恢復追蹤已實作（單元測試涵蓋，模擬器實測排在 5.3）；後端 `GET /v1/cameos?cursor=` 訂單列表已實作（第 5.2b-1 輪，只以後端測試驗證，見 `docs/manual-test-checklist.md` 第 5.2b-1 輪）；App 的「我的客串」頁已實作（第 5.2b-2 輪，底部導覽第三分頁，列出訂單與狀態、分頁載入；API 37 模擬器接真實後端做過一次最小冒煙；修正輪補了回前景捲動：列表超過一屏時，第一筆在畫面上（含只露出一部分）有新訂單自動捲到新的第一筆，3/3 與部分可見 1/1 通過，切到點數再切回 1/1 通過，第一筆看不到時不捲動並顯示「回到頂端」，點按鈕回到新的第一筆，捲到第 2 頁後回前景列表換回第一頁、按鈕仍可回頂端；細節與未驗項目見 `docs/manual-test-checklist.md` 第 5.2b-2 輪）；點完成通知開「我的客串」分頁已實作（第 5.2b-3 輪，只切到分頁、不定位單筆；API 37 模擬器最小冒煙，細節與未驗項目見 `docs/manual-test-checklist.md` 第 5.2b-3 輪）。確認頁問題：返回轉場中點「確認支付」，修正前 6 次嘗試皆建單；已加一行防護（`dropUnlessResumed`），只擋掉「頁面已在離開中」的點擊，修正後 7 次嘗試未建單（每個延遲各 1 次、間隔未量；d=0.7 點到清單列、沒打到按鈕，d=0.5 沒有修正前對照，可直接對照的是 d=0、0.05、0.1、0.2、0.3 這 5 個值）。這不是完整解法：先按確認再按返回時，若回應在頁面銷毀後才回來，只占用點數，按「繼續」或等期限釋放；若在淡出期間回來，一樣導到進度畫面並自動上傳、送出、扣款（MVP 決定，見 `ARCHITECTURE.md` 取捨表；兩者皆讀碼與修正前證據推論，未實測）；傳輸中途被殺、真實手勢返回與網路延遲未測，詳見該節。API 契約中尚未實作的部分仍是設計，未確認的欄位標 `[待確認]`。
+> 狀態：進行中。主流程（選片段到生成完成通知）的後端與 Android App 已接通，只在 API 37 模擬器驗證過；App 首頁改版、影片播放、分享和異常 API 尚未完成。驗證細節與未涵蓋項目見 `docs/manual-test-checklist.md`。
 
 ## 專案介紹
 
@@ -102,11 +102,13 @@ cd android
 
 以下契約細節尚未確認，不在每列重複標註（`/debug/faults` 端點本身已定案）：
 
-- 訂單資料格式中 `video_available`、`share` 的結構（目前後端固定回 `false` 與 `{"active":false,"url":null}`；`SUCCEEDED` 也一樣，影片播放端點尚未實作，`video_url` 只存資料庫、不出現在 API 回應）。
+- 訂單資料格式中 `video_available`、`share` 的結構已定案，約定見「影片與分享」段（目前後端固定回 `false` 與 `{"active":false,"url":null}`；`SUCCEEDED` 也一樣，影片播放端點尚未實作，`video_url` 只存資料庫、不出現在 API 回應）。
 - `X-App-Version` 與 `426` 尚未實作。
 - `POST /debug/faults` body 的 `target`、`times`、`params`。
 
 ## API 說明
+
+API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未確認的欄位標 `[待確認]`。
 
 ### 通用規則
 
@@ -115,6 +117,7 @@ cd android
 - 先判斷路由再驗 token：未知路徑（不論有沒有 token）回 `404 NOT_FOUND`；已知路徑但方法不對回 `405 METHOD_NOT_ALLOWED`（帶 `Allow`）；已知路徑且方法正確，缺少或錯誤的 `Authorization` 才回 `401 UNAUTHORIZED`；後端錯誤回 `500 INTERNAL`（`retryable: true`）。都使用上述錯誤格式。
 - App 忽略未知欄位。未知的訂單 `status` 視為非終態；有後端 `display` 就顯示，沒有才用通用文字；兩種情況都重新查詢。
 - 版本過舊回 `426 UPGRADE_REQUIRED`。
+- `GET /s/{token}`、`GET /s/{token}/video`（尚未實作）免登入，不需 `Authorization`；`GET /s/{token}` 的 404 回 HTML，是上述錯誤格式的例外，細節見「影片與分享」。
 - 時間為 ISO 8601，台北時間（+08:00）。
 
 ### 常見錯誤碼
@@ -124,7 +127,9 @@ cd android
 | `400 INVALID_REQUEST` | `Idempotency-Key` 缺少、去掉前後 ASCII 空格與 Tab 後為空、超過 128 bytes 或含 0x21–0x7E 以外的字元；或 body 不是有效 JSON（`retryable: false`）；含控制字元的 key 可能由 HTTP 層直接回純文字 400，不一定是此 JSON 格式 |
 | `402 INSUFFICIENT_POINTS` | 可用點數不足；`message`：「點數不足」 |
 | `404 CLIP_NOT_FOUND`、`404 CAMEO_NOT_FOUND` | 片段或訂單不存在（訂單不屬於該使用者也回 `CAMEO_NOT_FOUND`）；id 含 NUL 或不是合法 UTF-8 也視為不存在 |
+| `404 VIDEO_NOT_READY` | 訂單存在但不是 `SUCCEEDED`，沒有影片可播（`GET /v1/cameos/{id}/video`，尚未實作） |
 | `409 IDEMPOTENCY_CONFLICT` | 同一個 `Idempotency-Key` 用在不同 `clip_id` |
+| `409 NOT_SHAREABLE` | 訂單不是 `SUCCEEDED`，不能分享（`PUT /v1/cameos/{id}/share`，尚未實作） |
 | `400 INVALID_SELFIE` | 上傳內容前 3 bytes 不是 JPEG 標頭（`FF D8 FF`），或 body 為空；`message`：「照片格式不正確」 |
 | `408 UPLOAD_INTERRUPTED`（`retryable: true`） | 上傳讀取 body 中途失敗（連線中斷、實際內容少於 `Content-Length`）；暫存檔已丟棄、訂單狀態不變，可整檔重傳；`message`：「上傳中斷，請重試」。寫入暫存檔本身失敗（例如磁碟滿）不屬於此類，回 `500 INTERNAL` |
 | `401 INVALID_SIGNATURE` | 只用於 `POST /webhooks/vendor`：`X-Signature` 缺少或不符；`message`：「簽章無效」 |
@@ -288,12 +293,17 @@ cd android
 
 ### 影片與分享
 
-以下端點滿足作業的影片播放與分享需求；分享連結 token 的形式、Range 支援細節 `[待確認]`：
+以下端點滿足作業的影片播放與分享需求。**以下是已定案的約定，尚未實作**；Range 支援細節 `[待確認]`。
 
-- `GET /v1/cameos/{id}/video`：影片串流，支援 Range；未完成回 `404`。
-- `PUT /v1/cameos/{id}/share`：`{"share":{"active":true,"url":"..."}}`，僅 `SUCCEEDED` 可分享，否則 `409 NOT_SHAREABLE`。
-- `DELETE /v1/cameos/{id}/share`：`204`，取消後連結失效。
-- `GET /s/{token}`：分享網頁，只播放影片；已取消或不存在回 `404`。
+- `GET /v1/cameos/{id}/video`：影片串流，支援 Range。訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
+- `PUT /v1/cameos/{id}/share`：`{"share":{"active":true,"url":"..."}}`，成功一律回 `200`。僅 `SUCCEEDED` 可分享，否則 `409 NOT_SHAREABLE`；訂單不存在回 `404 CAMEO_NOT_FOUND`。分享中重複 PUT 回同一個 URL；取消後再分享會發新 token，舊連結永久失效。
+- `DELETE /v1/cameos/{id}/share`：`204`，取消後連結失效。冪等：未分享或非 `SUCCEEDED` 的訂單也回 `204`；訂單不存在回 `404 CAMEO_NOT_FOUND`。
+- `GET /s/{token}`：分享網頁，只播放影片，免登入。已取消或不存在時回簡短 HTML 404（這是上方通用錯誤格式的例外）。
+- `GET /s/{token}/video`：分享頁用的影片，免登入。已取消或不存在時維持 JSON 404（通用錯誤格式）。
+- token 以 Go 標準庫 `crypto/rand.Text()` 產生，存在 `cameos.share_token`，`NULL` 代表未分享。
+- 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，把它設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。
+- 範例影片：`backend/assets/sample.mp4`（約 558 KB、H.264、無音軌），所有 `SUCCEEDED` 訂單共用；來源與授權未確認。
+- 第 7 輪起，訂單資料的 `video_available` 在 `SUCCEEDED` 時為 `true`；`share` 反映實際分享狀態（`{"active":true,"url":"..."}` 或 `{"active":false,"url":null}`）。App 的播放與分享入口依這兩個欄位判斷。
 
 ### 即時事件
 

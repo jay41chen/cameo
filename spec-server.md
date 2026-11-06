@@ -89,11 +89,22 @@
 | `PUT /v1/cameos/{id}/selfie`（README） | 上傳自拍 | 已實作 |
 | `POST /v1/cameos/{id}/submit`（README） | 送出 | 已實作 |
 | `POST /webhooks/vendor`（README） | 廠商回呼，HMAC 驗簽 | 已實作 |
-| `GET /v1/cameos/{id}/video`（README） | 播放，回傳固定範例影片（`spec.md` §2） | 未實作 |
-| `PUT`、`DELETE /v1/cameos/{id}/share`（README） | 建立與取消分享 | 未實作 |
-| `GET /s/{token}`（README） | 分享網頁，token 細節 `[待確認]` | 未實作 |
-| `GET /s/{token}/video` | 分享頁播放，免登入，回固定範例影片；分享已取消或不存在回 `404` | 未實作 |
+| `GET /v1/cameos/{id}/video`（README） | 播放，回傳固定範例影片（`spec.md` §2）；訂單不存在或不屬於該使用者回 `404 CAMEO_NOT_FOUND`，存在但非 `SUCCEEDED` 回 `404 VIDEO_NOT_READY` | 未實作 |
+| `PUT`、`DELETE /v1/cameos/{id}/share`（README） | 建立與取消分享；`PUT` 成功一律 `200`，非 `SUCCEEDED` 回 `409 NOT_SHAREABLE`；`DELETE` 冪等回 `204`；訂單不存在回 `404 CAMEO_NOT_FOUND`（見下方「影片與分享約定」） | 未實作 |
+| `GET /s/{token}`（README） | 分享網頁，免登入；已取消或不存在回簡短 HTML 404（通用錯誤格式的例外） | 未實作 |
+| `GET /s/{token}/video` | 分享頁播放，免登入，回固定範例影片；分享已取消或不存在維持 JSON `404` | 未實作 |
 | `GET`、`POST`、`DELETE /debug/faults`、`POST /debug/reset` | 異常觸發與重設 | 未實作 |
+
+**影片與分享約定（已定案；端點尚未實作）：**
+
+1. `GET /v1/cameos/{id}/video`：訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
+2. `PUT /v1/cameos/{id}/share`：取消後再分享發新 token，舊連結永久失效；分享中重複 PUT 回同一個 URL。成功一律回 `200`。非 `SUCCEEDED` 維持 `409 NOT_SHAREABLE`；訂單不存在回 `404 CAMEO_NOT_FOUND`。
+3. `DELETE /v1/cameos/{id}/share`：未分享或非 `SUCCEEDED` 的訂單也回 `204`（冪等）；訂單不存在回 `404 CAMEO_NOT_FOUND`。
+4. `GET /s/{token}`：已取消或不存在時回簡短 HTML 404（README 通用錯誤格式的例外）。`GET /s/{token}/video`：已取消或不存在時維持 JSON 404。兩者免登入。
+5. token 以 Go 標準庫 `crypto/rand.Text()` 產生，存在 `cameos.share_token`，`NULL` 代表未分享。
+6. 範例影片：`backend/assets/sample.mp4`（約 558 KB、H.264、無音軌），來源與授權未確認。
+7. 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。
+8. 第 7 輪起，訂單資料的 `video_available` 在 `SUCCEEDED` 時為 true；`share` 反映實際分享狀態（`{"active":true,"url":"..."}`／`{"active":false,"url":null}`）。App 的播放和分享入口依這兩個欄位判斷。
 
 **建單錯誤契約（§10，App 依此處理草稿）：**
 
