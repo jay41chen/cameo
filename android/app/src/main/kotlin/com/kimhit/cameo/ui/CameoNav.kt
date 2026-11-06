@@ -7,6 +7,7 @@ import java.net.URLEncoder
 
 internal const val ROUTE_CLIPS = "clips"
 internal const val ROUTE_POINTS = "points"
+internal const val ROUTE_MY_CAMEOS = "my_cameos"
 internal const val ROUTE_CAMERA = "camera/{clipId}?request={request}"
 internal const val ROUTE_CONFIRM = "confirm/{clipId}?photo={photo}"
 internal const val ROUTE_CAMEO = "cameo/{clientRequestId}?photo={photo}"

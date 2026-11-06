@@ -12,6 +12,7 @@ import com.kimhit.cameo.domain.usecase.AttachCameoPhotoUseCase
 import com.kimhit.cameo.domain.usecase.ClaimFinishedCameoUseCase
 import com.kimhit.cameo.domain.usecase.ConfirmCameoUseCase
 import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
+import com.kimhit.cameo.domain.usecase.GetCameoPageUseCase
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
 import com.kimhit.cameo.domain.usecase.GetLedgerPageUseCase
 import com.kimhit.cameo.domain.usecase.GetPointsUseCase
@@ -46,6 +47,9 @@ object AppModule {
 
     @Provides
     fun provideGetLedgerPage(repository: PointsRepository) = GetLedgerPageUseCase(repository)
+
+    @Provides
+    fun provideGetCameoPage(repository: CameoRepository) = GetCameoPageUseCase(repository)
 
     @Provides
     fun provideGetQuota(repository: QuotaRepository) = GetQuotaUseCase(repository)

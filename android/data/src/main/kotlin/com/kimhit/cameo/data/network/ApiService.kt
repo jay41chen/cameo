@@ -57,6 +57,13 @@ internal data class CameoDto(
     val clip: ClipDto,
     val status: String,
     val display: CameoDisplayDto? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+)
+
+@Serializable
+internal data class CameoListResponse(
+    val items: List<CameoDto>,
+    @SerialName("next_cursor") val nextCursor: String? = null,
 )
 
 @Serializable
@@ -84,6 +91,9 @@ internal interface ApiService {
 
     @GET("v1/quota")
     suspend fun quota(): Response<QuotaResponse>
+
+    @GET("v1/cameos")
+    suspend fun listCameos(@Query("cursor") cursor: String?): Response<CameoListResponse>
 
     @POST("v1/cameos")
     suspend fun createCameo(

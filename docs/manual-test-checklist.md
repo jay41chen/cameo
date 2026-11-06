@@ -483,3 +483,126 @@ cd backend && TEST_DATABASE_URL='postgres://cameo:cameo@127.0.0.1:15442/cameo?ss
 - 並行寫入時的分頁一致性（只測了靜態資料）。
 - `user_id` 條件沒有回歸測試（`points_account` 有 `CHECK (id = 1)`，目前 schema 只能有一個使用者）。
 - 「列表不觸發逾期、不改狀態」沒有自動測試，只靠讀碼（`Service.Cameos` 只呼叫 `ListCameos`）。
+
+## 第 5.2b-2 輪：App「我的客串」頁
+
+底部導覽第三分頁，顯示 `GET /v1/cameos?cursor=`。不做：自動輪詢、點通知開頁、列可點擊、播放、分享。
+
+### 行為
+
+- 進入時載入第一頁；每次回到前景（`ON_RESUME`）靜默刷新第一頁，且只在已載入（`Idle`）時刷新；載入中或錯誤時不重查。刷新失敗保留列表，並在列表上方的固定區（`LazyColumn` 外，不隨捲動移走）顯示錯誤與重試；按重試後固定區改顯示轉圈（`refreshing`），完成後成功就清掉、失敗就回到錯誤與重試。沒有刷新失敗時的回前景刷新不顯示轉圈。
+- 載入更多、失敗重試、捲到底自動載入同點數明細；點數明細與此頁共用 `PagedList`（`ui/PagedList.kt`），點數頁行為不變（仍忽略刷新失敗）。
+- 已知代價：回前景時列表換回第一頁的最新內容，可能先變短，捲到底會再載入後面的頁，不保留已載入的後面頁面；不在前景的頁面不輪詢，看到的是最近一次查詢結果。
+
+### 單元測試與建置
+
+指令（`android/`）：`./gradlew :domain:test :data:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --rerun-tasks`，結果 `BUILD SUCCESSFUL`；測試數（讀 `build/test-results` XML）：`:domain` 71、`:data` 64、`:app` 112，失敗 0。新增 `PagedListTest` 14 個、`CameoRepositoryTest` 新增 4 個（空列表、含 `created_at`／未知 status／cursor、cursor 參數、`400 INVALID_CURSOR`）。
+
+方案修正：`ViewModelTest.refreshLedger_failureKeepsItemsAndState` 因刷新失敗現在會設 `refreshFailed=true` 與 `errorMessage`，斷言改為 `before.copy(refreshFailed = true, errorMessage = "後端訊息")`；其餘明細測試只改型別名。
+
+### Mutation（逐一改、跑測試、確認失敗、還原）
+
+| mutation | 結果 |
+|---|---|
+| loadMore 成功只留新資料 | 抓到（3 個測試失敗） |
+| 第二頁 fetch 傳 `null` | 抓到（4 個） |
+| refresh 失敗清空 items | 抓到（1 個） |
+| refresh 成功不重設 `refreshFailed` | 抓到（1 個） |
+| 拿掉 refresh 的 `job?.cancel()` | 抓到（1 個） |
+| 拿掉 loadFirstPage 的 `job?.cancel()` | 抓到（1 個） |
+| 拿掉 loadMore 的 phase 防重入 | 第一版測試存活（連續呼叫之間沒讓協程啟動，被取消的協程根本沒跑 fetch）；測試改成每次呼叫後 `advanceUntilIdle()` 後抓到（1 個） |
+| 拿掉 loadMore 的 `job?.cancel()` | 抓到（1 個） |
+| 拿掉 refresh 的 phase 檢查 | 抓到（2 個） |
+| loadMore 失敗清空 items | 抓到（1 個） |
+| `CameoListResponse` 的 `next_cursor` SerialName 改錯 | 抓到（`:data` 1 個）。第一次嘗試用了不存在的 `:data:test` 任務，不算結果，已用 `:data:testDebugUnitTest` 重跑 |
+
+### 模擬器最小冒煙（一次）
+
+環境：API 37 AVD `Pixel_10_Pro`（`-camera-front emulated -camera-back virtualscene -no-snapshot-save`），後端 `docker compose -p cameo52b2`。用 curl 建 2 筆（`c1`、`c2`）、上傳、送出。截圖在 `~/cameo-iter5-evidence/r52b2-*`（repo 外）。
+
+- 底部有「片段清單／點數／我的客串」三個分頁。
+- 剛送出後（22:41:38）列表顯示兩筆「生成中／完成後會通知你」與時間 `2026-11-06 22:41`，片段名稱與 `curl GET /v1/cameos` 一致。
+- 約 22:42:04 後端已全部 `SUCCEEDED`；留在原頁時畫面仍是舊狀態（不輪詢）；切到「點數」再切回後顯示「已完成／你的客串短片完成了」。
+- 點數頁正常：可用 80、占用 0，兩筆「扣點 -10」。
+
+### 審查修正（5.2b-2 修正輪）
+
+**修前重現（步驟 A，未改程式前，同一模擬器與後端 `-p cameo52b2fix`，`DAILY_LIMIT=30`、`VENDOR_DELAY_SEC=3`）：**
+
+- R1（切到點數期間 curl 新建一筆，切回「我的客串」不捲動）：做了 2 次，**未重現**。新訂單都在畫面最上方（第一個可見列是新那筆：「屋頂告白」、「最後一班車」，bounds 起點 y=180）。當時列表只有 1～3 筆、不到一屏，所以這個結果只代表短列表未重現，**不代表長列表沒問題**；沒有加標題。截圖 `~/cameo-iter5-evidence/r52b2fix-before-r1-*.png`。後來的獨立審查換成回前景路徑、加長列表：超過一屏 3/3 重現（新訂單被擠到畫面上方），不到一屏 3/3 未重現，證據 `~/cameo-iter5-evidence/r52b2judge-r3-long-*.png`；處理見下一節「回前景捲動」。
+- R2（停 api 後切回）：錯誤框在畫面內（列表在最上方、未捲動時，bounds y=204–415）。截圖 `r52b2fix-before-r2.png`。修前結構下錯誤框是 `LazyColumn` 的第一個 item，捲離最上方時會跟著捲走，這個情況修前未實測（讀碼推論）；仍依方案移出列表。
+
+**修改：**
+
+- 刷新失敗提示移到 `LazyColumn` 外的固定區（`Column { 固定區; LazyColumn(weight(1f)) }`）。
+- `PagedUiState.refreshing`：`refresh()` 通過 phase 檢查後設 true，成功或失敗清 false；`loadMore()`、`loadFirstPage()` 也使重設為 false。畫面：`refreshFailed && refreshing` 顯示轉圈，`refreshFailed && !refreshing` 顯示錯誤與重試，其他不顯示（沒有失敗時的回前景刷新不顯示轉圈）。點數頁不讀此欄位。
+- `Models.kt` 的 `createdAt` 註解改為符合事實（列表與單筆都有）；預設值 `null` 保留（多個測試與 domain 程式以不帶 `createdAt` 建構 `Cameo`，DTO 也容許缺漏）。
+- 文件：「回前景跳回第一頁」改成實際行為（換回第一頁最新內容，可能先變短，捲到底再載入後面的頁）。
+
+**測試：** `./gradlew :domain:test :data:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --rerun-tasks`，`BUILD SUCCESSFUL`；測試數（`build/test-results` XML）：`:domain` 71、`:data` 64、`:app` 118，失敗 0（`:app` 由 112 增為 118）。`PagedListTest` 把 `refresh_doesNotChangeStateWhileInFlight` 改為 `refresh_inFlightOnlySetsRefreshing`（進行中只多 `refreshing=true`，其他不變；這是方案要求的行為改變，不是放寬）並新增 6 個；`refresh_whileLoadMoreErrorOrError_doesNotFetch` 補上 Error 路徑。`ViewModelTest.refreshLedger_failureKeepsItemsAndState` 未改、通過。
+
+**Mutation（`:app:testDebugUnitTest --rerun-tasks`，逐一改、確認失敗、還原）：**
+
+| mutation | 結果 |
+|---|---|
+| 刷新成功時不清 `refreshing` | 抓到（1 個） |
+| 刷新失敗時不清 `refreshing` | 抓到（2 個：`PagedListTest` 1、`ViewModelTest.refreshLedger_failureKeepsItemsAndState` 1） |
+| `loadMore` 不清 `refreshing` | 抓到（1 個） |
+| `loadFirstPage` 重設時保留 `refreshing` | 抓到（1 個） |
+| `refresh()` 不設 `refreshing=true` | 抓到（4 個） |
+| `loadMore` 不清 `refreshFailed` | 抓到（1 個） |
+| `refresh` 的 phase 檢查放行 Error | 抓到（1 個） |
+
+**修後模擬器（重裝新 APK，同一後端；截圖 `~/cameo-iter5-evidence/r52b2fix-after-*.png`，已開圖確認）：**
+
+- V1：當時只有短列表（不到一屏），R1 未重現、未加標題；仍跑了同流程，新訂單（「雨夜重逢」排隊中）在最上方（`after-v1-b.png`）。
+- V2：停 api 後切回，錯誤框在畫面內（`after-v2-error.png`）；恢復 api 後按重試，錯誤框消失、列表更新（`after-v2-retry.png`）。
+- V3：共 10 筆（略超過一屏，只能捲一點點；未做 20 筆以上的多頁），捲到底後重複 R2：錯誤框固定在最上方、列表在其下方捲動位置不變（`after-v3-error-scrolled.png`）；恢復 api 後按重試，錯誤框消失（`after-v3-retry.png`）。
+- 點數頁正常：可用 0、占用 0、10 筆「扣點 -10」（`after-points.png`）。
+- 重試時的轉圈只會短暫出現，截圖沒抓到：由單元測試驗證，未目視。
+
+**已知限制（未修，讀碼推論，未量測）：** 首次進頁若第一頁在轉場結束前就回來，`ON_RESUME` 的刷新可能多查一次第一頁。這是一次靜默查詢、不閃爍；少見情況下這次查詢失敗會多出錯誤提示，按重試可恢復。
+
+### 回前景捲動（5.2b-2 修正輪二）
+
+**規則（「第一頁」指畫面的第一屏，不是 API 分頁）：** 第一筆在畫面上（只露出一部分也算）時，有新訂單就自動捲到新的第一筆，並且不顯示按鈕；第一筆不在畫面上時，不自動捲、位置不動（例外：捲過第一頁後回前景，列表會換回第一頁，位置會變），右下角顯示「回到頂端」（第一筆離開畫面就出現、看得到就消失），點擊回到第一筆。第一筆 `id` 沒變（只有狀態更新或回前景）時不捲動。沒有加標題、沒有改 `PagedList`、沒有第一頁筆數的狀態。
+
+**做法：** 新增 `ui/ListTopPolicy.kt` 的純函式 `shouldScrollToTop(previousFirstId, currentFirstId, visibleKeys)`；`MyCameosScreen` 用 `rememberLazyListState`，`LaunchedEffect(firstId)` 以「上一個第一筆的 key 是否在可見項目內」判斷（不查 index：新訂單插入後 `LazyColumn` 會改 index，副作用與量測先後不一定 [待確認]；上一個第一筆是否可見在一般情況下量測前後答案相同。例外：兩次查詢之間新增超過一頁（目前 20 筆）時，上一個第一筆不在新資料內，此時可能不捲 [待確認]）。按鈕用 `firstVisibleItemIndex > 0` 決定。
+
+**單元測試與建置：** `./gradlew :domain:test :data:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --rerun-tasks`，`BUILD SUCCESSFUL`；測試數（`build/test-results` XML）：`:domain` 71、`:data` 64、`:app` 123，失敗 0、略過 0（`:app` 由 118 增為 123，新增 `ListTopPolicyTest` 5 個）。
+
+| mutation（`:app:testDebugUnitTest --rerun-tasks`） | 結果 |
+|---|---|
+| 拿掉 previous 為 null 的判斷 | 第一版測試存活（`null in visibleKeys` 本來就是 false）；測試改成 `visibleKeys` 含 `null` 後抓到（1 個） |
+| 拿掉第一筆 id 比對 | 抓到（1 個） |
+| 拿掉可見判斷 | 抓到（1 個） |
+| 拿掉 current 為 null 的判斷 | 抓到（1 個） |
+| 函式固定回傳 false | 抓到（1 個） |
+
+還原後以 `diff` 確認與原檔相同。
+
+**模擬器實測（API 37 AVD `Pixel_10_Pro`，後端 `docker compose -p cameo52b2top`，`DAILY_LIMIT=1000`；列表資料用 SQL 直接寫入隔離資料庫：超過 20 筆 `SUCCEEDED`，新訂單也用 SQL 寫入；回前景用 `KEYCODE_HOME` 加 launcher 意圖 `monkey`，每次 pid 都是 2520，沒有重建；截圖 `~/cameo-iter5-evidence/r52b2top-*.png`）：**
+
+| 情境 | 結果 |
+|---|---|
+| 1 看得到第一筆（頂端，3 次） | 通過 3/3：第一個可見列都是新訂單（title 起點 y=180，完整），按鈕不存在（`1a`、`1b`、`1c`） |
+| 2 第一筆只露出一部分（小幅 swipe，第一列只剩 y=156–217 的訊息與時間） | 通過：回前景後捲到新的第一筆（y=180），按鈕不存在（`2`） |
+| 3 切到「點數」、新增訂單、切回 | 通過：第一個可見列是新訂單（y=180），按鈕不存在（`3`） |
+| 4 看不到第一筆 | 通過：回前景前後第一個可見列相同（時間 23:30，y=156），按鈕存在（`4-before-click`）；點按鈕後第一個可見列是新訂單（23:32，y=180），按鈕消失（`4-after-click`） |
+| 5 按鈕切換 | 通過：第一筆剛離開畫面（第一個可見列為第二筆，y=171）按鈕出現（`5-button-on`）；捲回第一筆部分可見（訊息列 y=156）按鈕消失（`5-button-off`） |
+| 6 沒有新訂單，停在中段 | 通過：回前景前後第一個可見列相同（`屋頂告白`，y=179），位置不變，按鈕存在 |
+| 7 第 2 頁 | 捲到底時最後一列為 20:11（共超過 20 筆，已載入後面的頁）；回前景後列表換回第一頁（第一個可見列變成 21:55 那筆，不是原本的位置），捲到底再載入後面的頁、最後一列又是 20:11；按鈕存在，點擊回到第一筆（`7-before`、`7-after`、`7-bottom`、`7-after-click`） |
+
+點數頁正常：可用 100、占用 0、「目前沒有點數明細」（`points`）。
+
+**未驗證：** 第一筆 `id` 沒變但狀態更新時不捲動只由單元測試（`shouldScrollToTop`）涵蓋，模擬器只驗了「沒有新訂單」的情境 6；情境 7 回前景後位置變成第一頁後段（回前景後第一個可見列是第 14 筆附近，不是頂端也不是原位置），按需求只記錄；Loading／Error 時按鈕不顯示只由讀碼（按鈕只在列表分支內組合），空列表則因 `firstVisibleItemIndex` 為 0 不顯示，未在模擬器逐一觸發；沒有 Compose UI 測試；真機、動畫期間再次回前景、背景與程序被殺未測。
+
+- 回前景更新途中切走分頁、且第一筆當時只露出一部分時，切回後不會捲到完整（讀碼推論，未實測，條件很窄，不修）。
+- 自動捲動途中按鈕可能短暫出現（推測，未目視，5.3 順便看）。
+- 底部留白 `contentPadding = PaddingValues(bottom = 80.dp)` 是審查後補的，只跑建置與單元測試，沒有再開模擬器。
+
+### 未驗證
+
+- 空列表、載入更多失敗畫面：只靠單元測試（狀態機層），沒有 Compose UI 測試，畫面接線未在模擬器重現。刷新失敗畫面已在修正輪 V2、V3 於模擬器驗過；翻頁（第 2 頁）只在「回前景捲動」情境 7 看到資料與回前景表現，載入更多失敗畫面仍未驗。
+- `INVALID_CURSOR` 在 App 端的畫面（只驗 data 層轉成 `Failure`）。
+- 點通知開此頁（未實作）；真機；背景與程序被殺後的行為（排 5.3）。

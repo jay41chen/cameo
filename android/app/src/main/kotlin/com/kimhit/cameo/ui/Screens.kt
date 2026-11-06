@@ -3,12 +3,15 @@ package com.kimhit.cameo.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -23,6 +26,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -46,6 +54,7 @@ import com.kimhit.cameo.domain.model.LedgerEntry
 import com.kimhit.cameo.domain.model.LedgerType
 import com.kimhit.cameo.domain.model.PendingCameo
 import com.kimhit.cameo.domain.model.UnfinishedCameo
+import com.kimhit.cameo.domain.model.Cameo
 import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.Quota
 import com.kimhit.cameo.domain.model.Clip
@@ -60,11 +69,11 @@ fun CameoRoot() {
     val throttle = remember { ClickThrottle(NAV_CLICK_INTERVAL_MS, SystemClock::elapsedRealtime) }
     val entry by nav.currentBackStackEntryAsState()
     val current = entry?.destination?.route
-    val showBottomBar = current == ROUTE_CLIPS || current == ROUTE_POINTS
+    val showBottomBar = current == ROUTE_CLIPS || current == ROUTE_POINTS || current == ROUTE_MY_CAMEOS
     Scaffold(
         bottomBar = {
             if (showBottomBar) NavigationBar {
-                listOf(ROUTE_CLIPS to "片段清單", ROUTE_POINTS to "點數").forEach { (route, label) ->
+                listOf(ROUTE_CLIPS to "片段清單", ROUTE_POINTS to "點數", ROUTE_MY_CAMEOS to "我的客串").forEach { (route, label) ->
                     NavigationBarItem(
                         selected = current == route,
                         onClick = {
@@ -91,6 +100,7 @@ fun CameoRoot() {
                 )
             }
             composable(ROUTE_POINTS) { PointsScreen() }
+            composable(ROUTE_MY_CAMEOS) { MyCameosScreen() }
             composable(
                 ROUTE_CAMERA,
                 arguments = listOf(
@@ -354,10 +364,10 @@ fun PointsScreen(viewModel: PointsViewModel = hiltViewModel()) {
             Text("點數明細", Modifier.padding(16.dp), style = MaterialTheme.typography.titleMedium)
         }
         when (ledger.phase) {
-            LedgerPhase.Loading -> item {
+            PagePhase.Loading -> item {
                 Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) { CircularProgressIndicator() }
             }
-            LedgerPhase.Error -> item {
+            PagePhase.Error -> item {
                 ErrorBox(ledger.errorMessage, viewModel::loadFirstPage, Modifier.fillMaxWidth())
             }
             else -> {
@@ -365,20 +375,7 @@ fun PointsScreen(viewModel: PointsViewModel = hiltViewModel()) {
                     item { Text("目前沒有點數明細", Modifier.padding(16.dp)) }
                 }
                 items(ledger.items, key = { it.id }) { LedgerRow(it) }
-                when (ledger.phase) {
-                    LedgerPhase.LoadingMore -> item {
-                        Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) {
-                            CircularProgressIndicator()
-                        }
-                    }
-                    LedgerPhase.LoadMoreError -> item {
-                        ErrorBox(ledger.errorMessage, viewModel::loadMore, Modifier.fillMaxWidth())
-                    }
-                    else -> if (ledger.nextCursor != null) item {
-                        // 捲到清單底部時自動載入下一頁
-                        LaunchedEffect(ledger.nextCursor) { viewModel.loadMore() }
-                    }
-                }
+                pagedFooter(ledger, viewModel::loadMore)
             }
         }
     }
@@ -405,6 +402,89 @@ private fun LedgerRow(entry: LedgerEntry) {
                 )
             }
             Text("$sign${entry.amount}")
+        }
+        HorizontalDivider()
+    }
+}
+
+/** 列表底部：載入更多的轉圈、失敗重試，或捲到底時自動載入下一頁。 */
+private fun LazyListScope.pagedFooter(state: PagedUiState<*>, loadMore: () -> Unit) {
+    when (state.phase) {
+        PagePhase.LoadingMore -> item {
+            Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) { CircularProgressIndicator() }
+        }
+        PagePhase.LoadMoreError -> item {
+            ErrorBox(state.errorMessage, loadMore, Modifier.fillMaxWidth())
+        }
+        else -> if (state.nextCursor != null) item {
+            // 捲到清單底部時自動載入下一頁
+            LaunchedEffect(state.nextCursor) { loadMore() }
+        }
+    }
+}
+
+@Composable
+fun MyCameosScreen(viewModel: MyCameosViewModel = hiltViewModel()) {
+    val state by viewModel.state.collectAsState()
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val showBackToTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
+    val firstId = state.items.firstOrNull()?.id
+    var previousFirstId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(firstId) {
+        val shouldScroll = shouldScrollToTop(
+            previousFirstId,
+            firstId,
+            listState.layoutInfo.visibleItemsInfo.map { it.key },
+        )
+        // 先更新再捲動：animateScrollToItem 可能因 firstId 再變而被取消
+        previousFirstId = firstId
+        if (shouldScroll) listState.animateScrollToItem(0)
+    }
+    OnResume(viewModel::refresh)
+    when (state.phase) {
+        PagePhase.Loading -> LoadingBox()
+        PagePhase.Error -> ErrorBox(state.errorMessage, viewModel::loadFirstPage, Modifier.fillMaxSize())
+        else -> Column(Modifier.fillMaxSize()) {
+            // 刷新失敗的提示固定在列表外，不論捲到哪都看得到
+            if (state.refreshFailed) {
+                if (state.refreshing) {
+                    Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) { CircularProgressIndicator() }
+                } else {
+                    ErrorBox(state.errorMessage, viewModel::refresh, Modifier.fillMaxWidth())
+                }
+            }
+            Box(Modifier.weight(1f)) {
+                LazyColumn(
+                    Modifier.fillMaxSize(),
+                    state = listState,
+                    contentPadding = PaddingValues(bottom = 80.dp),
+                ) {
+                    if (state.items.isEmpty()) {
+                        item { Text("還沒有客串", Modifier.padding(16.dp)) }
+                    }
+                    items(state.items, key = { it.id }) { MyCameoRow(it) }
+                    pagedFooter(state, viewModel::loadMore)
+                }
+                if (showBackToTop) {
+                    Button(
+                        onClick = { scope.launch { listState.scrollToItem(0) } },
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                    ) { Text("回到頂端") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MyCameoRow(cameo: Cameo) {
+    Column {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Text(cameo.clip.title, style = MaterialTheme.typography.titleMedium)
+            Text(cameo.displayTitle ?: "狀態未知")
+            cameo.displayMessage?.let { Text(it) }
+            cameo.createdAt?.let { Text(formatTime(it), style = MaterialTheme.typography.bodySmall) }
         }
         HorizontalDivider()
     }

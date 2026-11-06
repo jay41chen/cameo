@@ -16,7 +16,10 @@ data class LedgerEntry(
     val createdAt: String,
 )
 
-data class LedgerPage(val items: List<LedgerEntry>, val nextCursor: String?)
+/** 分頁結果；[nextCursor] 為 null 表示沒有下一頁。 */
+data class Page<T>(val items: List<T>, val nextCursor: String?)
+
+typealias LedgerPage = Page<LedgerEntry>
 
 /** [resetsAt] 保留後端的 ISO 8601 字串；[display] 為後端給的顯示文字。 */
 data class Quota(val remaining: Int, val resetsAt: String, val display: String)
@@ -29,7 +32,11 @@ data class Cameo(
     val status: CameoStatus,
     val displayTitle: String?,
     val displayMessage: String?,
+    /** 後端的 ISO 8601 字串；列表與單筆回應都有，缺漏時為 null（畫面不顯示時間），預設值讓只關心狀態的呼叫端可省略。 */
+    val createdAt: String? = null,
 )
+
+typealias CameoPage = Page<Cameo>
 
 data class CameoUpload(val url: String, val expiresAt: String)
 

@@ -2,6 +2,7 @@ package com.kimhit.cameo.ui
 
 import com.kimhit.cameo.domain.model.Cameo
 import com.kimhit.cameo.domain.model.CameoOrder
+import com.kimhit.cameo.domain.model.CameoPage
 import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.Clip
 import com.kimhit.cameo.domain.model.DomainResult
@@ -53,6 +54,8 @@ class FakeCameoRepo(
         calls += "submit"
         return submits.removeFirst()
     }
+
+    override suspend fun listCameos(cursor: String?): DomainResult<CameoPage> = error("listCameos not stubbed")
 }
 
 class FakePendingRepo : PendingCameoRepository {

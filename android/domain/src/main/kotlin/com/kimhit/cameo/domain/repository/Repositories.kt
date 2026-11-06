@@ -1,5 +1,6 @@
 package com.kimhit.cameo.domain.repository
 
+import com.kimhit.cameo.domain.model.CameoPage
 import com.kimhit.cameo.domain.model.Clip
 import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.model.LedgerPage
@@ -29,6 +30,9 @@ interface CameoRepository {
     suspend fun uploadSelfie(url: String, photoPath: String): DomainResult<CameoOrder>
 
     suspend fun submitCameo(cameoId: String): DomainResult<CameoOrder>
+
+    /** [cursor] 為 null 取第一頁；之後用上一頁的 nextCursor。 */
+    suspend fun listCameos(cursor: String?): DomainResult<CameoPage>
 }
 
 interface PendingCameoRepository {

@@ -5,6 +5,7 @@ import com.kimhit.cameo.domain.model.DomainError
 import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.model.LedgerPage
 import com.kimhit.cameo.domain.model.CameoOrder
+import com.kimhit.cameo.domain.model.CameoPage
 import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.Points
 import com.kimhit.cameo.domain.model.Quota
@@ -27,6 +28,12 @@ class GetPointsUseCase(private val repository: PointsRepository) {
 class GetLedgerPageUseCase(private val repository: PointsRepository) {
     suspend operator fun invoke(cursor: String? = null): DomainResult<LedgerPage> =
         repository.getLedger(cursor)
+}
+
+/** [cursor] 為 null 取第一頁；之後用上一頁的 [CameoPage.nextCursor]。 */
+class GetCameoPageUseCase(private val repository: CameoRepository) {
+    suspend operator fun invoke(cursor: String? = null): DomainResult<CameoPage> =
+        repository.listCameos(cursor)
 }
 
 class GetQuotaUseCase(private val repository: QuotaRepository) {

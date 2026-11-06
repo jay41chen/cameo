@@ -2,6 +2,7 @@ package com.kimhit.cameo.domain.usecase
 
 import com.kimhit.cameo.domain.model.Cameo
 import com.kimhit.cameo.domain.model.CameoOrder
+import com.kimhit.cameo.domain.model.CameoPage
 import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.Clip
 import com.kimhit.cameo.domain.model.DomainError
@@ -127,6 +128,8 @@ internal class FakeCameos(
         events += "submit:$cameoId"
         return submits.removeFirst()()
     }
+
+    override suspend fun listCameos(cursor: String?): DomainResult<CameoPage> = error("listCameos not stubbed")
 }
 
 internal fun order(status: CameoStatus = CameoStatus.AWAITING_UPLOAD, id: String = "u1", clip: String = "c1") =

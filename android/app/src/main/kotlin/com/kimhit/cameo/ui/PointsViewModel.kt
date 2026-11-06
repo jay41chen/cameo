@@ -14,16 +14,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-/** 明細的載入階段。[Idle] 表示已載入、可能還有下一頁。 */
-enum class LedgerPhase { Loading, Idle, Error, LoadingMore, LoadMoreError }
-
-data class LedgerUiState(
-    val items: List<LedgerEntry> = emptyList(),
-    val nextCursor: String? = null,
-    val phase: LedgerPhase = LedgerPhase.Loading,
-    val errorMessage: String? = null,
-)
-
 @HiltViewModel
 class PointsViewModel @Inject constructor(
     private val getPoints: GetPointsUseCase,
@@ -32,11 +22,10 @@ class PointsViewModel @Inject constructor(
     private val _points = MutableStateFlow<Load<Points>>(Load.Loading)
     val points: StateFlow<Load<Points>> = _points
 
-    private val _ledger = MutableStateFlow(LedgerUiState())
-    val ledger: StateFlow<LedgerUiState> = _ledger
+    private val ledgerList = PagedList<LedgerEntry>(viewModelScope) { getLedgerPage(it) }
+    val ledger: StateFlow<PagedUiState<LedgerEntry>> = ledgerList.state
 
     private var pointsJob: Job? = null
-    private var ledgerRefreshJob: Job? = null
 
     init {
         refresh()
@@ -68,59 +57,11 @@ class PointsViewModel @Inject constructor(
         }
     }
 
-    fun loadFirstPage() {
-        _ledger.value = LedgerUiState(phase = LedgerPhase.Loading)
-        viewModelScope.launch {
-            _ledger.value = when (val r = getLedgerPage(null)) {
-                is DomainResult.Success -> LedgerUiState(
-                    items = r.value.items,
-                    nextCursor = r.value.nextCursor,
-                    phase = LedgerPhase.Idle,
-                )
-                is DomainResult.Failure -> LedgerUiState(
-                    phase = LedgerPhase.Error,
-                    errorMessage = r.error.message,
-                )
-            }
-        }
-    }
+    fun loadFirstPage() = ledgerList.loadFirstPage()
 
-    /**
-     * 回到畫面時靜默刷新明細第一頁（扣點與退點會新增明細）。只在 [LedgerPhase.Idle] 執行：
-     * 成功就取代第一頁與 nextCursor；失敗保留現有內容、不改狀態。新的刷新取消前一次；
-     * 回應回來時已不是 Idle（切到載入更多或重新載入）就丟棄。
-     */
-    fun refreshLedger() {
-        if (_ledger.value.phase != LedgerPhase.Idle) return
-        ledgerRefreshJob?.cancel()
-        ledgerRefreshJob = viewModelScope.launch {
-            val r = getLedgerPage(null)
-            val latest = _ledger.value
-            if (r is DomainResult.Success && latest.phase == LedgerPhase.Idle) {
-                _ledger.value = latest.copy(items = r.value.items, nextCursor = r.value.nextCursor)
-            }
-        }
-    }
+    /** 回到畫面時靜默刷新明細第一頁（扣點與退點會新增明細）；規則見 [PagedList.refresh]。點數頁忽略 refreshFailed。 */
+    fun refreshLedger() = ledgerList.refresh()
 
     /** 載入下一頁；沒有下一頁或正在載入時不做事。分頁失敗後呼叫即為重試。 */
-    fun loadMore() {
-        val current = _ledger.value
-        val cursor = current.nextCursor ?: return
-        if (current.phase != LedgerPhase.Idle && current.phase != LedgerPhase.LoadMoreError) return
-        _ledger.value = current.copy(phase = LedgerPhase.LoadingMore, errorMessage = null)
-        viewModelScope.launch {
-            val latest = _ledger.value
-            _ledger.value = when (val r = getLedgerPage(cursor)) {
-                is DomainResult.Success -> latest.copy(
-                    items = latest.items + r.value.items,
-                    nextCursor = r.value.nextCursor,
-                    phase = LedgerPhase.Idle,
-                )
-                is DomainResult.Failure -> latest.copy(
-                    phase = LedgerPhase.LoadMoreError,
-                    errorMessage = r.error.message,
-                )
-            }
-        }
-    }
+    fun loadMore() = ledgerList.loadMore()
 }

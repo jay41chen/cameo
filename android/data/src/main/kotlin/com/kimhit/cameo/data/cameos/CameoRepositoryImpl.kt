@@ -1,17 +1,20 @@
 package com.kimhit.cameo.data.cameos
 
 import com.kimhit.cameo.data.network.ApiService
+import com.kimhit.cameo.data.network.CameoDto
 import com.kimhit.cameo.data.network.CameoOrderResponse
 import com.kimhit.cameo.data.network.CreateCameoRequest
 import com.kimhit.cameo.data.network.UploadApi
 import com.kimhit.cameo.data.network.safeCall
 import com.kimhit.cameo.domain.model.Cameo
 import com.kimhit.cameo.domain.model.CameoOrder
+import com.kimhit.cameo.domain.model.CameoPage
 import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.CameoUpload
 import com.kimhit.cameo.domain.model.Clip
 import com.kimhit.cameo.domain.model.DomainError
 import com.kimhit.cameo.domain.model.DomainResult
+import com.kimhit.cameo.domain.model.Page
 import com.kimhit.cameo.domain.repository.CameoRepository
 import com.kimhit.cameo.domain.usecase.PHOTO_MISSING
 import java.io.File
@@ -38,17 +41,25 @@ internal class CameoRepositoryImpl(
 
     override suspend fun submitCameo(cameoId: String): DomainResult<CameoOrder> =
         safeCall({ api.submit(cameoId) }, ::toOrder)
+
+    override suspend fun listCameos(cursor: String?): DomainResult<CameoPage> =
+        safeCall({ api.listCameos(cursor) }) { body ->
+            Page(body.items.map { it.toDomain() }, body.nextCursor)
+        }
 }
 
 private val JPEG = "image/jpeg".toMediaType()
 
 private fun toOrder(body: CameoOrderResponse) = CameoOrder(
-    cameo = Cameo(
-        id = body.cameo.id,
-        clip = Clip(body.cameo.clip.id, body.cameo.clip.title, body.cameo.clip.cost),
-        status = runCatching { CameoStatus.valueOf(body.cameo.status) }.getOrDefault(CameoStatus.UNKNOWN),
-        displayTitle = body.cameo.display?.title,
-        displayMessage = body.cameo.display?.message,
-    ),
+    cameo = body.cameo.toDomain(),
     upload = body.upload?.let { CameoUpload(it.url, it.expiresAt) },
+)
+
+private fun CameoDto.toDomain() = Cameo(
+    id = id,
+    clip = Clip(clip.id, clip.title, clip.cost),
+    status = runCatching { CameoStatus.valueOf(status) }.getOrDefault(CameoStatus.UNKNOWN),
+    displayTitle = display?.title,
+    displayMessage = display?.message,
+    createdAt = createdAt,
 )

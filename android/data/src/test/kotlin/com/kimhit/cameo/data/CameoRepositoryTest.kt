@@ -11,6 +11,7 @@ import com.kimhit.cameo.data.pending.PendingCameoEntity
 import com.kimhit.cameo.data.pending.PendingCameoRepositoryImpl
 import com.kimhit.cameo.data.quota.QuotaRepositoryImpl
 import com.kimhit.cameo.domain.model.CameoOrder
+import com.kimhit.cameo.domain.model.CameoPage
 import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.model.PendingStep
@@ -74,6 +75,61 @@ class CameoRepositoryTest {
 
     private fun order(r: DomainResult<CameoOrder>) = (r as DomainResult.Success).value
     private fun failure(r: DomainResult<*>) = (r as DomainResult.Failure).error
+
+    private fun page(r: DomainResult<CameoPage>) = (r as DomainResult.Success).value
+
+    @Test
+    fun list_parsesEmptyItemsAndNullCursor() = runTest {
+        server.enqueue(json("""{"items":[],"next_cursor":null}"""))
+        val p = page(cameos.listCameos(null))
+        val req = server.takeRequest()
+        assertEquals("GET", req.method)
+        assertEquals("/v1/cameos", req.path)
+        assertTrue(p.items.isEmpty())
+        assertNull(p.nextCursor)
+    }
+
+    @Test
+    fun list_parsesItemsWithCreatedAtUnknownStatusAndCursor() = runTest {
+        server.enqueue(
+            json(
+                """{"items":[
+                {"id":"u1","clip":{"id":"c1","title":"雨夜重逢","cost":10},"status":"GENERATING",
+                 "display":{"title":"生成中","message":"請稍候"},"created_at":"2026-11-07T10:01:00+08:00","future":1},
+                {"id":"u2","clip":{"id":"c2","title":"海邊","cost":5},"status":"SOMETHING_NEW"}
+                ],"next_cursor":"cur-2"}""",
+            ),
+        )
+        val p = page(cameos.listCameos(null))
+        assertEquals("cur-2", p.nextCursor)
+        assertEquals(listOf("u1", "u2"), p.items.map { it.id })
+        val a = p.items[0]
+        assertEquals("雨夜重逢", a.clip.title)
+        assertEquals(CameoStatus.GENERATING, a.status)
+        assertEquals("生成中", a.displayTitle)
+        assertEquals("請稍候", a.displayMessage)
+        assertEquals("2026-11-07T10:01:00+08:00", a.createdAt)
+        val b = p.items[1]
+        assertEquals(CameoStatus.UNKNOWN, b.status)
+        assertNull(b.displayTitle)
+        assertNull(b.createdAt)
+    }
+
+    @Test
+    fun list_sendsCursorParameter() = runTest {
+        server.enqueue(json("""{"items":[],"next_cursor":null}"""))
+        cameos.listCameos("abc")
+        assertEquals("/v1/cameos?cursor=abc", server.takeRequest().path)
+    }
+
+    @Test
+    fun list_invalidCursorBecomesFailureWithCode() = runTest {
+        server.enqueue(json("""{"code":"INVALID_CURSOR","message":"cursor 不合法","retryable":false}""", 400))
+        val e = failure(cameos.listCameos("bad"))
+        assertEquals("INVALID_CURSOR", e.code)
+        assertEquals("cursor 不合法", e.message)
+        assertFalse(e.retryable)
+    }
 
     @Test
     fun create_sendsIdempotencyKeyAndBody_andParses201WithUpload() = runTest {

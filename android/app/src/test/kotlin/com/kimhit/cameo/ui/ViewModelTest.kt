@@ -100,10 +100,10 @@ class ViewModelTest {
         )
         val vm = pointsVm(fake)
         assertEquals(Load.Loading, vm.points.value)
-        assertEquals(LedgerPhase.Loading, vm.ledger.value.phase)
+        assertEquals(PagePhase.Loading, vm.ledger.value.phase)
         advanceUntilIdle()
         assertEquals(Load.Success(Points(100, 0)), vm.points.value)
-        assertEquals(LedgerUiState(phase = LedgerPhase.Idle), vm.ledger.value)
+        assertEquals(PagedUiState<LedgerEntry>(phase = PagePhase.Idle), vm.ledger.value)
     }
 
     @Test
@@ -115,13 +115,13 @@ class ViewModelTest {
         val vm = pointsVm(fake)
         advanceUntilIdle()
         assertEquals(Load.Error("後端訊息"), vm.points.value)
-        assertEquals(LedgerPhase.Error, vm.ledger.value.phase)
+        assertEquals(PagePhase.Error, vm.ledger.value.phase)
         assertEquals("後端訊息", vm.ledger.value.errorMessage)
         vm.refresh()
         advanceUntilIdle()
         assertEquals(Load.Success(Points(90, 10)), vm.points.value)
         assertEquals(listOf(entry("l1")), vm.ledger.value.items)
-        assertEquals(LedgerPhase.Idle, vm.ledger.value.phase)
+        assertEquals(PagePhase.Idle, vm.ledger.value.phase)
     }
 
     @Test
@@ -138,7 +138,7 @@ class ViewModelTest {
         val vm = pointsVm(fake)
         advanceUntilIdle()
         vm.loadMore()
-        assertEquals(LedgerPhase.LoadingMore, vm.ledger.value.phase)
+        assertEquals(PagePhase.LoadingMore, vm.ledger.value.phase)
         advanceUntilIdle()
         assertEquals(listOf("l1", "l2", "l3"), vm.ledger.value.items.map { it.id })
         assertEquals(null, vm.ledger.value.nextCursor)
@@ -163,12 +163,12 @@ class ViewModelTest {
         advanceUntilIdle()
         vm.loadMore()
         advanceUntilIdle()
-        assertEquals(LedgerPhase.LoadMoreError, vm.ledger.value.phase)
+        assertEquals(PagePhase.LoadMoreError, vm.ledger.value.phase)
         assertEquals(listOf("l1"), vm.ledger.value.items.map { it.id })
         vm.loadMore()
         advanceUntilIdle()
         assertEquals(listOf("l1", "l2"), vm.ledger.value.items.map { it.id })
-        assertEquals(LedgerPhase.Idle, vm.ledger.value.phase)
+        assertEquals(PagePhase.Idle, vm.ledger.value.phase)
         assertEquals(listOf(null, "cur1", "cur1"), fake.cursors)
     }
 
@@ -287,7 +287,7 @@ class ViewModelTest {
         advanceUntilIdle()
         assertEquals(listOf("l2", "l1"), vm.ledger.value.items.map { it.id })
         assertEquals("cur2", vm.ledger.value.nextCursor)
-        assertEquals(LedgerPhase.Idle, vm.ledger.value.phase)
+        assertEquals(PagePhase.Idle, vm.ledger.value.phase)
         assertEquals(listOf<String?>(null, null), fake.cursors)
     }
 
@@ -302,8 +302,8 @@ class ViewModelTest {
         val before = vm.ledger.value
         vm.refreshLedger()
         advanceUntilIdle()
-        assertEquals(before, vm.ledger.value)
-        assertEquals(LedgerPhase.Idle, vm.ledger.value.phase)
+        assertEquals(before.copy(refreshFailed = true, errorMessage = "後端訊息"), vm.ledger.value)
+        assertEquals(PagePhase.Idle, vm.ledger.value.phase)
     }
 
     @Test
@@ -321,7 +321,7 @@ class ViewModelTest {
         vm.refreshLedger() // 第一頁還在載入
         advanceUntilIdle()
         vm.loadMore()
-        assertEquals(LedgerPhase.LoadingMore, vm.ledger.value.phase)
+        assertEquals(PagePhase.LoadingMore, vm.ledger.value.phase)
         vm.refreshLedger()
         advanceUntilIdle()
         assertEquals(listOf(null, "cur1"), fake.cursors)
@@ -365,14 +365,14 @@ class ViewModelTest {
         vm.refreshLedger() // 進行中
         advanceUntilIdle()
         vm.loadMore()
-        assertEquals(LedgerPhase.LoadingMore, vm.ledger.value.phase)
+        assertEquals(PagePhase.LoadingMore, vm.ledger.value.phase)
         refresh.complete(DomainResult.Success(LedgerPage(listOf(entry("lr")), null))) // refresh 先回來
         advanceUntilIdle()
-        assertTrue(vm.ledger.value.phase != LedgerPhase.Idle)
+        assertTrue(vm.ledger.value.phase != PagePhase.Idle)
         assertEquals(listOf("l1"), vm.ledger.value.items.map { it.id })
         more.complete(DomainResult.Success(LedgerPage(listOf(entry("l2")), null)))
         advanceUntilIdle()
-        assertEquals(LedgerPhase.Idle, vm.ledger.value.phase)
+        assertEquals(PagePhase.Idle, vm.ledger.value.phase)
         assertEquals(listOf("l1", "l2"), vm.ledger.value.items.map { it.id })
     }
 }
