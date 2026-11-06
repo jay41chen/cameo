@@ -1,6 +1,6 @@
 # 客串短劇（Kimhit 候選人作業）
 
-> 狀態：設計階段。本文件描述「將實作」的 API 契約，程式尚未實作，沒有任何功能已完成或已測試。尚未確認的欄位標 `[待確認]`；契約形狀類的細節集中列於下方「待確認欄位」。
+> 狀態：進行中。第 2 輪已實作 Docker 後端與 Android App 的片段清單、點數、點數明細（含分頁）；其他功能（建單、上傳、送出、通知等）尚未實作。App 只在 API 37 模擬器驗證過。API 契約中尚未實作的部分仍是設計，未確認的欄位標 `[待確認]`。
 
 ## 專案介紹
 
@@ -12,16 +12,62 @@
 
 ## 執行方式
 
-待實作後補
+### 後端
 
-預告：之後需要設定 `ANDROID_HOME` 或 `local.properties`；App 連 `http://10.0.2.2:8080`，`adb reverse` 不是必要步驟。
+需要 Docker。在專案根目錄執行：
+
+```
+docker compose up --build
+```
+
+會啟動 Postgres（`postgres:17-alpine`）和 `api`（`http://localhost:8080`）。`api` 等 Postgres 健康後才啟動，並自動執行 migration 與 seed（可重複啟動，不會重複插入）。不需要任何帳號或金鑰；連線字串、port 可用環境變數覆寫（見 `docker-compose.yml`）。Postgres 只對本機開放 `127.0.0.1:5433`，供測試使用。
+
+Seed：測試帳號初始 100 點；3 個片段（`c1` 雨夜重逢、`c2` 屋頂告白、`c3` 最後一班車），每段 10 點；點數明細初始為空。
+
+快速檢查：
+
+```
+curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
+```
+
+後端測試（不需啟動 App）：本機需要 Go 1.27.1（`backend/go.mod` 的 `go` 指令）。先讓 Postgres 在跑，再指定 `TEST_DATABASE_URL`。測試會在該資料庫建立獨立 schema，結束後刪除，不動其他資料；沒設定時測試會失敗。
+
+```
+cd backend
+TEST_DATABASE_URL='postgres://cameo:cameo@127.0.0.1:5433/cameo?sslmode=disable' go test ./... -count=1
+```
+
+### Android App
+
+需求：JDK 21（`android/gradle/gradle-daemon-jvm.properties` 要求 Gradle daemon 用 JDK 21，編譯用的 toolchain 也是 21；本機沒有時 Gradle 會透過 foojay 自動下載，需連網）、Android SDK 37（compileSdk 需要；targetSdk 為 36）。SDK 位置要設 `ANDROID_HOME` 環境變數，或在 `android/local.properties` 寫 `sdk.dir=/path/to/sdk`（此檔不進 git）。
+
+1. 先啟動後端（見上）。
+2. 用 Android Studio 開啟 `android/` 資料夾並執行 `app`；或用 Gradle：
+
+```
+cd android
+./gradlew :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.kimhit.cameo/.MainActivity
+```
+
+- App 連 `http://10.0.2.2:8080`（模擬器看到的宿主機），測試 token 為 `test-token`，兩者由 `:app` 的 build config 提供；只有 debug build 允許對 `10.0.2.2` 明文 HTTP。`adb reverse` 不是必要步驟。
+- 目前畫面：片段清單、點數（可用／占用、明細分頁載入）。每個區塊有載入中、失敗（顯示後端 `message`，沒有則通用文字）與重試。
+
+單元測試（不需啟動 App 或後端）：
+
+```
+cd android
+./gradlew :domain:test :data:testDebugUnitTest :app:testDebugUnitTest --rerun-tasks
+```
+
+手動驗證步驟見 `docs/manual-test-checklist.md`。
 
 ## 待確認欄位
 
 以下契約細節尚未確認，不在每列重複標註（`/debug/faults` 端點本身已定案）：
 
 - 訂單資料格式中 `display`、`video_available`、`share` 的結構。
-- `GET /v1/clips`、`GET /v1/points/ledger` 的回應形狀。
 - `POST /v1/cameos` 的 `Idempotency-Key` header、新建 `201`／重送 `200` 語意，以及 `402 INSUFFICIENT_POINTS`。
 - `POST /webhooks/vendor` 的 header 與 body。
 - 訂單查詢（`GET /v1/cameos`、`GET /v1/cameos/{id}`）的回應形狀。
@@ -33,7 +79,8 @@
 ### 通用規則
 
 - Header：`Authorization: Bearer test-token`（假設已用測試帳號登入）、`X-App-Version: <版本碼整數>` `[待確認]`。
-- 錯誤格式：`{"code":"...","message":"給使用者看的文字","retryable":false}`（`code`、`retryable` 的細節 `[待確認]`）。
+- 錯誤格式：`{"code":"...","message":"給使用者看的文字","retryable":false}`；`retryable` 為 `true` 時 App 可稍後重試。
+- 先判斷路由再驗 token：未知路徑（不論有沒有 token）回 `404 NOT_FOUND`；已知路徑但方法不對回 `405 METHOD_NOT_ALLOWED`（帶 `Allow`）；已知路徑且方法正確，缺少或錯誤的 `Authorization` 才回 `401 UNAUTHORIZED`；後端錯誤回 `500 INTERNAL`（`retryable: true`）。都使用上述錯誤格式。
 - App 忽略未知欄位。未知的訂單 `status` 視為非終態；有後端 `display` 就顯示，沒有才用通用文字；兩種情況都重新查詢。
 - 版本過舊回 `426 UPGRADE_REQUIRED`。
 - 時間為 ISO 8601，台北時間（+08:00）。
@@ -55,7 +102,7 @@
 ```json
 {
   "id": "uuid",
-  "clip": { "id": "c1", "title": "經典告白", "cost": 10 },
+  "clip": { "id": "c1", "title": "雨夜重逢", "cost": 10 },
   "status": "GENERATING",
   "display": { "title": "生成中", "message": "完成後會通知你" },
   "points_state": "CHARGED",
@@ -79,7 +126,7 @@
 - 成功 `200`：
 
 ```json
-{"items":[{"id":"c1","title":"經典告白","cost":10}]}
+{"items":[{"id":"c1","title":"雨夜重逢","cost":10}]}
 ```
 
 ### 點數
@@ -97,11 +144,12 @@
 
 `GET /v1/points/ledger?cursor=`
 
-- 參數：`cursor`（選填，分頁）。
+- 參數：`cursor`（選填；不透明字串，取自上一頁的 `next_cursor`）。依時間新到舊，同一時間的順序固定，分頁不重複不遺漏；每頁 20 筆；沒有下一頁時 `next_cursor` 為 `null`。
+- `cursor` 無效回 `400 INVALID_CURSOR`。`cameo_id` 在訂單功能完成前可能為 `null`。
 - 成功 `200`（`type` 為 `CHARGE` 或 `REFUND`，`amount` 一律為正數）：
 
 ```json
-{"items":[{"id":"l1","type":"CHARGE","amount":10,"cameo_id":"uuid","clip_title":"經典告白","created_at":"2026-11-07T10:01:00+08:00"}],"next_cursor":null}
+{"items":[{"id":"l1","type":"CHARGE","amount":10,"cameo_id":"uuid","clip_title":"雨夜重逢","created_at":"2026-11-07T10:01:00+08:00"}],"next_cursor":null}
 ```
 
 - 占用與釋放不寫明細。

@@ -1,6 +1,6 @@
 # 客串短劇：規格
 
-> 狀態：設計階段。本文件描述「將實作」的內容，程式尚未實作，沒有任何功能已完成或已測試。設計由討論決定。推論出、尚未確認的理由標 `[待確認]`。
+> 狀態：進行中。本文件描述「將實作」的內容；目前只有第 2 輪的片段、點數、點數明細已實作並驗證（API 37 模擬器），其餘尚未實作。設計由討論決定。推論出、尚未確認的理由標 `[待確認]`。
 
 ## 1. 問題定義
 
@@ -53,6 +53,8 @@ App 行為：
 - 確認支付提示：「已占用 10 點，送出後才扣款」。
 - 訂單回傳 `points_state`：`HELD`、`CHARGED`、`REFUNDED`、`RELEASED`。
 - 轉為終態、寫入退點／釋放占用、退還額度，都在同一個資料庫交易內完成。
+
+金流要特別測的情境（第 3、4 輪實作）：送出和過期排程同時發生、重複送出只扣一次、占用中不能超額建單。
 
 ## 5. 狀態與顯示文字
 
@@ -143,7 +145,7 @@ registry 放 adapter 層，提供 debug API。異常用 JSON 情境檔（`backen
 - `:data`：實作預設 `internal`，依功能分資料夾。
 - `:app`：只放 View／ViewModel、組裝（Hilt）、平台實作。
 
-工具鏈起點：Gradle 9.5.0、AGP 9.3.1、Kotlin 2.2.10、Compose BOM 2026.06.01、compileSdk 37、minSdk 26、JDK 17。iteration 2 驗證 Hilt、Room、KSP 能一起建置，不相容就調整。
+工具鏈（iteration 2 已建置並跑過單元測試與 API 37 模擬器）：Gradle 9.5.0、AGP 9.3.1、Kotlin 2.2.10、Compose BOM 2026.06.01、compileSdk 37、targetSdk 36（多個 AndroidX／OkHttp 依賴要求 compileSdk 至少 37；targetSdk 用 36 的原因見 `ARCHITECTURE.md` 第 8 節）、minSdk 26、JDK 21 toolchain（foojay 自動下載）。Hilt 2.60.1、Room 2.8.5、KSP 2.3.13 可與上述版本一起建置。`kotlinx-serialization` 用 1.9.0：1.12.0 的 metadata 版本高於 Kotlin 2.2.10 編譯器可讀，無法編譯。`kotlin-stdlib` 實際由依賴解析到 2.3.21，`kotlinx-serialization` 維持 1.9.0。
 
 驗收：`:domain` 能獨立建置與測試；`:app` 無法直接使用 `:data` 的實作；Hilt 綁定可建置。
 

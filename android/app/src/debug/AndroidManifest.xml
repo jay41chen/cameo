@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 只有 debug build 允許對 10.0.2.2 明文 HTTP -->
+    <application android:networkSecurityConfig="@xml/network_security_config" />
+</manifest>
