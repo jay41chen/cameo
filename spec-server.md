@@ -1,0 +1,156 @@
+# 客串短劇：後端規格
+
+> 從 `spec.md` 提煉，只含 server side；有衝突時以 `spec.md` 為準。`README.md` 與 `ARCHITECTURE.md` 仍寫 8 種異常和 WebSocket，第 8、9 輪才同步；不一致時以規格為準。App 行為只列會影響後端的部分。`[待確認]` 沿用原標記。
+
+## 1. 目標與範圍（§1、§2、§9）
+
+- **目標：** 網路、App 或廠商出事時，點數不會算錯，結果拿得到，是否分享由觀眾決定。
+- **責任：** 每日上限、浮水印、分享權限都由後端負責，不能交給 App。
+- **技術：** Go、Docker、Postgres、`vendor-sim`。
+- **限制：** 乾淨電腦一行指令啟動；不依賴個人帳號、金鑰或 Firebase。
+- **不做：**
+  - 取消訂單
+  - 位元組續傳
+  - 驗證照片來源
+  - 正式推播服務
+  - console 網站
+  - 登入（使用固定測試帳號與 token）
+
+## 2. 額度（§3）
+
+- 每人每日上限預設 3，由設定值 `DAILY_LIMIT` 決定，以台北時間計算，建單時占用。
+- 失敗或過期都退額度；只有 `CONTENT_REJECTED` 退點不退額度。
+- `GET /v1/quota` 回應：
+  `{"remaining":2,"resets_at":"2026-11-07T00:00:00+08:00","display":"今日還可客串 2 次"}`
+- 超過上限時建單回 `429`。
+- 必測：建單減少、失敗或過期恢復、內容拒絕不恢復、台北午夜重置。
+
+## 3. 點數（§4）
+
+| 時機 | 點數 | 明細 |
+|---|---|---|
+| 建單 | 可用減、占用增 | 不寫 |
+| 送出（可重複呼叫，冪等） | 同一交易扣點 | `CHARGE` |
+| 上傳階段過期 | 釋放占用 | 不寫 |
+| 送出後失敗 | 退點 | `REFUND` |
+| 送出晚於期限 | 回 `410`，不扣款 | 不寫 |
+
+- `GET /v1/points` 回 `{available, held}`，`available = balance - held`。
+- `points_state` 的值：`HELD`、`CHARGED`、`REFUNDED`、`RELEASED`。
+- 轉終態、退點或釋放、退額度必須在同一個資料庫交易內完成。
+- 必測：送出與過期排程同時發生、重複送出只扣一次、占用中不能超額建單。
+
+## 4. 訂單狀態（§5）
+
+| 從 | 到 | 觸發 |
+|---|---|---|
+| 無 | `AWAITING_UPLOAD` | 建單（占用點數與額度） |
+| `AWAITING_UPLOAD` | `UPLOADED` | 上傳自拍 |
+| `UPLOADED` | `QUEUED` | 送出（扣點） |
+| `QUEUED` | `GENERATING` | 廠商接受工作 |
+| `QUEUED`／`GENERATING` | `SUCCEEDED` | 成功回呼（回呼可能先於「接受」寫入） |
+| `QUEUED`／`GENERATING` | `FAILED` | 失敗回呼或逾時（退點） |
+| `AWAITING_UPLOAD`／`UPLOADED` | `EXPIRED` | 逾時（釋放，無明細） |
+
+- `SUCCEEDED`、`FAILED`、`EXPIRED` 是終態，先到的為準；晚到或矛盾的回呼只記 log。
+- 逾時後才收到成功回呼：維持 `FAILED`，只記 log。
+- 上傳期限 1 小時，生成期限 30 分鐘。
+- `failure_reason` 的值：
+  - `CONTENT_REJECTED`：退點，不退額度。
+  - `VENDOR_FAILED`：廠商回報失敗且原因不是 `CONTENT_REJECTED`；退點也退額度。
+  - `TIMEOUT`：生成期限到仍無結果；退點也退額度。
+- 分享狀態獨立於狀態機，只有 `SUCCEEDED` 能分享。
+
+`display` 文字：
+
+| 狀態 | 標題 | 說明 |
+|---|---|---|
+| `AWAITING_UPLOAD` | 等待上傳 | 已占用 N 點，送出後才扣款 |
+| `UPLOADED` | 送出中 | 照片已上傳，尚未扣款 |
+| `QUEUED` | 排隊中 | 完成後會通知你 |
+| `GENERATING` | 生成中 | 完成後會通知你 |
+| `SUCCEEDED` | 已完成 | 你的客串短片完成了 |
+| `FAILED`（`CONTENT_REJECTED`） | 無法生成 | 照片未通過審核，點數已退還，今日次數不退還 |
+| `FAILED`（其他原因） | 生成失敗 | 點數已退還 |
+| `EXPIRED` | 已過期 | 上傳期限已過，點數沒有扣款，請重新客串。 |
+
+不向使用者提示廠商故障。未知狀態用通用文字「處理中」。
+
+## 5. API
+
+| 端點 | 需求 | 現況 |
+|---|---|---|
+| `GET /v1/clips`（README） | 片段清單由後端提供 | 已實作 |
+| `GET /v1/points`、`GET /v1/points/ledger`（路徑見 README） | 點數與明細；初始點數由模擬後端提供 | 已實作 |
+| `GET /v1/quota` | 額度 | 已實作 |
+| `POST /v1/cameos` | 建單，以 `client_request_id` 作冪等鍵，透過 `Idempotency-Key` header 傳遞（README） | 已實作 |
+| `GET /v1/cameos?cursor=` | 只列 `QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED`，每筆含 `display` 文字 | 已實作 |
+| `GET /v1/cameos/{id}` | App 改版後，已送出區可視的 `QUEUED`、`GENERATING` 每 3 秒查一次；背景服務每 10 秒查一次 | 已實作 |
+| `PUT /v1/cameos/{id}/selfie`（README） | 上傳自拍 | 已實作 |
+| `POST /v1/cameos/{id}/submit`（README） | 送出 | 已實作 |
+| `POST /webhooks/vendor`（README） | 廠商回呼，HMAC 驗簽 | 已實作 |
+| `GET /v1/cameos/{id}/video`（README） | 播放，回傳固定範例影片（`spec.md` §2） | 未實作 |
+| `PUT`、`DELETE /v1/cameos/{id}/share`（README） | 建立與取消分享 | 未實作 |
+| `GET /s/{token}`（README） | 分享網頁，token 細節 `[待確認]` | 未實作 |
+| `GET /s/{token}/video` | 分享頁播放，免登入，回固定範例影片；分享已取消或不存在回 `404` | 未實作 |
+| `GET`、`POST`、`DELETE /debug/faults`、`POST /debug/reset` | 異常觸發與重設 | 未實作 |
+
+**建單錯誤契約（§10，App 依此處理草稿）：**
+
+- `402`、`429`、`404 CLIP_NOT_FOUND`：後端查過冪等鍵才回，保證這個 key 沒有訂單。
+- `5xx`、網路錯誤、回應遺失：不確定是否已建單，App 保留草稿、顯示「重試」，用同一個 key。
+- 其他 `retryable=false`（`400`、`401`、`409`、`426`、非 JSON 4xx）：不確定是否已建單，App 保留草稿並記錄錯誤、不顯示重試；未完成列可「繼續」（同一個 key）或「移除」。
+- 建單遇 `429` 時 App 顯示後端的 `message`，所以後端錯誤回應要帶 `message` 與 `retryable`。
+
+### WebSocket（§6，只寫文件、不實作）
+
+已決定不實作（見第 9 節第 1 點），以下內容只寫文件。
+
+- 端點 `GET /v1/events`，只有一種事件：`{"type":"cameo_updated","cameo_id":"..."}`。
+- 交易提交後才發出事件；連線清單放 `api` 記憶體。
+- 事件只是提示，狀態一律以 API 為準。
+- 建議使用 `github.com/coder/websocket`，實作前再確認，引入前須經專案負責人同意。
+
+## 6. 上傳與自拍（§2、§11）
+
+- 只收 JPEG，看內容前 3 bytes（`FF D8 FF`），不看 `Content-Type`，整檔重傳。
+- 上傳流程：
+  1. 先查訂單，擋掉明顯不能上傳的。
+  2. 串流寫入暫存檔。
+  3. 在交易內鎖列，重查狀態與期限，更新狀態並 rename。
+  4. commit。
+- `FileStore` 存在 `SELFIE_DIR`，以 Docker named volume 掛載，用 rename 原子覆蓋。
+- 訂單結束後刪自拍，只留浮水印成品；訂單轉終態的交易 commit 後才刪，刪除失敗只記 log。
+- 送出在同一交易內固定先鎖點數帳戶，再鎖訂單列。
+- 掃描、上傳、送出共用同一條逾期規則：`upload_expires_at <= now`。
+
+## 7. 異常（§8）
+
+- **要實作（由 debug API 觸發）：**
+  - `response_lost_after_commit`
+  - `upload_interrupted`
+  - `upload_expired`
+  - `vendor_failed`
+  - `vendor_duplicate_callback`
+  - `vendor_no_callback`
+- **只寫文件：** `socket_event_lost`、`upgrade_required`、`server_error`、`slow_network`、`vendor_dispatch_error`、`vendor_out_of_order`、`unknown_status`。
+- **做法：**
+  - registry 放 adapter 層，情境檔放 `backend/faults/*.json`。
+  - `POST /debug/reset` 清空訂單與異常，重設點數與額度。
+  - 各異常的預期表現與參數待實作後補。
+
+## 8. 架構與測試（§9、§11）
+
+- **目錄：** `backend/internal/{domain,usecase,adapter/{http,postgres,filestore,vendor},app}`（`spec.md` 的 `realtime` 不實作，見第 9 節第 1 點），`cmd` 負責組裝，整合測試放 `backend/test`，用 Go 測試檢查 import 方向；`vendor-sim` 不套分層。
+- **Port：** 定義在 `usecase`，包括 `TxRunner`、`Tx`、`Queries`、`FileStore`、`VendorClient`、`EventPublisher`（不實作）、`Clock`。
+- **冪等：** 所有會重送的操作都要冪等。
+- **測試：** 金流用真實 Postgres，domain 用純 Go 測試，廠商用 fake。
+- **Backlog：** 位元組續傳、自拍 checksum、access／refresh token、自拍鏡射、自拍儲存的崩潰一致性。
+
+## 9. 已解決的規格衝突
+
+1. **WebSocket：** 不實作，只寫文件。
+2. **強制更新：** 不實作，只寫文件。
+3. **輪次：** 第 6 輪是 App 首頁改版，第 7 輪是播放與分享。
+4. **自拍刪除：** 訂單結束（`SUCCEEDED`、`FAILED`、`EXPIRED`）就刪，與 `spec.md` §2 一致。
+5. **浮水印：** 模擬環境不處理浮水印，範例影片視為成品。

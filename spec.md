@@ -1,6 +1,6 @@
 # 客串短劇：規格
 
-> 狀態：進行中。本文件描述「將實作」的內容；第 2 輪的片段、點數、點數明細已實作並驗證（API 37 模擬器）；第 3 輪後端的建單、額度、逾期釋放已實作；第 4 輪後端的上傳自拍、送出（扣點、寫 `CHARGE` 明細）已實作並以真實 Postgres 與 Docker 驗證；App 端的上傳與送出（4.3：進度畫面、依後端狀態接續、失敗重試）已接上，並在 4.4 於 API 37 模擬器接真實後端驗證主流程與接續情境（上傳途中進背景、真實斷線、`401`、真機未驗；確認頁返回轉場中點「確認支付」修正前會建單，已加 `dropUnlessResumed` 只擋「頁面已在離開中」的點擊，修正後 7 次未建單（d=0.7 點到清單列、沒打到按鈕；d=0.5 沒有修正前對照；可直接對照的是 d=0、0.05、0.1、0.2、0.3 這 5 個值，每個 d 只跑 1 次），但不是完整解法：先按確認再按返回時，回應在頁面銷毀後才回來只占用（按「繼續」或等期限釋放），在淡出期間回來則照常上傳、送出、扣款（MVP 決定，見 `ARCHITECTURE.md` 取捨表；皆為讀碼推論、未實測），見 `docs/manual-test-checklist.md` 第 4 輪 Integration）；App 的額度顯示、確認支付、本機草稿已在 API 37 模擬器接真實後端驗證（含已建單再點同片段拿新 key、CREATE 草稿重用同 key；確認時 `401` 未在模擬器驗證，只由單元測試涵蓋；「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬，非真實斷線；其他例外與未驗項目見 `docs/manual-test-checklist.md` 第 3 輪）。第 4 輪 App 的拍照（CameraX 前鏡頭拍照、預覽、重拍、確認支付時把照片移入 `filesDir/selfies`）已在 API 37 模擬器驗證（相機為模擬器虛擬相機；相機權限拒絕與設定返回、旋轉、強制停止、草稿續拍、逾期清檔見 `docs/manual-test-checklist.md` 第 4 輪）。第 5.1 輪後端（派工給 `vendor-sim`、廠商 webhook、生成逾時、失敗退點與退額度）已實作並以後端測試與 curl 驗證（App 尚未接上，見 `docs/manual-test-checklist.md` 第 5.1 輪）。App 的生成進度畫面、前景服務與完成通知（第 5.2 輪）、確認支付前的通知權限檢查、回到前景的補發與恢復追蹤已實作（單元測試涵蓋，模擬器實測排在 5.3）；App 的「我的客串」頁已實作（第 5.2b-2 輪，見 `docs/manual-test-checklist.md`）；點完成通知開「我的客串」分頁已實作（第 5.2b-3 輪，模擬器最小冒煙，見 `docs/manual-test-checklist.md`）。設計由討論決定。推論出、尚未確認的理由標 `[待確認]`。
+> 狀態：進行中。本文件描述「將實作」的內容；第 2 輪的片段、點數、點數明細已實作並驗證（API 37 模擬器）；第 3 輪後端的建單、額度、逾期釋放已實作；第 4 輪後端的上傳自拍、送出（扣點、寫 `CHARGE` 明細）已實作並以真實 Postgres 與 Docker 驗證；App 端的上傳與送出（4.3：進度畫面、依後端狀態接續、失敗重試）已接上，並在 4.4 於 API 37 模擬器接真實後端驗證主流程與接續情境（上傳途中進背景、真實斷線、`401`、真機未驗；確認頁返回轉場中點「確認支付」修正前會建單，已加 `dropUnlessResumed` 只擋「頁面已在離開中」的點擊，修正後 7 次未建單（d=0.7 點到清單列、沒打到按鈕；d=0.5 沒有修正前對照；可直接對照的是 d=0、0.05、0.1、0.2、0.3 這 5 個值，每個 d 只跑 1 次），但不是完整解法：先按確認再按返回時，回應在頁面銷毀後才回來只占用（按「繼續」或等期限釋放），在淡出期間回來則照常上傳、送出、扣款（MVP 決定，見 `ARCHITECTURE.md` 取捨表；皆為讀碼推論、未實測），見 `docs/manual-test-checklist.md` 第 4 輪 Integration）；App 的額度顯示、確認支付、本機草稿已在 API 37 模擬器接真實後端驗證（含已建單再點同片段拿新 key、CREATE 草稿重用同 key；確認時 `401` 未在模擬器驗證，只由單元測試涵蓋；「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬，非真實斷線；其他例外與未驗項目見 `docs/manual-test-checklist.md` 第 3 輪）。第 4 輪 App 的拍照（CameraX 前鏡頭拍照、預覽、重拍、確認支付時把照片移入 `filesDir/selfies`）已在 API 37 模擬器驗證（相機為模擬器虛擬相機；相機權限拒絕與設定返回、旋轉、強制停止、草稿續拍、逾期清檔見 `docs/manual-test-checklist.md` 第 4 輪）。第 5.1 輪後端（派工給 `vendor-sim`、廠商 webhook、生成逾時、失敗退點與退額度）已實作並以後端測試與 curl 驗證（App 尚未接上，見 `docs/manual-test-checklist.md` 第 5.1 輪）。App 的生成進度畫面、前景服務與完成通知（第 5.2 輪）、確認支付前的通知權限檢查、回到前景的補發與恢復追蹤已實作（單元測試涵蓋，模擬器實測排在 5.3）；App 的「我的客串」頁已實作（第 5.2b-2 輪，見 `docs/manual-test-checklist.md`）；點完成通知開「我的客串」分頁已實作（第 5.2b-3 輪，模擬器最小冒煙，見 `docs/manual-test-checklist.md`）。設計由討論決定。推論出、尚未確認的理由標 `[待確認]`。App 資訊架構改版的規格已定，尚未實作，見 `spec-mobile.md` 第 2 章。
 
 ## 1. 問題定義
 
@@ -18,7 +18,9 @@
 - 中斷後從步驟接續；照片整檔重傳（位元組續傳列 backlog，見第 12 節）。
 - 只有相機入口，上傳的是 JPEG 照片（影片不適用）；後端只收 JPEG，以內容前 3 bytes（`FF D8 FF`）判斷、不看 `Content-Type`，不驗證照片來源；裝置驗證（例如平台完整性檢查）只寫文件。
 - App 上傳成功後刪除本機照片；後端訂單結束後刪除自拍，只留浮水印成品。（App 端 4.3 已實作，只有單元測試，尚未在模擬器驗證。）
+- 範例影片（模擬環境）：repo 放一支固定的範例影片，所有 `SUCCEEDED` 訂單共用，App 由 `GET /v1/cameos/{id}/video` 取得，分享頁由免登入的 `GET /s/{token}/video` 取得，都播這一支；分享已取消或不存在時，後者回 `404`。不轉檔、不加浮水印、不分訂單產生；範例影片視為成品，正式環境的做法寫在 `ARCHITECTURE.md`。`vendor-sim` 回呼的 `video_url` 只是字串，不提供實際檔案。
 - 「我的客串」（PDF 第 4 點，必做）：列出所有生成過的短片與狀態（含 `display` 文字）。排在第 5.2b 階段（第 5.3 之前）：後端 `GET /v1/cameos?cursor=`、App「我的客串」頁、點通知開這一頁；第 7 輪在此頁加播放和分享入口。目前後端 `GET /v1/cameos?cursor=` 已實作（5.2b-1）；App「我的客串」頁已實作（5.2b-2：底部導覽第三分頁、游標分頁、每次回到前景靜默刷新第一頁，列不可點）；點完成通知開此頁已實作（5.2b-3：只切到分頁、不定位單筆）。已知代價：回前景時列表換回第一頁的最新內容（刷新取代整份列表），可能先變短，捲到底會再載入後面的頁，不保留已載入的後面頁面；不在前景的頁面不輪詢；回前景或資料更新時，若第一筆在畫面上（只露出一部分也算）而且出現新的第一筆，列表自動捲到新的第一筆；第一筆不在畫面上時不捲動、位置不變（例外：捲過第一頁後回前景，列表會換回第一頁，位置會變），並在右下角顯示「回到頂端」（第一筆離開畫面就出現、看得到就消失，點擊回到第一筆），看到的是最近一次查詢結果。設計理由 `[待確認]`：避免背景輪詢與第一頁、後續頁拼接時的缺漏。
+- 改版後「我的客串」成為首頁，列表改為依 id 合併；尚未實作，見 `spec-mobile.md` 第 2 章。
 - 登入與使用者：假設已用一個測試帳號登入。片段清單與初始點數由模擬後端提供，App 沒有假資料層。
 
 ## 3. 額度
@@ -39,7 +41,8 @@ App 行為：
 - `remaining > 0`：片段清單顯示 `display`。
 - `remaining = 0`：清單上方顯示已用完與重置時間；片段仍可點，點了跳提示，不進確認支付、不建單；未完成的客串不受影響。
 - 建單遇 `429`：顯示後端 `message` 並重新查詢 quota。
-- 與訂單同步時機一起查（開啟 App、回前景、收到提醒、重連），建單後也查。
+- 與訂單同步時機一起查（開啟 App、回前景），建單後也查。
+- 改版後這些額度顯示在選片段流程頁，重新客串也做同樣檢查；尚未實作，見 `spec-mobile.md` 第 2 章。
 
 測試項目：建單減少、失敗／過期恢復、內容拒絕不恢復、台北午夜重置。
 
@@ -99,12 +102,13 @@ stateDiagram-v2
 
 ## 6. WebSocket 與同步
 
-- 建議 Go 使用 `github.com/coder/websocket`（實作前再確認，引入前須經專案負責人同意）。
+- 以下到「事件只是提示」為止是 WebSocket 設計，只寫文件、不實作（使用者決定）；最後一條同步時機要實作。
+- 若未來實作，建議 Go 使用 `github.com/coder/websocket`（實作前再確認，引入前須經專案負責人同意）。
 - 端點 `GET /v1/events`。
 - 只有一種事件：`{"type":"cameo_updated","cameo_id":"..."}`；App 忽略未知事件。
 - 交易提交後才發出事件；連線清單放 `api` 記憶體。
 - 事件只是提示，狀態一律以 API 為準。
-- 打 API 同步的時機：開啟 App、回前景、收到提醒、重連成功、前景有未結束訂單時每 30 秒。
+- 打 API 同步的時機：開啟 App、回前景、回首頁；前景輪詢見 `spec-mobile.md` 第 2 章。
 
 ## 7. 背景完成通知
 
@@ -117,11 +121,12 @@ stateDiagram-v2
 - 通知權限（已實作，單元測試涵蓋，模擬器實測排在 5.3）：按「確認支付」時、`POST /v1/cameos` 之前檢查「通知可用」：`areNotificationsEnabled()` 為 true，**且**「生成結果」頻道的 importance 不是 `IMPORTANCE_NONE`（API 26+；頻道還沒建立視為可用）。確認頁 gate、回前景補發、前景服務發通知前都用同一個判斷。通知可用就照常建單；頻道被關（App 通知開著）時一律顯示「前往設定」提示、不跳權限對話框，`ACTION_APP_NOTIFICATION_SETTINGS` 導到 App 通知設定；其餘不可用時，系統還能顯示對話框就請求，同意後重新檢查，通知可用才建單、頻道仍關就顯示提示，拒絕就停在確認頁不建單；系統不再顯示對話框時，顯示 App 自己的提示「需要開啟通知才能客串」（「前往設定」與「取消」），回來再按一次確認。App 開啟時不主動請求；進度頁不請求。
 - 有 `cameoId` 的訂單（未完成清單的繼續、重試）不擋；還不確定是否建單的 `CREATE` 草稿（建單請求可能已到伺服器）會到確認頁並經過通知檢查。代價：通知關著時，這筆可能要等上傳期限才釋放點數。訂單進行中才關通知也不擋，這時收不到通知，草稿保留，開啟 App 時補發。通知關閉時保留的草稿在未完成清單沒有「移除」按鈕，但這時也建不了新單，不會累積。
 - 代價：拒絕通知的人完全不能用客串功能。原因：讓進度頁「完成後會通知你」與本節承諾成立（使用者決定）。
+- 改版後，上面的確認頁通知檢查，以及 `CREATE` 草稿到確認頁的通知檢查，都改為在按 FAB、重新客串或尚未建單的「繼續」時檢查；有 `cameoId` 的訂單不擋不變。尚未實作，見 `spec-mobile.md` 第 2 章。
 - 後端靠廠商 webhook 得知結果；正式推播服務只寫文件，不實作。
 
 ## 8. 異常
 
-實作 8 種（由 debug API 觸發）：
+實作 6 種（由 debug API 觸發）：
 
 | 名稱 | 說明 |
 |---|---|
@@ -131,10 +136,8 @@ stateDiagram-v2
 | `vendor_failed` | 廠商回報失敗 |
 | `vendor_duplicate_callback` | 廠商重複回呼 |
 | `vendor_no_callback` | 廠商不回呼 |
-| `socket_event_lost` | WebSocket 事件遺失 |
-| `upgrade_required` | 需要強制更新 |
 
-只寫文件、不實作：`server_error`、`slow_network`、`vendor_dispatch_error`、`vendor_out_of_order`、`unknown_status`。
+只寫文件、不實作（7 種）：`socket_event_lost`、`upgrade_required`、`server_error`、`slow_network`、`vendor_dispatch_error`、`vendor_out_of_order`、`unknown_status`。
 
 registry 放 adapter 層，提供 debug API。異常用 JSON 情境檔（`backend/faults/*.json`）和 `GET/POST/DELETE /debug/faults` 觸發；另提供 `POST /debug/reset`（清空訂單與異常，重設點數與額度）；不做 console 網站。各異常的預期表現與參數：待實作後補。
 
@@ -193,11 +196,15 @@ registry 放 adapter 層，提供 debug API。異常用 JSON 情境檔（`backen
 
 移除後，如果該 key 其實已建單，訂單只占用點數與當日額度、沒有扣款，由後端在上傳期限後釋放。
 
+### App 畫面行為
+
+見 `spec-mobile.md` 第 2 章，尚未實作。畫面行為只維護在那份文件。畫面行為有衝突時以該章為準。
+
 ## 11. 後端架構
 
-目錄：`backend/internal/{domain,usecase,adapter/{http,postgres,filestore,vendor,realtime},app}`，`cmd` 負責組裝；測試用的整合測試與資料庫工具在 `backend/test`。以 Go 測試檢查 import 方向。`vendor-sim` 不套分層。
+目錄：`backend/internal/{domain,usecase,adapter/{http,postgres,filestore,vendor,realtime},app}`（`realtime` 只寫文件、不實作），`cmd` 負責組裝；測試用的整合測試與資料庫工具在 `backend/test`。以 Go 測試檢查 import 方向。`vendor-sim` 不套分層。
 
-Port 定義在 `usecase`：`TxRunner`、`Tx`、`Queries`、`FileStore`、`VendorClient`、`EventPublisher`、`Clock`（`VendorClient` 已實作於 `adapter/vendor`；`EventPublisher` 尚未實作）。
+Port 定義在 `usecase`：`TxRunner`、`Tx`、`Queries`、`FileStore`、`VendorClient`、`EventPublisher`、`Clock`（`VendorClient` 已實作於 `adapter/vendor`；`EventPublisher` 只寫文件、不實作）。
 
 ```go
 type TxRunner interface {
@@ -216,9 +223,9 @@ type FileStore interface {
 }
 ```
 
-上傳流程：先查訂單擋掉明顯不能上傳的 → 串流寫暫存檔 → 交易內鎖列、重查狀態與期限、更新狀態並 rename → commit；訂單轉 `EXPIRED` 的交易 commit 後才刪檔，刪除失敗只記 log。送出同一交易內固定先鎖點數帳戶、再鎖訂單列。逾期判斷（`upload_expires_at <= now`）掃描、上傳、送出共用同一條 SQL 規則。
+上傳流程：先查訂單擋掉明顯不能上傳的 → 串流寫暫存檔 → 交易內鎖列、重查狀態與期限、更新狀態並 rename → commit；訂單轉終態的交易 commit 後才刪檔，刪除失敗只記 log。送出同一交易內固定先鎖點數帳戶、再鎖訂單列。逾期判斷（`upload_expires_at <= now`）掃描、上傳、送出共用同一條 SQL 規則。
 
-測試：金流用真實 Postgres；domain 用純 Go 測試；廠商和 WebSocket 用 fake。
+測試：金流用真實 Postgres；domain 用純 Go 測試；廠商用 fake。
 
 ## 12. Backlog
 
@@ -232,7 +239,7 @@ type FileStore interface {
 
 ## 13. Iteration
 
-每輪都做後端與 App，文件更新列入驗收。模擬器 e2e 只在第 4、5、8、9 輪跑；其他階段跑單元測試和建置，單元測試碰不到的部分才做最小冒煙測試。
+每輪都做後端與 App（第 6 輪只做 App），文件更新列入驗收。模擬器 e2e 只在第 4、5、6、8、9 輪跑；其他階段跑單元測試和建置，單元測試碰不到的部分才做最小冒煙測試。
 
 | # | 內容 | 預估 |
 |---|---|---|
@@ -240,19 +247,18 @@ type FileStore interface {
 | 2 | Docker、分層骨架、Hilt、片段／點數／明細 | 2.5 小時 |
 | 3 | 建單占用、冪等、上限、quota、確認支付、本機草稿 | 1 小時 |
 | 4 | 拍照上傳、送出扣點、接續 | 1.5 小時 |
-| 5 | 回呼退點、進度、背景通知（先實測通知與背景 socket）；含 5.2b「我的客串」（後端 `GET /v1/cameos?cursor=`、App 列表頁、點通知開此頁）與 5.3 模擬器實測 | 上限 4 小時；加入 5.2b 後可能超過，時間上限待第 5 輪結束後檢討 |
-| 6 | WebSocket | 1 小時 |
-| 7 | 播放、分享、強制更新 | 1 小時 |
-| 8 | 8 種異常模擬器驗證、README | 1.5 小時 |
+| 5 | 回呼退點、進度、背景通知（先實測通知）；含 5.2b「我的客串」（後端 `GET /v1/cameos?cursor=`、App 列表頁、點通知開此頁）與 5.3 模擬器實測（未完成部分併入第 6 輪 H9） | 上限 4 小時；加入 5.2b 後可能超過，時間上限待第 5 輪結束後檢討 |
+| 6 | App 首頁改版（`spec-mobile.md` 第 8 章 H1–H9） | 5–8 小時（推測） |
+| 7 | 播放、分享 | 1 小時 |
+| 8 | 6 種異常模擬器驗證、README | 1.5 小時 |
 | 9 | 文件定稿、全新 clone 總驗收 | 2 小時 |
 
-排程：11/06：1–2；11/07：3–5；11/08：6–8；11/09：9、演練。
+排程：11/06：1–2；11/07：3–6；11/08：7–8；11/09：9、演練。
 
 落後時依序砍：
 
-1. 第 7 輪的強制更新只寫文件。
+1. 第 6 輪依 `spec-mobile.md` 第 8 章的停損點處理。
 2. 第 8 輪只驗 3 種金流異常。
-3. 第 6 輪的 WebSocket（需專案負責人同意）。
 
 不砍第 3、4、5 輪。
 
