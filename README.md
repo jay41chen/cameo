@@ -40,7 +40,7 @@ Seed：測試帳號初始 100 點；3 個片段（`c1` 雨夜重逢、`c2` 屋�
 curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
 ```
 
-後端測試（不需啟動 App）：本機需要 Go 1.27.1（`backend/go.mod` 的 `go` 指令）。先讓 Postgres 在跑，再指定 `TEST_DATABASE_URL`。測試會在該資料庫建立獨立 schema，結束後刪除，不動其他資料；沒設定時測試會失敗。
+後端測試（不需啟動 App）：本機需要 Go 1.27.1（`backend/go.mod` 的 `go` 指令）。`domain`、`usecase`、`adapter/http` 的單元測試與 `go test ./...` 同在原處；`backend/test/integration` 是真實 Postgres 加 HTTP 的整合測試，需要 `TEST_DATABASE_URL`，所以先讓 Postgres 在跑再指定它。測試會在該資料庫建立獨立 schema，結束後刪除，不動其他資料；沒設定時整合測試會失敗。測試用的資料庫工具在 `backend/test/internal/testdb`，Go 的 `internal` 規則讓只有 `backend/test` 底下的程式能引用，正式程式（如 `cmd/api`）無法引用。
 
 ```
 cd backend
@@ -98,7 +98,7 @@ cd android
 
 | 碼 | 意義 |
 |---|---|
-| `400 INVALID_REQUEST` | `Idempotency-Key` 缺少、去掉前後空白後為空、超過 128 bytes 或含 0x21–0x7E 以外的字元；或 body 不是有效 JSON（`retryable: false`）；含控制字元的 key 可能由 HTTP 層直接回純文字 400，不一定是此 JSON 格式 |
+| `400 INVALID_REQUEST` | `Idempotency-Key` 缺少、去掉前後 ASCII 空格與 Tab 後為空、超過 128 bytes 或含 0x21–0x7E 以外的字元；或 body 不是有效 JSON（`retryable: false`）；含控制字元的 key 可能由 HTTP 層直接回純文字 400，不一定是此 JSON 格式 |
 | `402 INSUFFICIENT_POINTS` | 可用點數不足；`message`：「點數不足」 |
 | `404 CLIP_NOT_FOUND`、`404 CAMEO_NOT_FOUND` | 片段或訂單不存在（訂單不屬於該使用者也回 `CAMEO_NOT_FOUND`）；id 含 NUL 或不是合法 UTF-8 也視為不存在 |
 | `409 IDEMPOTENCY_CONFLICT` | 同一個 `Idempotency-Key` 用在不同 `clip_id` |
@@ -183,7 +183,7 @@ cd android
 
 `POST /v1/cameos`
 
-- Header：`Idempotency-Key`（即 App 的 `client_request_id`），必填；去掉前後空白後須為 1–128 bytes、且只含 0x21–0x7E 的可見 ASCII，否則回 `400 INVALID_REQUEST`（`retryable: false`）。
+- Header：`Idempotency-Key`（即 App 的 `client_request_id`），必填；去掉前後 ASCII 空格與 Tab 後須為 1–128 bytes、且只含 0x21–0x7E 的可見 ASCII，否則回 `400 INVALID_REQUEST`（`retryable: false`）。
 - Body：`{"clip_id":"c1"}`
 - 效果：整個流程在同一個資料庫交易內，先鎖住使用者的點數帳戶讓同一使用者的建單依序處理，再依序檢查：
   1. 同一 key 已存在：`clip_id` 相同回 `200` 和原訂單（不論它目前狀態，不重複占用，也不再檢查點數和額度）；`clip_id` 不同回 `409 IDEMPOTENCY_CONFLICT`。

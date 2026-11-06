@@ -1,4 +1,4 @@
-package main
+package integration_test
 
 import (
 	"context"
@@ -15,8 +15,9 @@ import (
 
 	apihttp "cameo/backend/internal/adapter/http"
 	"cameo/backend/internal/adapter/postgres"
-	"cameo/backend/internal/testdb"
+	"cameo/backend/internal/app"
 	"cameo/backend/internal/usecase"
+	"cameo/backend/test/internal/testdb"
 )
 
 // 組裝真實 Postgres 與 HTTP，驗證對外契約。
@@ -336,7 +337,7 @@ func TestSweepExpiredTicker(t *testing.T) {
 	clock.Set(time.Date(2026, 11, 6, 2, 30, 0, 0, time.UTC)) // 尚未逾期
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { sweepExpired(ctx, svc, 20*time.Millisecond); close(done) }()
+	go func() { app.SweepExpired(ctx, svc, 20*time.Millisecond); close(done) }()
 	time.Sleep(100 * time.Millisecond)
 	if h := heldPoints(t, svc); h != 10 {
 		t.Fatalf("held before expiry = %d", h)
@@ -352,7 +353,7 @@ func TestSweepExpiredScansImmediately(t *testing.T) {
 	svc, _ := expiredOrder(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { sweepExpired(ctx, svc, time.Hour); close(done) }()
+	go func() { app.SweepExpired(ctx, svc, time.Hour); close(done) }()
 	waitReleased(t, svc, 3*time.Second)
 	cancel()
 	<-done
@@ -363,7 +364,7 @@ func TestServeStartsSweeper(t *testing.T) {
 	svc, _ := expiredOrder(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- serve(ctx, svc, "127.0.0.1:0", time.Hour) }()
+	go func() { done <- app.Serve(ctx, svc, apihttp.Handler(svc), "127.0.0.1:0", time.Hour) }()
 	waitReleased(t, svc, 3*time.Second)
 	cancel()
 	if err := <-done; err != nil {
@@ -382,18 +383,18 @@ func TestServeCancelsSweeperWhenListenFails(t *testing.T) {
 	}
 	defer ln.Close()
 
-	if err := serve(context.Background(), svc, ln.Addr().String(), time.Hour); err == nil {
+	if err := app.Serve(context.Background(), svc, apihttp.Handler(svc), ln.Addr().String(), time.Hour); err == nil {
 		t.Fatal("serve returned nil on occupied port")
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		buf := make([]byte, 1<<20)
 		buf = buf[:runtime.Stack(buf, true)]
-		if !strings.Contains(string(buf), ".sweepExpired") {
+		if !strings.Contains(string(buf), ".SweepExpired") {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("sweepExpired goroutine still running after serve returned")
+			t.Fatal("SweepExpired goroutine still running after serve returned")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

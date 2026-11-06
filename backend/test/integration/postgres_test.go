@@ -1,4 +1,4 @@
-package postgres_test
+package integration_test
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 
 	"cameo/backend/internal/adapter/postgres"
 	"cameo/backend/internal/domain"
-	"cameo/backend/internal/testdb"
 	"cameo/backend/internal/usecase"
+	"cameo/backend/test/internal/testdb"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
