@@ -142,7 +142,7 @@ func (s *Service) UploadSelfie(ctx context.Context, id string, body io.Reader) (
 }
 
 // SubmitCameo 送出訂單：同一交易內先 LockAccount、再鎖訂單；先判斷期限、再判斷是否已上傳，
-// 然後扣款、寫 CHARGE 明細、轉 QUEUED／CHARGED。已是 QUEUED 之後的狀態則原樣回傳，不重複扣款。
+// 然後扣款、寫 CHARGE 明細、轉 QUEUED／CHARGED 並寫入 generation_expires_at（now + GenerationTTL）。已是 QUEUED 之後的狀態則原樣回傳，不重複扣款。
 // 回傳的錯誤：domain.ErrCameoNotFound、ErrUploadExpired、ErrSelfieNotUploaded。
 func (s *Service) SubmitCameo(ctx context.Context, id string) (domain.Cameo, error) {
 	if !domain.ValidText(id) {
@@ -196,10 +196,12 @@ func (s *Service) SubmitCameo(ctx context.Context, id string) (domain.Cameo, err
 		}); err != nil {
 			return err
 		}
-		if err := tx.MarkQueued(ctx, id, now); err != nil {
+		expiresAt := now.Add(s.cfg.GenerationTTL)
+		if err := tx.MarkQueued(ctx, id, now, expiresAt); err != nil {
 			return err
 		}
 		c.Status, c.PointsState, c.UpdatedAt = domain.StatusQueued, domain.PointsCharged, now
+		c.GenerationExpiresAt = &expiresAt
 		res = c
 		return nil
 	})

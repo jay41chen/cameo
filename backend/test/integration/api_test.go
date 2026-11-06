@@ -364,7 +364,7 @@ func TestServeStartsSweeper(t *testing.T) {
 	svc, _ := expiredOrder(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- app.Serve(ctx, svc, apihttp.Handler(svc), "127.0.0.1:0", time.Hour) }()
+	go func() { done <- app.Serve(ctx, svc, apihttp.Handler(svc), "127.0.0.1:0", time.Hour, time.Hour) }()
 	waitReleased(t, svc, 3*time.Second)
 	cancel()
 	if err := <-done; err != nil {
@@ -383,18 +383,18 @@ func TestServeCancelsSweeperWhenListenFails(t *testing.T) {
 	}
 	defer ln.Close()
 
-	if err := app.Serve(context.Background(), svc, apihttp.Handler(svc), ln.Addr().String(), time.Hour); err == nil {
+	if err := app.Serve(context.Background(), svc, apihttp.Handler(svc), ln.Addr().String(), time.Hour, time.Hour); err == nil {
 		t.Fatal("serve returned nil on occupied port")
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		buf := make([]byte, 1<<20)
 		buf = buf[:runtime.Stack(buf, true)]
-		if !strings.Contains(string(buf), ".SweepExpired") {
+		if !strings.Contains(string(buf), ".SweepExpired") && !strings.Contains(string(buf), ".SweepGeneration") {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("SweepExpired goroutine still running after serve returned")
+			t.Fatal("sweeper goroutine still running after serve returned")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

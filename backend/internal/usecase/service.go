@@ -21,17 +21,23 @@ type Config struct {
 	UploadTTL      time.Duration
 	// MaxSelfieBytes 是自拍檔案上限；0 表示用 DefaultMaxSelfieBytes。
 	MaxSelfieBytes int64
+	// GenerationTTL 是送出後到生成完成的期限（涵蓋排隊與生成）；0 表示用 DefaultGenerationTTL。
+	GenerationTTL time.Duration
 }
+
+// DefaultGenerationTTL 是生成期限的預設值。
+const DefaultGenerationTTL = 30 * time.Minute
 
 // DefaultMaxSelfieBytes 是自拍檔案大小上限的預設值（10 MiB）。
 const DefaultMaxSelfieBytes = 10 << 20
 
 type Service struct {
-	q     Queries
-	tx    TxRunner
-	clock Clock
-	cfg   Config
-	files FileStore
+	q      Queries
+	tx     TxRunner
+	clock  Clock
+	cfg    Config
+	files  FileStore
+	vendor VendorClient
 }
 
 func NewService(q Queries, tx TxRunner, clock Clock, cfg Config, files FileStore) *Service {
@@ -41,7 +47,16 @@ func NewService(q Queries, tx TxRunner, clock Clock, cfg Config, files FileStore
 	if cfg.MaxSelfieBytes <= 0 {
 		cfg.MaxSelfieBytes = DefaultMaxSelfieBytes
 	}
+	if cfg.GenerationTTL <= 0 {
+		cfg.GenerationTTL = DefaultGenerationTTL
+	}
 	return &Service{q: q, tx: tx, clock: clock, cfg: cfg, files: files}
+}
+
+// WithVendor 設定派工用的廠商 client；沒設定時 DispatchDue 不做事。
+func (s *Service) WithVendor(v VendorClient) *Service {
+	s.vendor = v
+	return s
 }
 
 // MaxSelfieBytes 是上傳自拍的大小上限。

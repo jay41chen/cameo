@@ -37,13 +37,13 @@ func NewQueries(pool *pgxpool.Pool) *Queries {
 }
 
 const cameoSelect = `SELECT c.id, c.idempotency_key, c.clip_id, cl.title, c.cost, c.status, c.points_state,
-	c.failure_reason, c.upload_expires_at, c.created_at, c.updated_at
+	c.failure_reason, c.upload_expires_at, c.generation_expires_at, c.video_url, c.created_at, c.updated_at
 	FROM cameos c JOIN clips cl ON cl.id = c.clip_id`
 
 func scanCameo(row pgx.Row) (domain.Cameo, error) {
 	var c domain.Cameo
 	err := row.Scan(&c.ID, &c.IdempotencyKey, &c.Clip.ID, &c.Clip.Title, &c.Clip.Cost, &c.Status,
-		&c.PointsState, &c.FailureReason, &c.UploadExpiresAt, &c.CreatedAt, &c.UpdatedAt)
+		&c.PointsState, &c.FailureReason, &c.UploadExpiresAt, &c.GenerationExpiresAt, &c.VideoURL, &c.CreatedAt, &c.UpdatedAt)
 	return c, err
 }
 
@@ -128,4 +128,36 @@ func (q *Queries) ListLedger(ctx context.Context, after *domain.LedgerCursor, li
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
+}
+
+// DispatchableIDs 回傳 QUEUED 且生成期限尚未到（generation_expires_at > now）的訂單 id，
+// created_at 由舊到新，最多 limit 筆。
+func (q *Queries) DispatchableIDs(ctx context.Context, now time.Time, limit int) ([]string, error) {
+	return q.ids(ctx, `SELECT id FROM cameos WHERE user_id = $1 AND status = 'QUEUED' AND generation_expires_at > $2
+		ORDER BY created_at, id LIMIT $3`, userID, now, limit)
+}
+
+// timedOutPredicate 是生成逾時的判斷（$2 是 now）；交易內重查時 usecase 用同一條規則（期限 <= now）。
+const timedOutPredicate = `status IN ('QUEUED', 'GENERATING') AND generation_expires_at <= $2`
+
+// TimedOutIDs 回傳 QUEUED／GENERATING 且生成期限已到（generation_expires_at <= now）的訂單 id。
+func (q *Queries) TimedOutIDs(ctx context.Context, now time.Time) ([]string, error) {
+	return q.ids(ctx, `SELECT id FROM cameos WHERE user_id = $1 AND `+timedOutPredicate+` ORDER BY created_at, id`, userID, now)
+}
+
+func (q *Queries) ids(ctx context.Context, sql string, args ...any) ([]string, error) {
+	rows, err := q.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

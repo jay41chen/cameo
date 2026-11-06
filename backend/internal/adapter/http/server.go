@@ -24,9 +24,22 @@ type errorBody struct {
 	Retryable bool   `json:"retryable"`
 }
 
+// Option 調整 Handler 的組裝。
+type Option func(*server)
+
+// WithVendorWebhook 啟用 POST /webhooks/vendor，並以 secret 驗證 X-Signature（HMAC-SHA256）。
+// secret 為空時不註冊這條路由（回 404），避免用空密鑰驗簽。
+func WithVendorWebhook(secret []byte) Option {
+	return func(s *server) { s.webhookSecret = secret }
+}
+
 // Handler 組出所有路由。檢查順序：先比對路由（404、405），再驗 token（401）。
-func Handler(svc *usecase.Service) http.Handler {
+// 廠商 webhook 不用 token，改以簽章驗證。
+func Handler(svc *usecase.Service, opts ...Option) http.Handler {
 	s := &server{svc: svc}
+	for _, o := range opts {
+		o(s)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "找不到這個路徑", false)
@@ -39,6 +52,13 @@ func Handler(svc *usecase.Service) http.Handler {
 	handleMethods(mux, "/v1/cameos/{id}", map[string]http.HandlerFunc{http.MethodGet: s.getCameo})
 	handleMethods(mux, "/v1/cameos/{id}/selfie", map[string]http.HandlerFunc{http.MethodPut: s.putSelfie})
 	handleMethods(mux, "/v1/cameos/{id}/submit", map[string]http.HandlerFunc{http.MethodPost: s.submitCameo})
+	if len(s.webhookSecret) > 0 {
+		mux.HandleFunc("POST /webhooks/vendor", s.vendorWebhook)
+		mux.HandleFunc("/webhooks/vendor", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Allow", http.MethodPost)
+			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "不支援這個方法", false)
+		})
+	}
 	return mux
 }
 
@@ -79,7 +99,8 @@ func requireAuth(next http.HandlerFunc) http.Handler {
 }
 
 type server struct {
-	svc *usecase.Service
+	svc           *usecase.Service
+	webhookSecret []byte
 }
 
 func (s *server) clips(w http.ResponseWriter, r *http.Request) {
@@ -291,7 +312,7 @@ func (s *server) putSelfie(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.As(err, &readErr):
 		slog.Warn("upload body read failed", "path", r.URL.Path, "err", err)
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "上傳中斷，請重試", true)
+		writeError(w, http.StatusRequestTimeout, "UPLOAD_INTERRUPTED", "上傳中斷，請重試", true)
 		return
 	case errors.Is(err, domain.ErrInvalidState):
 		writeError(w, http.StatusConflict, "INVALID_STATE", "這筆客串目前無法上傳", false)

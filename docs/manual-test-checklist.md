@@ -287,3 +287,44 @@ docker compose -p cameo44 exec -T postgres psql -U cameo -d cameo -c \
 - 上傳途中、送出途中「真實」的回應遺失只用 curl 模擬。
 - 通知尚未實作。
 - 只在 API 37 模擬器與虛擬相機驗證，照片是同一張虛擬畫面。
+
+## 第 5.1 輪：後端（派工、廠商回呼、逾時、退點）
+
+只驗後端，沒有開模擬器，App 沒有改（除 `CameoRepositoryTest` 的 fixture）。
+
+### 環境
+
+- 隔離專案：`API_PORT=18080 POSTGRES_HOST_PORT=15433 VENDOR_DELAY_SEC=3 docker compose -p cameo51smoke up -d --build`；結束 `docker compose -p cameo51smoke down -v`（只清這個專案，沒有動 `cameo_pgdata`）。
+- 單元與整合測試用另一個隔離專案的 Postgres（`-p cameo51test`，port 15434），`TEST_DATABASE_URL='postgres://cameo:cameo@127.0.0.1:15434/cameo?sslmode=disable'`。
+- 簽章用 `openssl dgst -sha256 -hmac cameo-sim-secret -hex` 對原始 body 計算。
+
+### 冒煙步驟與實際結果（curl）
+
+1. 建單 → 上傳 JPEG → 送出 → 輪詢：`QUEUED/CHARGED（排隊中）` → `GENERATING（生成中）` ×3 → 約 4 秒後 `SUCCEEDED/CHARGED（已完成）`。
+2. `GET /v1/points`：`{"available":90,"held":0}`，只扣一次；明細一筆 `CHARGE`。
+3. 容器內 `ls /data/selfies`：送出前有 `<id>.jpg`；`SUCCEEDED` 後目錄為空（自拍已刪）。訂單回應的 `video_available` 為 `false`，沒有 `video_url`。
+4. 第二筆訂單送出後（`QUEUED`），手動簽 `FAILED`／`CONTENT_REJECTED` 回呼：錯誤簽章 `401 INVALID_SIGNATURE`、缺簽章 `401`、正確簽章 `200`；`GET /v1/points` 由 80 回到 90；訂單 `FAILED/REFUNDED`、`failure_reason: CONTENT_REJECTED`、顯示「無法生成」；明細多一筆 `REFUND`（10）。
+5. 相同 `event_id` 再送一次：`200`，點數仍 90、明細沒有第二筆 `REFUND`。
+6. `GET /v1/quota`：`remaining: 1`（兩筆訂單，`CONTENT_REJECTED` 的額度不退）。第二筆自拍已刪。
+7. 這次手動回呼先於派工掃描到達（訂單還是 `QUEUED`），所以 `vendor-sim` 沒有收到這筆工作；「廠商晚到的成功回呼被忽略」只由自動測試涵蓋，冒煙沒有走到。
+8. 啟動檢查：`VENDOR_WEBHOOK_SECRET` 未設定時 `api` 與 `vendor-sim` 都以 `VENDOR_WEBHOOK_SECRET is required` 結束。
+9. migration `0005` 回填：在獨立 schema 套用 `0001`–`0004`、插入 `QUEUED`／`GENERATING`／`SUCCEEDED`／`UPLOADED` 各一筆後套用 `0005`：`QUEUED`、`GENERATING` 的 `generation_expires_at` 為 `updated_at + 30 分鐘`，其餘為 `NULL`（用 `psql` 手動檢查，沒有寫成自動測試）。
+
+### 自動測試
+
+- `go vet ./...` 通過；`go test -count=1 ./...`（含整合測試）與 `go test -race -count=1 ./...` 全部通過；`go test -v` 計 123 個頂層測試通過、0 略過、0 失敗。
+- Android：`./gradlew :data:testDebugUnitTest --rerun-tasks` 通過（`CameoRepositoryTest` 17 筆、0 失敗；含新增的 `upload_408IsNotAutoRetriedByOkHttp`，確認 408 只送一次請求）。
+- 手動 mutation 抽查（跑完已還原）：回呼內拿掉「只處理 `QUEUED`／`GENERATING`」的判斷、退款金額多加 1，測試都會失敗。
+
+### 未涵蓋
+
+- App 通知、App 對 `GENERATING`／`SUCCEEDED`／`FAILED` 的畫面（見下）、影片播放（`vendor-sim` 不提供影片檔）、異常 API（第 8 輪）。
+- 冒煙沒有走到：逾時（`GENERATION_TTL` 預設 30 分鐘，只由自動測試以假時鐘涵蓋）、廠商不可用時的派工重試（自動測試涵蓋）、真實併發回呼（自動測試涵蓋）。
+- 單一 `api` 實例的前提沒有驗證多實例行為。
+
+### 目前 App 對新狀態的表現（讀碼，未實測；5.2 用）
+
+- `AdvanceCameoUseCase`：`QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED` 一律視為已送出，刪本機照片、標記已送出，回 `Done(order)`，不再輪詢。未知狀態（`UNKNOWN`）也回 `Done`，不動本機。
+- `CameoProgressViewModel` 轉成 `ProgressUiState.Done`；進度畫面顯示後端 `display.title`／`message`（沒有才顯示「處理中」）加「回片段清單」。所以 App 只會顯示進入畫面當下那一次查到的文字：停在「排隊中」或「生成中」，不會自己更新到「已完成」或「生成失敗」。
+- `GetUnfinishedCameosUseCase` 會對每個未刪的草稿查訂單；清單列顯示後端 `display`。`canContinueOrder` 只在 `AWAITING_UPLOAD`、`UPLOADED` 顯示「繼續」，其餘狀態沒有按鈕；列不會因為 `SUCCEEDED` 或 `FAILED` 自動移除（Room 列要等「通知發出後刪除」，通知尚未實作），只有「移除」入口僅限逾期列與 `cameoId == null` 的列。
+- 沒有針對 `FAILED`／`SUCCEEDED` 的獨立畫面、通知、影片入口；`failure_reason` 沒有被 App 讀取。

@@ -25,6 +25,11 @@ func (emptyQueries) ListLedger(context.Context, *domain.LedgerCursor, int) ([]do
 	return nil, nil
 }
 
+func (emptyQueries) DispatchableIDs(context.Context, time.Time, int) ([]string, error) {
+	return nil, nil
+}
+func (emptyQueries) TimedOutIDs(context.Context, time.Time) ([]string, error) { return nil, nil }
+
 func cursorOf(payload string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(payload))
 }

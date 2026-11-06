@@ -165,3 +165,28 @@ func TestWriteTempCancelledMidReadLeavesNothing(t *testing.T) {
 		t.Fatalf("entries = %v", names)
 	}
 }
+
+// New 只刪 ".tmp-*" 一般檔案，不刪同名前綴的子目錄（及其內容）。
+func TestNewKeepsTempPrefixedSubdirectories(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, ".tmp-dir")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inner := filepath.Join(sub, "keep.txt")
+	if err := os.WriteFile(inner, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".tmp-file"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := filestore.New(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(entries(t, dir), ","); got != ".tmp-dir" {
+		t.Fatalf("entries = %s, want only the directory", got)
+	}
+	if _, err := os.Stat(inner); err != nil {
+		t.Fatalf("directory content removed: %v", err)
+	}
+}

@@ -24,6 +24,27 @@ type Queries interface {
 	CameoByID(ctx context.Context, id string) (domain.Cameo, error)
 	// ListLedger 依 (created_at, id) 由新到舊回傳最多 limit 筆；after 為 nil 表示從頭。
 	ListLedger(ctx context.Context, after *domain.LedgerCursor, limit int) ([]domain.LedgerEntry, error)
+	// DispatchableIDs 回傳 QUEUED 且 generation_expires_at > now 的訂單 id，created_at 由舊到新，最多 limit 筆。
+	DispatchableIDs(ctx context.Context, now time.Time, limit int) ([]string, error)
+	// TimedOutIDs 回傳 QUEUED／GENERATING 且 generation_expires_at <= now 的訂單 id。
+	TimedOutIDs(ctx context.Context, now time.Time) ([]string, error)
+}
+
+// VendorEvent 是已通過驗證的廠商回呼；Status 為 SUCCEEDED 或 FAILED。
+// Reason 只對 FAILED 有意義；VideoURL 只對 SUCCEEDED 有意義。
+type VendorEvent struct {
+	EventID    string
+	JobID      string
+	Status     string
+	VideoURL   string
+	Reason     *string
+	ReceivedAt time.Time
+}
+
+// VendorClient 把工作交給廠商。jobID 就是訂單 id；同一個 jobID 重送是安全的（廠商以 jobID 去重）。
+// 只有廠商明確接受（2xx）才回 nil。
+type VendorClient interface {
+	Dispatch(ctx context.Context, jobID string) error
 }
 
 // TxRunner 在單一資料庫交易內執行 fn；fn 回傳錯誤則回滾。
@@ -54,8 +75,18 @@ type Tx interface {
 	DebitAccount(ctx context.Context, amount int) error
 	// InsertLedger 新增一筆點數明細；created_at 取自 e.CreatedAt。
 	InsertLedger(ctx context.Context, e domain.LedgerEntry) error
-	// MarkQueued 把訂單設為 QUEUED／CHARGED 並更新 updated_at。
-	MarkQueued(ctx context.Context, id string, now time.Time) error
+	// MarkQueued 把訂單設為 QUEUED／CHARGED、寫入 generation_expires_at 並更新 updated_at。
+	MarkQueued(ctx context.Context, id string, now, generationExpiresAt time.Time) error
+	// MarkGenerating 只在訂單仍是 QUEUED 時轉為 GENERATING，回傳是否有轉換。
+	MarkGenerating(ctx context.Context, id string, now time.Time) (changed bool, err error)
+	// MarkSucceeded 把訂單設為 SUCCEEDED、存 video_url（points_state 不變）並更新 updated_at。
+	MarkSucceeded(ctx context.Context, id, videoURL string, now time.Time) error
+	// MarkFailed 把訂單設為 FAILED／REFUNDED、寫 failure_reason 並更新 updated_at。
+	MarkFailed(ctx context.Context, id, reason string, now time.Time) error
+	// CreditAccount 把 amount 加回餘額。
+	CreditAccount(ctx context.Context, amount int) error
+	// InsertVendorEvent 記錄廠商事件；event_id 已存在（重複）回 inserted=false，不報錯。
+	InsertVendorEvent(ctx context.Context, e VendorEvent) (inserted bool, err error)
 }
 
 // FileStore 存放自拍檔案。暫存檔與正式檔在同一個檔案系統，Commit 是原子覆蓋。

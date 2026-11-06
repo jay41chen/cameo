@@ -752,16 +752,16 @@ func TestBodyCutShortLeavesNothingBehind(t *testing.T) {
 
 	id := f.create(t, "k")
 	// 已寫入內容後斷線。
-	if s := cut(id, 100000, append(append([]byte{}, jpegBytes...), bytes.Repeat([]byte{7}, 50000)...)); s != 400 {
-		t.Fatalf("status = %d, want 400", s)
+	if s := cut(id, 100000, append(append([]byte{}, jpegBytes...), bytes.Repeat([]byte{7}, 50000)...)); s != 408 {
+		t.Fatalf("status = %d, want 408", s)
 	}
 	if st, _ := f.state(t, id); st != "AWAITING_UPLOAD" {
 		t.Fatalf("status = %s", st)
 	}
 	f.wantNoFiles(t)
 	// 連檔頭都沒收完就斷線。
-	if s := cut(id, 100, jpegBytes[:2]); s != 400 {
-		t.Fatalf("status = %d, want 400", s)
+	if s := cut(id, 100, jpegBytes[:2]); s != 408 {
+		t.Fatalf("status = %d, want 408", s)
 	}
 	f.wantNoFiles(t)
 
@@ -769,8 +769,8 @@ func TestBodyCutShortLeavesNothingBehind(t *testing.T) {
 	if r := f.put(id, jpegBytes); r.Code != 200 {
 		t.Fatalf("put = %d", r.Code)
 	}
-	if s := cut(id, 100000, append([]byte{0xFF, 0xD8, 0xFF}, bytes.Repeat([]byte{9}, 20000)...)); s != 400 {
-		t.Fatalf("status = %d, want 400", s)
+	if s := cut(id, 100000, append([]byte{0xFF, 0xD8, 0xFF}, bytes.Repeat([]byte{9}, 20000)...)); s != 408 {
+		t.Fatalf("status = %d, want 408", s)
 	}
 	if got, ok := f.selfie(t, id); !ok || !bytes.Equal(got, jpegBytes) {
 		t.Fatalf("old selfie changed: %q", got)
@@ -793,7 +793,7 @@ func TestBodyCutShortResponseIsRetryable(t *testing.T) {
 	f.h.ServeHTTP(rec, req)
 	var m map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &m)
-	wantError(t, resp{rec, m}, 400, "INVALID_REQUEST")
+	wantError(t, resp{rec, m}, 408, "UPLOAD_INTERRUPTED")
 	if m["retryable"] != true {
 		t.Fatalf("retryable = %v", m["retryable"])
 	}

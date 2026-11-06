@@ -1,12 +1,12 @@
 # 客串短劇（Kimhit 候選人作業）
 
-> 狀態：進行中。Android App 的片段清單、點數、點數明細（含分頁）已在 API 37 模擬器驗證過。後端另已實作建單（冪等、點數占用、每日額度）、訂單查詢、額度、上傳自拍、送出（扣點、寫 `CHARGE` 明細）與上傳逾期釋放；Android App 的額度顯示、確認支付（建單）、本機草稿已在 API 37 模擬器接真實後端驗證，涵蓋：額度用完、點數不足、額度達上限、網路錯誤後重試與重用同一個冪等 key、已建單再點同片段拿新 key、CREATE 草稿重用同 key、同 key 回原訂單、`409` 後移除重建、重試進行中不顯示錯誤、逾期重新客串／移除、重開接續。「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬（非真實斷線）。例外與未驗項目：確認時 `401` 的畫面未在模擬器驗證（單元測試涵蓋）；強制停止只驗到 POST 沒到的情況；另有數項未涵蓋與外觀問題，請見 `docs/manual-test-checklist.md` 第 3 輪。App 已有拍照與預覽（CameraX），詳見 `docs/manual-test-checklist.md` 第 4 輪；App 已接上上傳與送出，並在 API 37 模擬器接真實後端驗證（4.4，詳見 `docs/manual-test-checklist.md` 第 4 輪「Integration」：主流程到「排隊中」、上傳／送出回應遺失後接續且只扣一次（以 curl 模擬）、重試、離開畫面、強制停止、逾期、照片遺失、後端回「照片太大」時引導重拍；上傳途中進背景、真實斷線、`401`、真機未驗）；生成、通知、訂單清單等尚未實作。確認頁問題：返回轉場中點「確認支付」，修正前 6 次嘗試皆建單；已加一行防護（`dropUnlessResumed`），只擋掉「頁面已在離開中」的點擊，修正後 7 次嘗試未建單（每個延遲各 1 次、間隔未量；d=0.7 點到清單列、沒打到按鈕，d=0.5 沒有修正前對照，可直接對照的是 d=0、0.05、0.1、0.2、0.3 這 5 個值）。這不是完整解法：先按確認再按返回時，若回應在頁面銷毀後才回來，只占用點數，按「繼續」或等期限釋放；若在淡出期間回來，一樣導到進度畫面並自動上傳、送出、扣款（MVP 決定，見 `ARCHITECTURE.md` 取捨表；兩者皆讀碼與修正前證據推論，未實測）；傳輸中途被殺、真實手勢返回與網路延遲未測，詳見該節。API 契約中尚未實作的部分仍是設計，未確認的欄位標 `[待確認]`。
+> 狀態：進行中。Android App 的片段清單、點數、點數明細（含分頁）已在 API 37 模擬器驗證過。後端另已實作建單（冪等、點數占用、每日額度）、訂單查詢、額度、上傳自拍、送出（扣點、寫 `CHARGE` 明細）與上傳逾期釋放；Android App 的額度顯示、確認支付（建單）、本機草稿已在 API 37 模擬器接真實後端驗證，涵蓋：額度用完、點數不足、額度達上限、網路錯誤後重試與重用同一個冪等 key、已建單再點同片段拿新 key、CREATE 草稿重用同 key、同 key 回原訂單、`409` 後移除重建、重試進行中不顯示錯誤、逾期重新客串／移除、重開接續。「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬（非真實斷線）。例外與未驗項目：確認時 `401` 的畫面未在模擬器驗證（單元測試涵蓋）；強制停止只驗到 POST 沒到的情況；另有數項未涵蓋與外觀問題，請見 `docs/manual-test-checklist.md` 第 3 輪。App 已有拍照與預覽（CameraX），詳見 `docs/manual-test-checklist.md` 第 4 輪；App 已接上上傳與送出，並在 API 37 模擬器接真實後端驗證（4.4，詳見 `docs/manual-test-checklist.md` 第 4 輪「Integration」：主流程到「排隊中」、上傳／送出回應遺失後接續且只扣一次（以 curl 模擬）、重試、離開畫面、強制停止、逾期、照片遺失、後端回「照片太大」時引導重拍；上傳途中進背景、真實斷線、`401`、真機未驗）；後端已實作派工給模擬廠商、廠商 webhook 回呼、生成逾時與退點（第 5.1 輪，只以後端測試與 curl 驗證，尚未接 App，見 `docs/manual-test-checklist.md` 第 5.1 輪）；App 的生成進度畫面、通知、訂單清單尚未實作。確認頁問題：返回轉場中點「確認支付」，修正前 6 次嘗試皆建單；已加一行防護（`dropUnlessResumed`），只擋掉「頁面已在離開中」的點擊，修正後 7 次嘗試未建單（每個延遲各 1 次、間隔未量；d=0.7 點到清單列、沒打到按鈕，d=0.5 沒有修正前對照，可直接對照的是 d=0、0.05、0.1、0.2、0.3 這 5 個值）。這不是完整解法：先按確認再按返回時，若回應在頁面銷毀後才回來，只占用點數，按「繼續」或等期限釋放；若在淡出期間回來，一樣導到進度畫面並自動上傳、送出、扣款（MVP 決定，見 `ARCHITECTURE.md` 取捨表；兩者皆讀碼與修正前證據推論，未實測）；傳輸中途被殺、真實手勢返回與網路延遲未測，詳見該節。API 契約中尚未實作的部分仍是設計，未確認的欄位標 `[待確認]`。
 
 ## 專案介紹
 
 客串短劇讓觀眾從營運挑選的片段中選一段、當場拍一張自拍、支付點數後生成一段 15 秒、自己出現在劇中的短片，可收藏並分享連結。
 
-- 後端：Go、Postgres、Docker，外加模擬廠商 `vendor-sim`。
+- 後端：Go、Postgres、Docker，外加模擬廠商 `vendor-sim`（`backend/cmd/vendor-sim`，同一個 Go module、同一個 Dockerfile）。
 - Android App：Kotlin、Jetpack Compose。
 - 設計文件：`spec.md`（規格）、`ARCHITECTURE.md`（架構與取捨）。
 
@@ -20,7 +20,7 @@
 docker compose up --build
 ```
 
-會啟動 Postgres（`postgres:17-alpine`）和 `api`（`http://localhost:8080`）。`api` 等 Postgres 健康後才啟動，並自動執行 migration 與 seed（可重複啟動，不會重複插入）。不需要任何帳號或金鑰；連線字串、port 與下列設定可用環境變數覆寫（見 `docker-compose.yml`）。Postgres 只對本機開放 `127.0.0.1:5433`，供測試使用。
+會啟動 Postgres（`postgres:17-alpine`）、`api`（`http://localhost:8080`）和模擬廠商 `vendor-sim`（容器內 `http://vendor-sim:9000`，不對外發布 port）。`api` 等 Postgres 健康後才啟動，並自動執行 migration 與 seed（可重複啟動，不會重複插入）。不需要任何帳號或金鑰（`VENDOR_WEBHOOK_SECRET` 在 `docker-compose.yml` 預設為模擬用的 `cameo-sim-secret`，僅供模擬，不是正式密鑰）；連線字串、port 與下列設定可用環境變數覆寫（見 `docker-compose.yml`）。Postgres 只對本機開放 `127.0.0.1:5433`，供測試使用。
 
 升級注意：migration `0004` 遇到懸空的 `cameo_id`，或同一訂單重複的 `CHARGE` 明細時，API 會啟動失敗，並在 log 顯示原因；需先處理資料再啟動。
 
@@ -33,8 +33,25 @@ docker compose up --build
 | `EXPIRY_SWEEP_INTERVAL` | `30s` | 逾期掃描間隔 |
 | `SELFIE_DIR` | `/data/selfies` | 自拍存放目錄；`docker-compose.yml` 把 named volume `selfies` 掛在這裡，容器重啟後檔案仍在（容器以 `nobody` 執行，目錄在映像檔內已設為可寫） |
 | `MAX_SELFIE_BYTES` | `10485760` | 自拍檔案大小上限（bytes），超過回 `413 SELFIE_TOO_LARGE` |
+| `GENERATION_TTL` | `30m` | 生成期限：送出（轉 `QUEUED`）起算，涵蓋排隊與生成；到期（`<=` 現在）仍未完成的訂單轉 `FAILED`（原因 `TIMEOUT`）並退點 |
+| `DISPATCH_SWEEP_INTERVAL` | `2s` | 派工與生成逾時掃描間隔；每個週期先處理逾時、再派工（每次最多 20 筆，`created_at` 由舊到新） |
+| `VENDOR_URL` | `http://localhost:9000`（compose 設為 `http://vendor-sim:9000`） | 廠商的 base URL；派工是對 `{VENDOR_URL}/jobs` 的 `POST`，單次逾時 5 秒 |
+| `VENDOR_WEBHOOK_SECRET` | 無預設 | webhook 簽章密鑰。**空字串或未設定時 `api` 拒絕啟動**；程式碼內沒有預設密鑰。compose 以 `${VENDOR_WEBHOOK_SECRET:-cameo-sim-secret}` 同時傳給 `api` 與 `vendor-sim`（僅供模擬） |
 
 例如 `UPLOAD_TTL=5s EXPIRY_SWEEP_INTERVAL=1s docker compose up -d api` 可快速觀察逾期釋放。
+
+`vendor-sim` 的設定（環境變數，見 `docker-compose.yml`）：
+
+| 變數 | compose 預設 | 說明 |
+|---|---|---|
+| `VENDOR_DELAY_SEC` | `20` | 收到工作後等幾秒才送回呼（可用小數） |
+| `VENDOR_CALLBACK_URL` | `http://api:8080/webhooks/vendor` | 回呼目標 |
+| `VENDOR_PUBLIC_URL` | `http://vendor-sim:9000` | 回呼 `video_url` 的 base（`{base}/videos/{job_id}.mp4`） |
+| `VENDOR_WEBHOOK_SECRET` | `cameo-sim-secret` | 與 `api` 相同；空字串時拒絕啟動 |
+
+`vendor-sim` 的行為：`POST /jobs`，body `{"job_id":"..."}`，回 `202`；同一 `job_id` 重送也回 `202`，不開第二個工作（去重只在記憶體，重啟後清空）；缺 `job_id` 回 `400`。等 `VENDOR_DELAY_SEC` 後送一次 `SUCCEEDED` 回呼（`event_id` 隨機，`X-Signature` 為對原始 body 的 HMAC-SHA256 hex）；回呼失敗只記 log、不重試，由 `GENERATION_TTL` 兜底。`vendor-sim` 不接收照片、不提供影片檔（`video_url` 指向的檔案不存在），也不會回報失敗。
+
+背景掃描（逾期釋放、派工、生成逾時）假設同一時間只有一個 `api` 實例，不做多實例協調。
 
 Seed：測試帳號初始 100 點；3 個片段（`c1` 雨夜重逢、`c2` 屋頂告白、`c3` 最後一班車），每段 10 點；點數明細初始為空。
 
@@ -46,7 +63,7 @@ curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
 
 後端測試（不需啟動 App）：本機需要 Go 1.27.1（`backend/go.mod` 的 `go` 指令）。測試分兩類，`go test ./...` 兩類都會跑：
 
-- 單元測試放在各自套件旁：`backend/internal/layering_test.go`（import 方向）、`backend/internal/domain`、`backend/internal/usecase`、`backend/internal/adapter/http`、`backend/internal/adapter/filestore`。不需要資料庫。
+- 單元測試放在各自套件旁：`backend/internal/layering_test.go`（import 方向）、`backend/internal/domain`、`backend/internal/usecase`、`backend/internal/adapter/http`、`backend/internal/adapter/filestore`、`backend/internal/adapter/vendor`、`backend/cmd/vendor-sim`。不需要資料庫。
 - 整合測試在 `backend/test/integration`：真實 Postgres 加 HTTP，需要 `TEST_DATABASE_URL`，所以先讓 Postgres 在跑再指定它。測試會在該資料庫建立獨立 schema，結束後刪除，不動其他資料；沒設定時整合測試會失敗。測試用的資料庫工具在 `backend/test/internal/testdb`，Go 的 `internal` 規則讓只有 `backend/test` 底下的程式能引用，正式程式（如 `cmd/api`）無法引用。
 
 ```
@@ -85,9 +102,8 @@ cd android
 
 以下契約細節尚未確認，不在每列重複標註（`/debug/faults` 端點本身已定案）：
 
-- 訂單資料格式中 `SUCCEEDED`、`FAILED` 的 `display` 文字、`video_available`、`share` 的結構（目前後端固定回 `false` 與 `{"active":false,"url":null}`）。
+- 訂單資料格式中 `video_available`、`share` 的結構（目前後端固定回 `false` 與 `{"active":false,"url":null}`；`SUCCEEDED` 也一樣，影片播放端點尚未實作，`video_url` 只存資料庫、不出現在 API 回應）。
 - `X-App-Version` 與 `426` 尚未實作。
-- `POST /webhooks/vendor` 的 header 與 body。
 - 訂單清單 `GET /v1/cameos` 的回應形狀（尚未實作，目前該路徑只接受 `POST`，`GET` 回 `405`）。
 - `POST /debug/faults` body 的 `target`、`times`、`params`。
 
@@ -111,7 +127,8 @@ cd android
 | `404 CLIP_NOT_FOUND`、`404 CAMEO_NOT_FOUND` | 片段或訂單不存在（訂單不屬於該使用者也回 `CAMEO_NOT_FOUND`）；id 含 NUL 或不是合法 UTF-8 也視為不存在 |
 | `409 IDEMPOTENCY_CONFLICT` | 同一個 `Idempotency-Key` 用在不同 `clip_id` |
 | `400 INVALID_SELFIE` | 上傳內容前 3 bytes 不是 JPEG 標頭（`FF D8 FF`），或 body 為空；`message`：「照片格式不正確」 |
-| `400 INVALID_REQUEST`（`retryable: true`） | 上傳讀取 body 中途失敗（連線中斷、實際內容少於 `Content-Length`）；暫存檔已丟棄、訂單狀態不變，可整檔重傳 |
+| `408 UPLOAD_INTERRUPTED`（`retryable: true`） | 上傳讀取 body 中途失敗（連線中斷、實際內容少於 `Content-Length`）；暫存檔已丟棄、訂單狀態不變，可整檔重傳；`message`：「上傳中斷，請重試」。寫入暫存檔本身失敗（例如磁碟滿）不屬於此類，回 `500 INTERNAL` |
+| `401 INVALID_SIGNATURE` | 只用於 `POST /webhooks/vendor`：`X-Signature` 缺少或不符；`message`：「簽章無效」 |
 | `409 INVALID_STATE` | 訂單已是 `QUEUED` 或之後的狀態，不能再上傳；`message`：「這筆客串目前無法上傳」 |
 | `409 SELFIE_NOT_UPLOADED` | 還沒上傳照片就送出；`message`：「請先上傳照片」 |
 | `410 UPLOAD_EXPIRED` | 上傳／送出已超過期限（或訂單已是 `EXPIRED`），不扣款；`message`：「上傳期限已過，點數沒有扣款，請重新客串。」 |
@@ -139,8 +156,12 @@ cd android
 
 - `status`：`AWAITING_UPLOAD`、`UPLOADED`、`QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED`、`EXPIRED`。
 - `points_state`：`HELD`、`CHARGED`、`REFUNDED`、`RELEASED`。
-- `failure_reason`：`CONTENT_REJECTED` 退點不退額度；其餘值 `[待確認]`。
-- `display`：`AWAITING_UPLOAD` 為 `{"title":"等待上傳","message":"已占用 N 點，送出後才扣款"}`（N 為 `clip.cost`）；`UPLOADED` 為 `{"title":"送出中","message":"照片已上傳，尚未扣款"}`；`QUEUED` 為 `{"title":"排隊中","message":"完成後會通知你"}`；`GENERATING` 為 `{"title":"生成中","message":"完成後會通知你"}`；`EXPIRED` 為 `{"title":"已過期","message":"上傳期限已過，點數沒有扣款，請重新客串。"}`；其餘狀態暫用 `{"title":"處理中","message":""}`。
+- `failure_reason`（只在 `FAILED` 時有值，其餘為 `null`）：
+  - `CONTENT_REJECTED`：廠商回報照片未通過審核。退點，**不退每日額度**（只有這個值不退額度）。
+  - `VENDOR_FAILED`：廠商回報失敗，且原因不是 `CONTENT_REJECTED`（廠商傳來的其他 `reason`、或沒有 `reason`，一律記為此值）。退點、退額度。
+  - `TIMEOUT`：到 `GENERATION_TTL` 期限仍沒有結果（含廠商不回呼、派工一直失敗）。退點、退額度。
+- `video_available` 目前固定為 `false`，`video_url` 不出現在回應。
+- `display`：`AWAITING_UPLOAD` 為 `{"title":"等待上傳","message":"已占用 N 點，送出後才扣款"}`（N 為 `clip.cost`）；`UPLOADED` 為 `{"title":"送出中","message":"照片已上傳，尚未扣款"}`；`QUEUED` 為 `{"title":"排隊中","message":"完成後會通知你"}`；`GENERATING` 為 `{"title":"生成中","message":"完成後會通知你"}`；`EXPIRED` 為 `{"title":"已過期","message":"上傳期限已過，點數沒有扣款，請重新客串。"}`；`SUCCEEDED` 為 `{"title":"已完成","message":"你的客串短片完成了"}`；`FAILED` 且 `failure_reason` 為 `CONTENT_REJECTED` 為 `{"title":"無法生成","message":"照片未通過審核，點數已退還，今日次數不退還"}`；其他 `FAILED` 為 `{"title":"生成失敗","message":"點數已退還"}`（不向使用者提廠商故障）；未知狀態用 `{"title":"處理中","message":""}`。
 - `clip.cost` 是建單當下的快照。
 
 ### 片段
@@ -234,7 +255,8 @@ cd android
 | `QUEUED` 或之後 | `409 INVALID_STATE` |
 | 內容前 3 bytes 不是 `FF D8 FF`，或 body 為空 | `400 INVALID_SELFIE` |
 | 超過 `MAX_SELFIE_BYTES` | `413 SELFIE_TOO_LARGE` |
-| 讀 body 中途失敗（連線中斷、實際內容少於 `Content-Length`） | 暫存檔丟棄、狀態不變，`400 INVALID_REQUEST`（`retryable: true`） |
+| 讀 body 中途失敗（連線中斷、實際內容少於 `Content-Length`） | 暫存檔丟棄、狀態不變，`408 UPLOAD_INTERRUPTED`（`retryable: true`） |
+| 寫入暫存檔失敗（例如磁碟滿） | `500 INTERNAL`（`retryable: true`），暫存檔丟棄、狀態不變 |
 
 - 成功 `200`：`{"cameo":{...},"upload":null}`（與 `GET /v1/cameos/{id}` 同形狀；`UPLOADED` 的 `upload` 為 `null`）。
 - 目前沒有檔案校驗碼；截斷靠 `Content-Length` 與讀取錯誤發現，整檔重傳。
@@ -257,13 +279,13 @@ cd android
 
 - 成功 `200`：`{"cameo":{...},"upload":null}`。
 - 每筆訂單最多一筆 `CHARGE` 明細（資料庫的 partial unique index 保證），明細的 `cameo_id` 有外鍵指向訂單。
-- 送出後自拍檔案保留。
+- 自拍檔案送出後仍保留，直到訂單進入終態（`SUCCEEDED`、`FAILED`，或上傳階段的 `EXPIRED`）；終態的交易提交後才刪除，刪除失敗只記 log。
 
 ### 訂單查詢
 
 - `GET /v1/cameos?cursor=`：`{"items":[cameo],"next_cursor":null}`（尚未實作）
 - `GET /v1/cameos/{id}`：`{"cameo":{...},"upload":...}`（`upload` 規則同 `POST /v1/cameos`）；不存在、不屬於該使用者、或 id 含 NUL／非法 UTF-8 回 `404 CAMEO_NOT_FOUND`。
-- 失敗後 `points_state = REFUNDED` 並有 `REFUND` 明細。
+- 失敗後 `points_state = REFUNDED` 並有 `REFUND` 明細（金額為建單時的 `clip.cost` 快照；資料庫的 partial unique index 保證每筆訂單最多一筆 `REFUND`）。
 
 ### 影片與分享
 
@@ -290,15 +312,23 @@ cd android
 
 `POST /webhooks/vendor`
 
-- Header：`X-Signature`（對原始 body 做 HMAC-SHA256，hex）。
-- Body：
+不需要 `Authorization`，以簽章驗證。
+
+- Header：`X-Signature`（對原始 body 做 HMAC-SHA256，hex；密鑰 `VENDOR_WEBHOOK_SECRET`）。
+- Body（最多 64 KB）：
 
 ```json
-{"event_id":"e1","job_id":"uuid","status":"SUCCEEDED","video_url":"...","reason":null}
+{"event_id":"e1","job_id":"uuid","status":"SUCCEEDED","video_url":"http://vendor-sim:9000/videos/uuid.mp4","reason":null}
 ```
 
-- `status`：`SUCCEEDED` 或 `FAILED`。
-- 簽章錯誤回 `401`；重複 `event_id` 回 `200` 且不重複處理。
+- `job_id` 就是訂單 id。`status`：`SUCCEEDED`（必須有 `video_url`）或 `FAILED`（`reason` 可為 `null`）。
+- 檢查順序：讀 body 時先檢查 64 KB 上限，超過回 `400 INVALID_REQUEST`；之後以 `hmac.Equal` 驗 `X-Signature`，缺少或不符回 `401 INVALID_SIGNATURE`（驗過之前不解析 JSON、不碰資料庫）；再驗內容，JSON 不合法、`event_id`／`job_id` 為空或含 NUL／非法 UTF-8、`status` 不是 `SUCCEEDED`／`FAILED`、`SUCCEEDED` 缺 `video_url` 回 `400 INVALID_REQUEST`；`job_id` 找不到訂單回 `404 CAMEO_NOT_FOUND`（事件不留，之後訂單存在時同一 `event_id` 仍可處理）；資料庫錯誤回 `500 INTERNAL`；其餘（處理成功、重複 `event_id`、被忽略的回呼）都回 `200`。
+- 處理在單一交易內，鎖序固定為點數帳戶 → 訂單列：先寫 `vendor_events`（`event_id` 重複就是重複回呼，直接回 `200` 不再處理），再依訂單的資料庫狀態處理：
+  - `QUEUED` 或 `GENERATING` + `SUCCEEDED`：轉 `SUCCEEDED`、存 `video_url`，`points_state` 維持 `CHARGED`（不退點）。接受 `QUEUED` 是因為回呼可能先於「廠商已接受」的寫入到達。
+  - `QUEUED` 或 `GENERATING` + `FAILED`：同一交易內餘額加回快照 `cost`、寫一筆 `REFUND` 明細、轉 `FAILED`／`REFUNDED`、寫 `failure_reason`（`reason` 是 `CONTENT_REJECTED` 照用，其他一律 `VENDOR_FAILED`）。
+  - 其他狀態（`SUCCEEDED`、`FAILED`、`EXPIRED`、`AWAITING_UPLOAD`、`UPLOADED`）：不改訂單，記 log，事件保留，回 `200`。
+- **先到的為準**：終態以資料庫狀態為準，回呼內不比對生成期限；因此逾時掃描先把訂單轉 `FAILED` 後，晚到的成功回呼不會改變結果；反過來，已 `SUCCEEDED` 的訂單也不會被逾時掃描或失敗回呼改變。
+- 派工：`QUEUED` 且未逾期的訂單由背景掃描對廠商 `POST /jobs`（`job_id` = 訂單 id）；廠商回 2xx 才在交易內（仍是 `QUEUED` 時）轉 `GENERATING`。派工失敗只記 log，下次掃描重試（廠商以 `job_id` 去重，重送安全），直到逾時。HTTP 呼叫不在資料庫交易內。
 
 ### Debug 異常 API
 

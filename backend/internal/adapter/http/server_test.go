@@ -40,6 +40,11 @@ func (fakeQueries) ListLedger(_ context.Context, after *domain.LedgerCursor, lim
 	}, nil
 }
 
+func (fakeQueries) DispatchableIDs(context.Context, time.Time, int) ([]string, error) {
+	return nil, nil
+}
+func (fakeQueries) TimedOutIDs(context.Context, time.Time) ([]string, error) { return nil, nil }
+
 type fixedClock struct{}
 
 func (fixedClock) Now() time.Time { return time.Date(2026, 11, 6, 16, 30, 0, 0, time.UTC) }

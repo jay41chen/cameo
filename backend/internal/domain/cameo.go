@@ -22,7 +22,15 @@ const (
 const (
 	PointsHeld     = "HELD"
 	PointsCharged  = "CHARGED"
+	PointsRefunded = "REFUNDED"
 	PointsReleased = "RELEASED"
+)
+
+// 失敗原因（cameos.failure_reason）。只有 FailureContentRejected 不退還每日額度。
+const (
+	FailureContentRejected = "CONTENT_REJECTED"
+	FailureVendorFailed    = "VENDOR_FAILED"
+	FailureTimeout         = "TIMEOUT"
 )
 
 // UploadExpiredMessage 是上傳期限已過時給使用者看的文字，EXPIRED 的 Display 與 410 錯誤共用。
@@ -51,8 +59,12 @@ type Cameo struct {
 	PointsState     string
 	FailureReason   *string
 	UploadExpiresAt time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// GenerationExpiresAt 在送出（轉 QUEUED）時寫入，涵蓋排隊與生成兩段；之前的狀態為 nil。
+	GenerationExpiresAt *time.Time
+	// VideoURL 是廠商回報的影片位置，只存資料庫，不放進 API 回應。
+	VideoURL  *string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Display 是給使用者看的狀態文字。
@@ -72,6 +84,13 @@ func (c Cameo) Display() Display {
 		return Display{Title: "排隊中", Message: "完成後會通知你"}
 	case StatusGenerating:
 		return Display{Title: "生成中", Message: "完成後會通知你"}
+	case StatusSucceeded:
+		return Display{Title: "已完成", Message: "你的客串短片完成了"}
+	case StatusFailed:
+		if c.FailureReason != nil && *c.FailureReason == FailureContentRejected {
+			return Display{Title: "無法生成", Message: "照片未通過審核，點數已退還，今日次數不退還"}
+		}
+		return Display{Title: "生成失敗", Message: "點數已退還"}
 	case StatusExpired:
 		return Display{Title: "已過期", Message: UploadExpiredMessage}
 	}

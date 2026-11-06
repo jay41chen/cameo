@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 	"cameo/backend/internal/adapter/filestore"
 	apihttp "cameo/backend/internal/adapter/http"
 	"cameo/backend/internal/adapter/postgres"
+	"cameo/backend/internal/adapter/vendor"
 	"cameo/backend/internal/app"
 	"cameo/backend/internal/usecase"
 
@@ -29,6 +31,11 @@ func main() {
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	webhookSecret := os.Getenv("VENDOR_WEBHOOK_SECRET")
+	if webhookSecret == "" {
+		return errors.New("VENDOR_WEBHOOK_SECRET is required")
+	}
 
 	dbURL := getenv("DATABASE_URL", "postgres://cameo:cameo@localhost:5433/cameo?sslmode=disable")
 	addr := getenv("HTTP_ADDR", ":8080")
@@ -47,14 +54,17 @@ func run() error {
 		DailyLimit:     getenvInt("DAILY_LIMIT", 3),
 		UploadTTL:      getenvDuration("UPLOAD_TTL", time.Hour),
 		MaxSelfieBytes: int64(getenvInt("MAX_SELFIE_BYTES", usecase.DefaultMaxSelfieBytes)),
+		GenerationTTL:  getenvDuration("GENERATION_TTL", usecase.DefaultGenerationTTL),
 	}
 	files, err := filestore.New(getenv("SELFIE_DIR", "/data/selfies"))
 	if err != nil {
 		return err
 	}
 	sweepEvery := getenvDuration("EXPIRY_SWEEP_INTERVAL", 30*time.Second)
-	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), usecase.SystemClock{}, cfg, files)
-	return app.Serve(ctx, svc, apihttp.Handler(svc), addr, sweepEvery)
+	dispatchEvery := getenvDuration("DISPATCH_SWEEP_INTERVAL", 2*time.Second)
+	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), usecase.SystemClock{}, cfg, files).
+		WithVendor(vendor.NewClient(getenv("VENDOR_URL", "http://localhost:9000")))
+	return app.Serve(ctx, svc, apihttp.Handler(svc, apihttp.WithVendorWebhook([]byte(webhookSecret))), addr, sweepEvery, dispatchEvery)
 }
 
 // connect 會重試一小段時間，避免資料庫剛啟動時失敗。

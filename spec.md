@@ -1,6 +1,6 @@
 # 客串短劇：規格
 
-> 狀態：進行中。本文件描述「將實作」的內容；第 2 輪的片段、點數、點數明細已實作並驗證（API 37 模擬器）；第 3 輪後端的建單、額度、逾期釋放已實作；第 4 輪後端的上傳自拍、送出（扣點、寫 `CHARGE` 明細）已實作並以真實 Postgres 與 Docker 驗證；App 端的上傳與送出（4.3：進度畫面、依後端狀態接續、失敗重試）已接上，並在 4.4 於 API 37 模擬器接真實後端驗證主流程與接續情境（上傳途中進背景、真實斷線、`401`、真機未驗；確認頁返回轉場中點「確認支付」修正前會建單，已加 `dropUnlessResumed` 只擋「頁面已在離開中」的點擊，修正後 7 次未建單（d=0.7 點到清單列、沒打到按鈕；d=0.5 沒有修正前對照；可直接對照的是 d=0、0.05、0.1、0.2、0.3 這 5 個值，每個 d 只跑 1 次），但不是完整解法：先按確認再按返回時，回應在頁面銷毀後才回來只占用（按「繼續」或等期限釋放），在淡出期間回來則照常上傳、送出、扣款（MVP 決定，見 `ARCHITECTURE.md` 取捨表；皆為讀碼推論、未實測），見 `docs/manual-test-checklist.md` 第 4 輪 Integration）；App 的額度顯示、確認支付、本機草稿已在 API 37 模擬器接真實後端驗證（含已建單再點同片段拿新 key、CREATE 草稿重用同 key；確認時 `401` 未在模擬器驗證，只由單元測試涵蓋；「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬，非真實斷線；其他例外與未驗項目見 `docs/manual-test-checklist.md` 第 3 輪）。第 4 輪 App 的拍照（CameraX 前鏡頭拍照、預覽、重拍、確認支付時把照片移入 `filesDir/selfies`）已在 API 37 模擬器驗證（相機為模擬器虛擬相機；相機權限拒絕與設定返回、旋轉、強制停止、草稿續拍、逾期清檔見 `docs/manual-test-checklist.md` 第 4 輪）。其餘（App 的通知、訂單清單）尚未實作。設計由討論決定。推論出、尚未確認的理由標 `[待確認]`。
+> 狀態：進行中。本文件描述「將實作」的內容；第 2 輪的片段、點數、點數明細已實作並驗證（API 37 模擬器）；第 3 輪後端的建單、額度、逾期釋放已實作；第 4 輪後端的上傳自拍、送出（扣點、寫 `CHARGE` 明細）已實作並以真實 Postgres 與 Docker 驗證；App 端的上傳與送出（4.3：進度畫面、依後端狀態接續、失敗重試）已接上，並在 4.4 於 API 37 模擬器接真實後端驗證主流程與接續情境（上傳途中進背景、真實斷線、`401`、真機未驗；確認頁返回轉場中點「確認支付」修正前會建單，已加 `dropUnlessResumed` 只擋「頁面已在離開中」的點擊，修正後 7 次未建單（d=0.7 點到清單列、沒打到按鈕；d=0.5 沒有修正前對照；可直接對照的是 d=0、0.05、0.1、0.2、0.3 這 5 個值，每個 d 只跑 1 次），但不是完整解法：先按確認再按返回時，回應在頁面銷毀後才回來只占用（按「繼續」或等期限釋放），在淡出期間回來則照常上傳、送出、扣款（MVP 決定，見 `ARCHITECTURE.md` 取捨表；皆為讀碼推論、未實測），見 `docs/manual-test-checklist.md` 第 4 輪 Integration）；App 的額度顯示、確認支付、本機草稿已在 API 37 模擬器接真實後端驗證（含已建單再點同片段拿新 key、CREATE 草稿重用同 key；確認時 `401` 未在模擬器驗證，只由單元測試涵蓋；「請求已到伺服器但 App 沒收到回應」以 curl 先送同 key 模擬，非真實斷線；其他例外與未驗項目見 `docs/manual-test-checklist.md` 第 3 輪）。第 4 輪 App 的拍照（CameraX 前鏡頭拍照、預覽、重拍、確認支付時把照片移入 `filesDir/selfies`）已在 API 37 模擬器驗證（相機為模擬器虛擬相機；相機權限拒絕與設定返回、旋轉、強制停止、草稿續拍、逾期清檔見 `docs/manual-test-checklist.md` 第 4 輪）。第 5.1 輪後端（派工給 `vendor-sim`、廠商 webhook、生成逾時、失敗退點與退額度）已實作並以後端測試與 curl 驗證（App 尚未接上，見 `docs/manual-test-checklist.md` 第 5.1 輪）。其餘（App 的生成進度、通知、訂單清單）尚未實作。設計由討論決定。推論出、尚未確認的理由標 `[待確認]`。
 
 ## 1. 問題定義
 
@@ -67,7 +67,8 @@ stateDiagram-v2
   UPLOADED --> QUEUED: 送出（扣點 CHARGE）
   QUEUED --> GENERATING: 廠商接受工作
   GENERATING --> SUCCEEDED: 成功回呼
-  QUEUED --> FAILED: 失敗（退點 REFUND）
+  QUEUED --> SUCCEEDED: 成功回呼先於「接受」寫入
+  QUEUED --> FAILED: 失敗回呼／逾時（退點 REFUND）
   GENERATING --> FAILED: 失敗回呼／逾時（退點 REFUND）
   AWAITING_UPLOAD --> EXPIRED: 上傳逾時（釋放，無明細）
   UPLOADED --> EXPIRED: 未送出逾時（釋放，無明細）
@@ -87,8 +88,13 @@ stateDiagram-v2
 | `UPLOADED` | 標題「送出中」，說明「照片已上傳，尚未扣款」 |
 | `QUEUED` | 標題「排隊中」，說明「完成後會通知你」 |
 | `GENERATING` | 標題「生成中」，說明「完成後會通知你」 |
+| `SUCCEEDED` | 標題「已完成」，說明「你的客串短片完成了」 |
+| `FAILED`，原因 `CONTENT_REJECTED` | 標題「無法生成」，說明「照片未通過審核，點數已退還，今日次數不退還」 |
+| 其他 `FAILED`（`VENDOR_FAILED`、`TIMEOUT`） | 標題「生成失敗」，說明「點數已退還」 |
 
-不向使用者提示廠商故障。其他狀態（`SUCCEEDED`、`FAILED`）的文字：`[待確認]`，在確認前後端回通用文字「處理中」。
+不向使用者提示廠商故障。未知狀態用通用文字「處理中」。
+
+`failure_reason`：`CONTENT_REJECTED`（退點、不退額度，只有這個值不退額度）、`VENDOR_FAILED`（廠商回報失敗且原因不是 `CONTENT_REJECTED`）、`TIMEOUT`（生成期限到仍無結果）；後兩者退點也退額度。
 
 ## 6. WebSocket 與同步
 
@@ -184,7 +190,7 @@ registry 放 adapter 層，提供 debug API。異常用 JSON 情境檔（`backen
 
 目錄：`backend/internal/{domain,usecase,adapter/{http,postgres,filestore,vendor,realtime},app}`，`cmd` 負責組裝；測試用的整合測試與資料庫工具在 `backend/test`。以 Go 測試檢查 import 方向。`vendor-sim` 不套分層。
 
-Port 定義在 `usecase`：`TxRunner`、`Tx`、`Queries`、`FileStore`、`VendorClient`、`EventPublisher`、`Clock`。
+Port 定義在 `usecase`：`TxRunner`、`Tx`、`Queries`、`FileStore`、`VendorClient`、`EventPublisher`、`Clock`（`VendorClient` 已實作於 `adapter/vendor`；`EventPublisher` 尚未實作）。
 
 ```go
 type TxRunner interface {
@@ -247,5 +253,4 @@ type FileStore interface {
 
 - 後端使用 Go 的理由：專案負責人自述的理由，內容 `[待確認]`。
 - 背景完成通知的具體做法：第 5 輪驗證後定案（見第 7 節）。
-- 除 `QUEUED`、`GENERATING` 外的狀態顯示文字。
-- 分享連結（token）的細節、`failure_reason` 完整清單：見 README，皆標 `[待確認]`。
+- 分享連結（token）的細節：見 README，標 `[待確認]`。

@@ -122,7 +122,37 @@ func (t *txStore) InsertLedger(ctx context.Context, e domain.LedgerEntry) error 
 	return err
 }
 
-func (t *txStore) MarkQueued(ctx context.Context, id string, now time.Time) error {
-	_, err := t.db.Exec(ctx, `UPDATE cameos SET status = 'QUEUED', points_state = 'CHARGED', updated_at = $1 WHERE user_id = $2 AND id = $3`, now, userID, id)
+func (t *txStore) MarkQueued(ctx context.Context, id string, now, generationExpiresAt time.Time) error {
+	_, err := t.db.Exec(ctx, `UPDATE cameos SET status = 'QUEUED', points_state = 'CHARGED', generation_expires_at = $1, updated_at = $2
+		WHERE user_id = $3 AND id = $4`, generationExpiresAt, now, userID, id)
 	return err
+}
+
+func (t *txStore) MarkGenerating(ctx context.Context, id string, now time.Time) (bool, error) {
+	tag, err := t.db.Exec(ctx, `UPDATE cameos SET status = 'GENERATING', updated_at = $1
+		WHERE user_id = $2 AND id = $3 AND status = 'QUEUED'`, now, userID, id)
+	return tag.RowsAffected() == 1, err
+}
+
+func (t *txStore) MarkSucceeded(ctx context.Context, id, videoURL string, now time.Time) error {
+	_, err := t.db.Exec(ctx, `UPDATE cameos SET status = 'SUCCEEDED', video_url = $1, updated_at = $2
+		WHERE user_id = $3 AND id = $4`, videoURL, now, userID, id)
+	return err
+}
+
+func (t *txStore) MarkFailed(ctx context.Context, id, reason string, now time.Time) error {
+	_, err := t.db.Exec(ctx, `UPDATE cameos SET status = 'FAILED', points_state = 'REFUNDED', failure_reason = $1, updated_at = $2
+		WHERE user_id = $3 AND id = $4`, reason, now, userID, id)
+	return err
+}
+
+func (t *txStore) CreditAccount(ctx context.Context, amount int) error {
+	_, err := t.db.Exec(ctx, `UPDATE points_account SET balance = balance + $1 WHERE id = $2`, amount, userID)
+	return err
+}
+
+func (t *txStore) InsertVendorEvent(ctx context.Context, e usecase.VendorEvent) (bool, error) {
+	tag, err := t.db.Exec(ctx, `INSERT INTO vendor_events (event_id, job_id, status, reason, received_at)
+		VALUES ($1, $2, $3, $4, $5) ON CONFLICT (event_id) DO NOTHING`, e.EventID, e.JobID, e.Status, e.Reason, e.ReceivedAt)
+	return tag.RowsAffected() == 1, err
 }

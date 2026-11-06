@@ -23,6 +23,9 @@ type fakeDB struct {
 	balance int
 	ledger  []domain.LedgerEntry
 	locks   []string
+	events  map[string]bool // vendor_events 的 event_id
+	// failOn 讓指定的寫入操作回錯，用來驗證交易整個回滾。
+	failOn string
 }
 
 // events 依序記錄交易 commit 與檔案操作，用來驗證「rename 在交易內、刪檔在 commit 之後」。
@@ -49,6 +52,10 @@ type fakeTxRunner struct {
 func (r fakeTxRunner) Run(_ context.Context, fn func(usecase.Tx) error) error {
 	saved := *r.db
 	saved.ledger = append([]domain.LedgerEntry(nil), r.db.ledger...)
+	saved.events = map[string]bool{}
+	for k, v := range r.db.events {
+		saved.events[k] = v
+	}
 	if err := fn(r.db); err != nil {
 		*r.db = saved
 		r.ev.add("tx-rollback")
@@ -107,9 +114,42 @@ func (d *fakeDB) InsertLedger(_ context.Context, e domain.LedgerEntry) error {
 	d.ledger = append(d.ledger, e)
 	return nil
 }
-func (d *fakeDB) MarkQueued(context.Context, string, time.Time) error {
+func (d *fakeDB) MarkQueued(_ context.Context, _ string, _ time.Time, exp time.Time) error {
 	d.cameo.Status, d.cameo.PointsState = domain.StatusQueued, domain.PointsCharged
+	d.cameo.GenerationExpiresAt = &exp
 	return nil
+}
+func (d *fakeDB) MarkGenerating(context.Context, string, time.Time) (bool, error) {
+	if d.cameo.Status != domain.StatusQueued {
+		return false, nil
+	}
+	d.cameo.Status = domain.StatusGenerating
+	return true, nil
+}
+func (d *fakeDB) MarkSucceeded(_ context.Context, _ string, videoURL string, _ time.Time) error {
+	d.cameo.Status, d.cameo.VideoURL = domain.StatusSucceeded, &videoURL
+	return nil
+}
+func (d *fakeDB) MarkFailed(_ context.Context, _ string, reason string, _ time.Time) error {
+	if d.failOn == "MarkFailed" {
+		return errors.New("injected MarkFailed failure")
+	}
+	d.cameo.Status, d.cameo.PointsState, d.cameo.FailureReason = domain.StatusFailed, domain.PointsRefunded, &reason
+	return nil
+}
+func (d *fakeDB) CreditAccount(_ context.Context, amount int) error {
+	d.balance += amount
+	return nil
+}
+func (d *fakeDB) InsertVendorEvent(_ context.Context, e usecase.VendorEvent) (bool, error) {
+	if d.events == nil {
+		d.events = map[string]bool{}
+	}
+	if d.events[e.EventID] {
+		return false, nil
+	}
+	d.events[e.EventID] = true
+	return true, nil
 }
 
 type fakeFiles struct {
@@ -176,6 +216,23 @@ func (q fakeQueries) CameoByID(_ context.Context, id string) (domain.Cameo, erro
 		return domain.Cameo{}, domain.ErrCameoNotFound
 	}
 	return q.db.cameo, nil
+}
+
+func (q fakeQueries) DispatchableIDs(_ context.Context, now time.Time, limit int) ([]string, error) {
+	c := q.db.cameo
+	if q.db.exists && c.Status == domain.StatusQueued && c.GenerationExpiresAt != nil && c.GenerationExpiresAt.After(now) {
+		return []string{c.ID}, nil
+	}
+	return nil, nil
+}
+
+func (q fakeQueries) TimedOutIDs(_ context.Context, now time.Time) ([]string, error) {
+	c := q.db.cameo
+	if q.db.exists && (c.Status == domain.StatusQueued || c.Status == domain.StatusGenerating) &&
+		c.GenerationExpiresAt != nil && !c.GenerationExpiresAt.After(now) {
+		return []string{c.ID}, nil
+	}
+	return nil, nil
 }
 
 type env struct {
@@ -527,4 +584,28 @@ func (c *cancelOnRead) Read(p []byte) (int, error) {
 	c.pos += n
 	c.cancel()
 	return n, nil
+}
+
+// diskFullFiles 的 WriteTemp 讀完 body 後回傳非 ctx 的寫檔錯誤（例如磁碟滿）。
+type diskFullFiles struct{ *fakeFiles }
+
+var errDiskFull = errors.New("write temp: no space left on device")
+
+func (diskFullFiles) WriteTemp(_ context.Context, r io.Reader) (string, error) {
+	_, _ = io.Copy(io.Discard, r)
+	return "", errDiskFull
+}
+
+// 寫暫存檔失敗（非 ctx、非讀 body 錯誤）不得歸類為 BodyReadError；原樣回傳讓上層回 500。
+func TestUploadWriteTempFailureIsNotBodyReadError(t *testing.T) {
+	e := newEnv(domain.StatusAwaitingUpload)
+	svc := usecase.NewService(fakeQueries{db: e.db}, fakeTxRunner{e.db, e.ev}, e.clock, usecase.Config{}, diskFullFiles{e.files})
+	_, err := svc.UploadSelfie(context.Background(), "c-1", bytes.NewReader(jpeg))
+	var be *usecase.BodyReadError
+	if !errors.Is(err, errDiskFull) || errors.As(err, &be) {
+		t.Fatalf("err = %v, want errDiskFull and not BodyReadError", err)
+	}
+	if e.db.cameo.Status != domain.StatusAwaitingUpload || e.ev.index("tx-commit") != -1 {
+		t.Fatal("state changed")
+	}
 }

@@ -13,8 +13,20 @@ func TestDisplay(t *testing.T) {
 	if d := (Cameo{Status: StatusExpired}).Display(); d != (Display{"已過期", "上傳期限已過，點數沒有扣款，請重新客串。"}) {
 		t.Errorf("expired = %+v", d)
 	}
-	if d := (Cameo{Status: StatusSucceeded}).Display(); d.Title != "處理中" {
-		t.Errorf("other = %+v", d)
+	if d := (Cameo{Status: StatusSucceeded}).Display(); d != (Display{"已完成", "你的客串短片完成了"}) {
+		t.Errorf("succeeded = %+v", d)
+	}
+	rejected, vendor, timeout := FailureContentRejected, FailureVendorFailed, FailureTimeout
+	if d := (Cameo{Status: StatusFailed, FailureReason: &rejected}).Display(); d != (Display{"無法生成", "照片未通過審核，點數已退還，今日次數不退還"}) {
+		t.Errorf("content rejected = %+v", d)
+	}
+	for _, r := range []*string{&vendor, &timeout, nil} {
+		if d := (Cameo{Status: StatusFailed, FailureReason: r}).Display(); d != (Display{"生成失敗", "點數已退還"}) {
+			t.Errorf("failed(%v) = %+v", r, d)
+		}
+	}
+	if d := (Cameo{Status: "SOMETHING_ELSE"}).Display(); d != (Display{"處理中", ""}) {
+		t.Errorf("unknown = %+v", d)
 	}
 }
 

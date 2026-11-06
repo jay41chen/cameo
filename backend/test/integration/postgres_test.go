@@ -34,7 +34,7 @@ func TestMigrateIsRepeatableAndSeedsOnce(t *testing.T) {
 		t.Fatalf("balance = %d, held = %d, err = %v", balance, held, err)
 	}
 	var versions int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&versions); err != nil || versions != 4 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&versions); err != nil || versions != 5 {
 		t.Fatalf("versions = %d, err = %v", versions, err)
 	}
 	var ledger int

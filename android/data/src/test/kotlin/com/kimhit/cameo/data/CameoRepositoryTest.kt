@@ -188,14 +188,25 @@ class CameoRepositoryTest {
         assertEquals(0, server.requestCount)
     }
 
+    // 408 不能被 OkHttp 自動重送整個 body：上傳 client 的 retryOnConnectionFailure 必須是 false。
+    @Test
+    fun upload_408IsNotAutoRetriedByOkHttp() = runTest {
+        server.enqueue(json("""{"code":"UPLOAD_INTERRUPTED","message":"訊息","retryable":true}""", 408))
+        server.enqueue(json("""{"code":"UPLOAD_INTERRUPTED","message":"訊息","retryable":true}""", 408))
+        val e = failure(cameos.uploadSelfie("/v1/cameos/u1/selfie", photo().path))
+        assertEquals("UPLOAD_INTERRUPTED", e.code)
+        assertEquals(true, e.retryable)
+        assertEquals(1, server.requestCount)
+    }
+
     @Test
     fun upload_errorsCarryCodeAndRetryable() = runTest {
         val cases = listOf(
+            Triple(408, "UPLOAD_INTERRUPTED", true),
             Triple(410, "UPLOAD_EXPIRED", false),
             Triple(413, "SELFIE_TOO_LARGE", false),
             Triple(409, "INVALID_STATE", false),
             Triple(400, "INVALID_SELFIE", false),
-            Triple(400, "INVALID_REQUEST", true),
         )
         val file = photo()
         for ((status, code, retryable) in cases) {
