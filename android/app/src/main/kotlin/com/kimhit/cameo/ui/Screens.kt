@@ -93,11 +93,24 @@ fun CameoRoot() {
             composable(ROUTE_POINTS) { PointsScreen() }
             composable(
                 ROUTE_CAMERA,
-                arguments = listOf(navArgument("clipId") { type = NavType.StringType }),
+                arguments = listOf(
+                    navArgument("clipId") { type = NavType.StringType },
+                    navArgument("request") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
             ) { entry ->
                 val clipId = checkNotNull(entry.arguments?.getString("clipId"))
-                // 離開相機頁，確認頁返回會回清單
-                CameraScreen(onUsePhoto = { nav.navigateSingleTop(confirmRoute(clipId, it), ROUTE_CAMERA) })
+                val request = entry.arguments?.getString("request")
+                // 離開相機頁，確認頁／進度頁返回會回清單
+                CameraScreen(
+                    onUsePhoto = {
+                        val route = if (request != null) cameoRoute(request, it) else confirmRoute(clipId, it)
+                        nav.navigateSingleTop(route, ROUTE_CAMERA)
+                    },
+                )
             }
             composable(
                 ROUTE_CONFIRM,
@@ -114,6 +127,25 @@ fun CameoRoot() {
                 ConfirmScreen(
                     onBack = { nav.navigateUp() },
                     onRetake = { nav.navigateSingleTop(cameraRoute(clipId), ROUTE_CONFIRM) },
+                    onCreated = { nav.navigateSingleTop(cameoRoute(it), ROUTE_CONFIRM) },
+                )
+            }
+            composable(
+                ROUTE_CAMEO,
+                arguments = listOf(
+                    navArgument("clientRequestId") { type = NavType.StringType },
+                    navArgument("photo") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
+            ) {
+                CameoProgressScreen(
+                    onBack = { nav.navigateUp() },
+                    onRetake = { clipId, key -> nav.navigateSingleTop(cameraRoute(clipId, key), ROUTE_CAMEO) },
+                    onRestart = { clipId -> nav.navigateSingleTop(cameraRoute(clipId), ROUTE_CAMEO) },
+                    onNotCreated = { clipId -> nav.navigateSingleTop(confirmRoute(clipId), ROUTE_CAMEO) },
                 )
             }
         }
@@ -282,6 +314,10 @@ private fun UnfinishedRow(
                     ?: if (expired) EXPIRED_MESSAGE else null
                 message?.let { Text(it) }
                 order.upload?.let { Text("上傳期限：${formatTime(it.expiresAt)}") }
+                if (canContinueOrder(order)) {
+                    // 不經 tryStart：訂單已建立，只是接續上傳／送出
+                    TextButton(onClick = onContinue) { Text("繼續") }
+                }
                 if (expired) {
                     Row {
                         TextButton(onClick = onRestart) { Text("重新客串") }
@@ -298,7 +334,10 @@ private fun UnfinishedRow(
 fun PointsScreen(viewModel: PointsViewModel = hiltViewModel()) {
     val points by viewModel.points.collectAsState()
     val ledger by viewModel.ledger.collectAsState()
-    OnResume(viewModel::refreshPoints)
+    OnResume {
+        viewModel.refreshPoints()
+        viewModel.refreshLedger()
+    }
     LazyColumn(Modifier.fillMaxSize()) {
         item {
             when (val p = points) {

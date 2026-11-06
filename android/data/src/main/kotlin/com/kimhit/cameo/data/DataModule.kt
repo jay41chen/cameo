@@ -6,7 +6,10 @@ import com.kimhit.cameo.data.cameos.CameoRepositoryImpl
 import com.kimhit.cameo.data.clips.ClipRepositoryImpl
 import com.kimhit.cameo.data.network.ApiService
 import com.kimhit.cameo.data.network.DataConfig
+import com.kimhit.cameo.data.network.UploadApi
 import com.kimhit.cameo.data.network.createApiService
+import com.kimhit.cameo.data.network.createMainClient
+import com.kimhit.cameo.data.network.createUploadApi
 import com.kimhit.cameo.data.pending.PendingCameoDao
 import com.kimhit.cameo.data.pending.PendingCameoRepositoryImpl
 import com.kimhit.cameo.data.pending.PendingDatabase
@@ -24,6 +27,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import java.io.File
 import javax.inject.Singleton
+import okhttp3.OkHttpClient
 
 /** 需要 :app 提供 [DataConfig]。實作類別為 internal，只對外露出 domain 介面。 */
 @Module
@@ -31,7 +35,16 @@ import javax.inject.Singleton
 object DataModule {
     @Provides
     @Singleton
-    internal fun provideApi(config: DataConfig): ApiService = createApiService(config)
+    internal fun provideMainClient(config: DataConfig): OkHttpClient = createMainClient(config)
+
+    @Provides
+    @Singleton
+    internal fun provideApi(config: DataConfig, client: OkHttpClient): ApiService = createApiService(config, client)
+
+    /** 上傳用的獨立 client 由主 client 衍生，不改變主 client 的設定。 */
+    @Provides
+    @Singleton
+    internal fun provideUploadApi(config: DataConfig, client: OkHttpClient): UploadApi = createUploadApi(config, client)
 
     @Provides
     @Singleton
@@ -47,7 +60,8 @@ object DataModule {
 
     @Provides
     @Singleton
-    internal fun provideCameoRepository(api: ApiService): CameoRepository = CameoRepositoryImpl(api)
+    internal fun provideCameoRepository(api: ApiService, uploadApi: UploadApi): CameoRepository =
+        CameoRepositoryImpl(api, uploadApi)
 
     @Provides
     @Singleton

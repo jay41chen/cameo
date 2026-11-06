@@ -7,6 +7,8 @@ import com.kimhit.cameo.domain.repository.ClipRepository
 import com.kimhit.cameo.domain.repository.PendingCameoRepository
 import com.kimhit.cameo.domain.repository.PointsRepository
 import com.kimhit.cameo.domain.repository.QuotaRepository
+import com.kimhit.cameo.domain.usecase.AdvanceCameoUseCase
+import com.kimhit.cameo.domain.usecase.AttachCameoPhotoUseCase
 import com.kimhit.cameo.domain.usecase.ConfirmCameoUseCase
 import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
@@ -56,4 +58,11 @@ object AppModule {
 
     @Provides
     fun provideDeletePendingCameo(pending: PendingCameoRepository) = DeletePendingCameoUseCase(pending)
+
+    @Provides
+    fun provideAdvanceCameo(cameos: CameoRepository, pending: PendingCameoRepository) =
+        AdvanceCameoUseCase(cameos, pending)
+
+    @Provides
+    fun provideAttachCameoPhoto(pending: PendingCameoRepository) = AttachCameoPhotoUseCase(pending)
 }

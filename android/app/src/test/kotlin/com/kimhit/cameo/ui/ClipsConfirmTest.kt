@@ -344,6 +344,18 @@ class ConfirmViewModelTest {
     }
 
     @Test
+    fun created_carriesClientRequestId() = runTest {
+        cameos.creates.addLast(DomainResult.Success(testOrder()))
+        val vm = vm()
+        advanceUntilIdle()
+        vm.confirm()
+        advanceUntilIdle()
+        val created = vm.state.value as ConfirmUiState.Created
+        assertEquals("key-1", created.clientRequestId)
+        assertEquals("key-1", pending.rows[0].clientRequestId)
+    }
+
+    @Test
     fun passesPhotoPathToUseCase() = runTest {
         cameos.creates.addLast(DomainResult.Success(testOrder()))
         val vm = vm(photo = "/cache/captures/x.jpg")

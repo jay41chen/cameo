@@ -8,6 +8,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -15,7 +16,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 
 @Composable
-fun ConfirmScreen(onBack: () -> Unit, onRetake: () -> Unit, viewModel: ConfirmViewModel = hiltViewModel()) {
+fun ConfirmScreen(
+    onBack: () -> Unit,
+    onRetake: () -> Unit,
+    onCreated: (String) -> Unit,
+    viewModel: ConfirmViewModel = hiltViewModel(),
+) {
     val state by viewModel.state.collectAsState()
     when (val s = state) {
         ConfirmUiState.Loading -> LoadingBox()
@@ -28,12 +34,10 @@ fun ConfirmScreen(onBack: () -> Unit, onRetake: () -> Unit, viewModel: ConfirmVi
                 Text(if (s.failed) "重試" else "確認支付")
             }
         }
-        is ConfirmUiState.Created -> Body {
-            val cameo = s.order.cameo
-            Text(cameo.displayTitle ?: "處理中", style = MaterialTheme.typography.titleLarge)
-            cameo.displayMessage?.takeIf { it.isNotEmpty() }?.let { Text(it) }
-            s.order.upload?.let { Text("上傳期限：${formatTime(it.expiresAt)}") }
-            Button(onClick = onBack) { Text("回片段清單") }
+        is ConfirmUiState.Created -> {
+            // 建單成功：交給進度畫面接手上傳與送出，只導一次
+            LaunchedEffect(s.clientRequestId) { onCreated(s.clientRequestId) }
+            LoadingBox()
         }
         is ConfirmUiState.Rejected -> Body {
             Text(s.message ?: GENERIC_ERROR)
@@ -53,7 +57,7 @@ fun ConfirmScreen(onBack: () -> Unit, onRetake: () -> Unit, viewModel: ConfirmVi
 }
 
 @Composable
-private fun Body(content: @Composable () -> Unit) {
+internal fun Body(content: @Composable () -> Unit) {
     Column(
         Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),

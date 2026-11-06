@@ -19,7 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
-private class FakePending(val events: MutableList<String> = mutableListOf()) : PendingCameoRepository {
+internal class FakePending(val events: MutableList<String> = mutableListOf()) : PendingCameoRepository {
     val rows = mutableListOf<PendingCameo>()
     private var next = 1
 
@@ -65,17 +65,37 @@ private class FakePending(val events: MutableList<String> = mutableListOf()) : P
     }
 
     override suspend fun list(): List<PendingCameo> = rows.toList()
+
+    override suspend fun get(clientRequestId: String): PendingCameo? =
+        rows.firstOrNull { it.clientRequestId == clientRequestId }
+
+    override suspend fun markUploaded(clientRequestId: String) {
+        events += "uploaded:$clientRequestId"
+        val i = rows.indexOfFirst { it.clientRequestId == clientRequestId }
+        if (i >= 0) rows[i] = rows[i].copy(step = PendingStep.SUBMIT, photoPath = null, lastError = null)
+    }
+
+    override suspend fun markSubmitted(clientRequestId: String) {
+        events += "submitted:$clientRequestId"
+        val i = rows.indexOfFirst { it.clientRequestId == clientRequestId }
+        if (i >= 0) rows[i] = rows[i].copy(step = PendingStep.TRACK, lastError = null)
+    }
 }
 
-private const val PHOTO = "/cache/captures/a.jpg"
+internal const val PHOTO = "/cache/captures/a.jpg"
 
-private class FakeCameos(
+internal class FakeCameos(
     val events: MutableList<String>,
     val creates: ArrayDeque<() -> DomainResult<CameoOrder>> = ArrayDeque(),
     val gets: MutableMap<String, DomainResult<CameoOrder>> = mutableMapOf(),
 ) : CameoRepository {
     val keys = mutableListOf<String>()
     val getCalls = mutableListOf<String>()
+
+    /** getCameo 的腳本：有就依序取出，沒有才用 [gets] 的固定值。 */
+    val getScript = ArrayDeque<() -> DomainResult<CameoOrder>>()
+    val uploads = ArrayDeque<() -> DomainResult<CameoOrder>>()
+    val submits = ArrayDeque<() -> DomainResult<CameoOrder>>()
 
     override suspend fun createCameo(clientRequestId: String, clipId: String): DomainResult<CameoOrder> {
         events += "post:$clientRequestId"
@@ -85,14 +105,25 @@ private class FakeCameos(
 
     override suspend fun getCameo(id: String): DomainResult<CameoOrder> {
         getCalls += id
-        return gets.getValue(id)
+        events += "get"
+        return if (getScript.isNotEmpty()) getScript.removeFirst()() else gets.getValue(id)
+    }
+
+    override suspend fun uploadSelfie(url: String, photoPath: String): DomainResult<CameoOrder> {
+        events += "upload:$url:$photoPath"
+        return uploads.removeFirst()()
+    }
+
+    override suspend fun submitCameo(cameoId: String): DomainResult<CameoOrder> {
+        events += "submit:$cameoId"
+        return submits.removeFirst()()
     }
 }
 
-private fun order(status: CameoStatus = CameoStatus.AWAITING_UPLOAD, id: String = "u1", clip: String = "c1") =
+internal fun order(status: CameoStatus = CameoStatus.AWAITING_UPLOAD, id: String = "u1", clip: String = "c1") =
     CameoOrder(Cameo(id, Clip(clip, "雨夜重逢", 10), status, "等待上傳", "已占用 10 點"), null)
 
-private fun fail(retryable: Boolean, code: String? = null) =
+internal fun fail(retryable: Boolean, code: String? = null) =
     DomainResult.Failure(DomainError("訊息", retryable, code))
 
 class CameoUseCasesTest {
@@ -191,7 +222,7 @@ class CameoUseCasesTest {
         )
         val uc = confirm(c)
         val r = uc("c1", PHOTO) as DomainResult.Success
-        assertEquals(CameoStatus.EXPIRED, r.value.cameo.status)
+        assertEquals(CameoStatus.EXPIRED, r.value.order.cameo.status)
         assertTrue(pending.rows.isEmpty())
         uc("c1", PHOTO)
         assertEquals(listOf("key-1", "key-2"), c.keys)

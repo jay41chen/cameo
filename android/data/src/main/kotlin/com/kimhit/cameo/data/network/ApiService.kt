@@ -7,8 +7,11 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
+import retrofit2.http.Url
+import okhttp3.RequestBody
 
 @Serializable
 internal data class ClipDto(val id: String, val title: String, val cost: Int)
@@ -90,4 +93,14 @@ internal interface ApiService {
 
     @GET("v1/cameos/{id}")
     suspend fun getCameo(@Path("id") id: String): Response<CameoOrderResponse>
+
+    @POST("v1/cameos/{id}/submit")
+    suspend fun submit(@Path("id") id: String): Response<CameoOrderResponse>
+}
+
+/** 只給上傳用，搭配逾時較長且不自動重送的獨立 client（見 [createUploadClient]）。 */
+internal interface UploadApi {
+    /** [url] 是後端回的相對路徑（`/v1/cameos/{id}/selfie`），由 Retrofit 解析到 base URL。 */
+    @PUT
+    suspend fun upload(@Url url: String, @Body body: RequestBody): Response<CameoOrderResponse>
 }

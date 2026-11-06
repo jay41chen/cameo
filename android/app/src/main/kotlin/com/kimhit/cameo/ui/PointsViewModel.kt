@@ -36,6 +36,7 @@ class PointsViewModel @Inject constructor(
     val ledger: StateFlow<LedgerUiState> = _ledger
 
     private var pointsJob: Job? = null
+    private var ledgerRefreshJob: Job? = null
 
     init {
         refresh()
@@ -80,6 +81,23 @@ class PointsViewModel @Inject constructor(
                     phase = LedgerPhase.Error,
                     errorMessage = r.error.message,
                 )
+            }
+        }
+    }
+
+    /**
+     * 回到畫面時靜默刷新明細第一頁（扣點與退點會新增明細）。只在 [LedgerPhase.Idle] 執行：
+     * 成功就取代第一頁與 nextCursor；失敗保留現有內容、不改狀態。新的刷新取消前一次；
+     * 回應回來時已不是 Idle（切到載入更多或重新載入）就丟棄。
+     */
+    fun refreshLedger() {
+        if (_ledger.value.phase != LedgerPhase.Idle) return
+        ledgerRefreshJob?.cancel()
+        ledgerRefreshJob = viewModelScope.launch {
+            val r = getLedgerPage(null)
+            val latest = _ledger.value
+            if (r is DomainResult.Success && latest.phase == LedgerPhase.Idle) {
+                _ledger.value = latest.copy(items = r.value.items, nextCursor = r.value.nextCursor)
             }
         }
     }

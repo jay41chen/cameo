@@ -31,13 +31,28 @@ class FakeCameoRepo(
     val gets: MutableMap<String, DomainResult<CameoOrder>> = mutableMapOf(),
 ) : CameoRepository {
     val keys = mutableListOf<String>()
+    val uploads = ArrayDeque<DomainResult<CameoOrder>>()
+    val submits = ArrayDeque<DomainResult<CameoOrder>>()
+    val calls = mutableListOf<String>()
     override suspend fun createCameo(clientRequestId: String, clipId: String): DomainResult<CameoOrder> {
         keys += clientRequestId
         return creates.removeFirst()
     }
 
-    override suspend fun getCameo(id: String): DomainResult<CameoOrder> =
-        gets[id] ?: error("no stub for $id")
+    override suspend fun getCameo(id: String): DomainResult<CameoOrder> {
+        calls += "get"
+        return gets[id] ?: error("no stub for $id")
+    }
+
+    override suspend fun uploadSelfie(url: String, photoPath: String): DomainResult<CameoOrder> {
+        calls += "upload"
+        return uploads.removeFirst()
+    }
+
+    override suspend fun submitCameo(cameoId: String): DomainResult<CameoOrder> {
+        calls += "submit"
+        return submits.removeFirst()
+    }
 }
 
 class FakePendingRepo : PendingCameoRepository {
@@ -82,6 +97,19 @@ class FakePendingRepo : PendingCameoRepository {
     }
 
     override suspend fun list(): List<PendingCameo> = rows.toList()
+
+    override suspend fun get(clientRequestId: String): PendingCameo? =
+        rows.firstOrNull { it.clientRequestId == clientRequestId }
+
+    override suspend fun markUploaded(clientRequestId: String) {
+        val i = rows.indexOfFirst { it.clientRequestId == clientRequestId }
+        if (i >= 0) rows[i] = rows[i].copy(step = PendingStep.SUBMIT, photoPath = null, lastError = null)
+    }
+
+    override suspend fun markSubmitted(clientRequestId: String) {
+        val i = rows.indexOfFirst { it.clientRequestId == clientRequestId }
+        if (i >= 0) rows[i] = rows[i].copy(step = PendingStep.TRACK, lastError = null)
+    }
 }
 
 /** 記錄檔案操作，不碰真實檔案系統。 */

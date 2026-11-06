@@ -47,7 +47,7 @@ class ConfirmCameoUseCase(
     private val cameos: CameoRepository,
     private val pending: PendingCameoRepository,
 ) {
-    suspend operator fun invoke(clipId: String, photoSourcePath: String?): DomainResult<CameoOrder> {
+    suspend operator fun invoke(clipId: String, photoSourcePath: String?): DomainResult<CreatedCameo> {
         val draft = pending.getOrCreateDraft(clipId)
         if (photoSourcePath != null) {
             if (!pending.attachPhoto(draft.clientRequestId, photoSourcePath)) return photoMissing()
@@ -69,9 +69,15 @@ class ConfirmCameoUseCase(
                     pending.recordError(draft.clientRequestId, result.error.message)
                 }
         }
-        return result
+        return when (result) {
+            is DomainResult.Success -> DomainResult.Success(CreatedCameo(draft.clientRequestId, result.value))
+            is DomainResult.Failure -> result
+        }
     }
 }
+
+/** 建單成功的結果；[clientRequestId] 是本機草稿的 key，後續上傳與送出用它找回草稿。 */
+data class CreatedCameo(val clientRequestId: String, val order: CameoOrder)
 
 /** 本機照片遺失，無法送出；不是後端錯誤，也不會送 POST。 */
 const val PHOTO_MISSING = "PHOTO_MISSING"

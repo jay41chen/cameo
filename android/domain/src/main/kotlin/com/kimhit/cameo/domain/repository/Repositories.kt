@@ -24,6 +24,11 @@ interface QuotaRepository {
 interface CameoRepository {
     suspend fun createCameo(clientRequestId: String, clipId: String): DomainResult<CameoOrder>
     suspend fun getCameo(id: String): DomainResult<CameoOrder>
+
+    /** PUT 照片到 [url]（後端回的相對路徑）；本機檔案不存在回 `PHOTO_MISSING`，且不打 API。 */
+    suspend fun uploadSelfie(url: String, photoPath: String): DomainResult<CameoOrder>
+
+    suspend fun submitCameo(cameoId: String): DomainResult<CameoOrder>
 }
 
 interface PendingCameoRepository {
@@ -43,4 +48,13 @@ interface PendingCameoRepository {
      */
     suspend fun attachPhoto(clientRequestId: String, sourcePath: String): Boolean
     suspend fun list(): List<PendingCameo>
+
+    /** 列不存在回 null。 */
+    suspend fun get(clientRequestId: String): PendingCameo?
+
+    /** 上傳成功：`step=SUBMIT`、刪照片檔、清空照片路徑與 `lastError`。列不存在不做事。 */
+    suspend fun markUploaded(clientRequestId: String)
+
+    /** 送出成功：`step=TRACK`、清 `lastError`。列不存在不做事。 */
+    suspend fun markSubmitted(clientRequestId: String)
 }

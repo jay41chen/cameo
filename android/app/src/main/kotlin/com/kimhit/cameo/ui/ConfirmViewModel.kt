@@ -25,7 +25,7 @@ sealed interface ConfirmUiState {
         val error: String? = null,
         val failed: Boolean = false,
     ) : ConfirmUiState
-    data class Created(val order: CameoOrder) : ConfirmUiState
+    data class Created(val clientRequestId: String, val order: CameoOrder) : ConfirmUiState
     data class Rejected(val message: String?) : ConfirmUiState
     data class Expired(val clip: Clip, val title: String?, val message: String?) : ConfirmUiState
     /** 本機照片遺失，需要重新拍照。 */
@@ -78,10 +78,14 @@ class ConfirmViewModel @Inject constructor(
             }
             _state.value = when (val r = result) {
                 is DomainResult.Success ->
-                    if (r.value.cameo.status == CameoStatus.EXPIRED) {
-                        ConfirmUiState.Expired(current.clip, r.value.cameo.displayTitle, r.value.cameo.displayMessage)
+                    if (r.value.order.cameo.status == CameoStatus.EXPIRED) {
+                        ConfirmUiState.Expired(
+                            current.clip,
+                            r.value.order.cameo.displayTitle,
+                            r.value.order.cameo.displayMessage,
+                        )
                     } else {
-                        ConfirmUiState.Created(r.value)
+                        ConfirmUiState.Created(r.value.clientRequestId, r.value.order)
                     }
                 is DomainResult.Failure ->
                     if (r.error.code == PHOTO_MISSING) {

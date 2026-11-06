@@ -3,6 +3,9 @@ package com.kimhit.cameo.data
 import com.kimhit.cameo.data.cameos.CameoRepositoryImpl
 import com.kimhit.cameo.data.network.DataConfig
 import com.kimhit.cameo.data.network.createApiService
+import com.kimhit.cameo.data.network.createMainClient
+import com.kimhit.cameo.data.network.createUploadClient
+import com.kimhit.cameo.data.network.createUploadApi
 import com.kimhit.cameo.data.pending.PendingCameoDao
 import com.kimhit.cameo.data.pending.PendingCameoEntity
 import com.kimhit.cameo.data.pending.PendingCameoRepositoryImpl
@@ -11,6 +14,7 @@ import com.kimhit.cameo.domain.model.CameoOrder
 import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.model.PendingStep
+import com.kimhit.cameo.domain.usecase.PHOTO_MISSING
 import com.kimhit.cameo.domain.model.Quota
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -41,13 +45,18 @@ class CameoRepositoryTest {
     private lateinit var server: MockWebServer
     private lateinit var cameos: CameoRepositoryImpl
     private lateinit var quota: QuotaRepositoryImpl
+    private lateinit var config: DataConfig
+
+    @get:Rule
+    val tmp = TemporaryFolder()
 
     @Before
     fun setUp() {
         server = MockWebServer()
         server.start()
-        val api = createApiService(DataConfig(server.url("/").toString().trimEnd('/'), "test-token"))
-        cameos = CameoRepositoryImpl(api)
+        config = DataConfig(server.url("/").toString().trimEnd('/'), "test-token")
+        val api = createApiService(config)
+        cameos = CameoRepositoryImpl(api, createUploadApi(config))
         quota = QuotaRepositoryImpl(api)
     }
 
@@ -133,6 +142,104 @@ class CameoRepositoryTest {
         val e = failure(cameos.getCameo("nope"))
         assertEquals("CAMEO_NOT_FOUND", e.code)
         assertEquals("/v1/cameos/nope", server.takeRequest().path)
+    }
+
+    private val jpegBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 1, 2, 3, 4, 5)
+    private fun photo(): File = File(tmp.newFolder(), "k1.jpg").apply { writeBytes(jpegBytes) }
+
+    @Test
+    fun upload_putsToRelativePath_withSameBytes_contentType_andAuthorization() = runTest {
+        server.enqueue(json(cameoJson("UPLOADED")))
+        val o = order(cameos.uploadSelfie("/v1/cameos/u1/selfie", photo().path))
+        val req = server.takeRequest()
+        assertEquals("PUT", req.method)
+        assertEquals("/v1/cameos/u1/selfie", req.path)
+        assertTrue(jpegBytes.contentEquals(req.body.readByteArray()))
+        assertEquals("image/jpeg", req.getHeader("Content-Type"))
+        assertEquals("Bearer test-token", req.getHeader("Authorization"))
+        assertEquals(CameoStatus.UPLOADED, o.cameo.status)
+    }
+
+    @Test
+    fun clients_uploadDoesNotRetry_mainStillRetries() {
+        val main = createMainClient(config)
+        val upload = createUploadClient(main)
+        assertTrue(main.retryOnConnectionFailure)
+        assertFalse(upload.retryOnConnectionFailure)
+        assertTrue(main.retryOnConnectionFailure) // 衍生上傳 client 不影響主 client
+        assertEquals(60_000, upload.writeTimeoutMillis)
+        assertEquals(60_000, upload.readTimeoutMillis)
+    }
+
+    @Test
+    fun upload_serverDropsConnection_sentOnce_andRetryableFailure() = runTest {
+        // 多排一個回應：若 OkHttp 自己重送，第二個請求會被計入
+        repeat(2) { server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)) }
+        val e = failure(cameos.uploadSelfie("/v1/cameos/u1/selfie", photo().path))
+        assertEquals(1, server.requestCount)
+        assertTrue(e.retryable)
+    }
+
+    @Test
+    fun upload_missingFile_isPhotoMissing_noRequest() = runTest {
+        val e = failure(cameos.uploadSelfie("/v1/cameos/u1/selfie", File(tmp.root, "nope.jpg").path))
+        assertEquals(PHOTO_MISSING, e.code)
+        assertEquals(false, e.retryable)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun upload_errorsCarryCodeAndRetryable() = runTest {
+        val cases = listOf(
+            Triple(410, "UPLOAD_EXPIRED", false),
+            Triple(413, "SELFIE_TOO_LARGE", false),
+            Triple(409, "INVALID_STATE", false),
+            Triple(400, "INVALID_SELFIE", false),
+            Triple(400, "INVALID_REQUEST", true),
+        )
+        val file = photo()
+        for ((status, code, retryable) in cases) {
+            server.enqueue(json("""{"code":"$code","message":"訊息","retryable":$retryable}""", status))
+            val e = failure(cameos.uploadSelfie("/v1/cameos/u1/selfie", file.path))
+            assertEquals(code, code, e.code)
+            assertEquals(code, retryable, e.retryable)
+            assertEquals(code, "訊息", e.message)
+        }
+    }
+
+    @Test
+    fun submit_postsToSubmitPath_noBody_andParses() = runTest {
+        server.enqueue(json(cameoJson("QUEUED", ""","display":{"title":"排隊中","message":"完成後會通知你"}""")))
+        val o = order(cameos.submitCameo("u1"))
+        val req = server.takeRequest()
+        assertEquals("POST", req.method)
+        assertEquals("/v1/cameos/u1/submit", req.path)
+        assertEquals(0L, req.bodySize)
+        assertEquals("Bearer test-token", req.getHeader("Authorization"))
+        assertEquals(CameoStatus.QUEUED, o.cameo.status)
+        assertEquals("排隊中", o.cameo.displayTitle)
+    }
+
+    @Test
+    fun submit_errorsCarryCodeAndRetryable() = runTest {
+        val cases = listOf(
+            Triple(410, "UPLOAD_EXPIRED", false),
+            Triple(409, "SELFIE_NOT_UPLOADED", false),
+            Triple(409, "INVALID_STATE", false),
+            Triple(404, "CAMEO_NOT_FOUND", false),
+        )
+        for ((status, code, retryable) in cases) {
+            server.enqueue(json("""{"code":"$code","message":"訊息","retryable":$retryable}""", status))
+            val e = failure(cameos.submitCameo("u1"))
+            assertEquals(code, code, e.code)
+            assertEquals(code, retryable, e.retryable)
+        }
+    }
+
+    @Test
+    fun submit_disconnect_isRetryable() = runTest {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        assertTrue(failure(cameos.submitCameo("u1")).retryable)
     }
 
     @Test
@@ -372,5 +479,57 @@ class PendingCameoRepositoryTest {
         assertNull(dao.rows.getValue(d.clientRequestId).photoPath)
         repo.deletePhoto("ghost")
         assertEquals(1, dao.rows.size)
+    }
+
+    @Test
+    fun get_returnsRowOrNull() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        assertEquals(d, repo.get(d.clientRequestId))
+        assertNull(repo.get("ghost"))
+    }
+
+    @Test
+    fun markUploaded_deletesFile_setsSubmit_clearsErrorAndPath() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.attachPhoto(d.clientRequestId, source("a.jpg", "X").path)
+        repo.markCreated(d.clientRequestId, "u1")
+        repo.recordError(d.clientRequestId, "網路錯誤")
+        val canonical = File(photoDir, "${d.clientRequestId}.jpg")
+        assertTrue(canonical.exists())
+        repo.markUploaded(d.clientRequestId)
+        assertFalse(canonical.exists())
+        val row = dao.rows.getValue(d.clientRequestId)
+        assertEquals("SUBMIT", row.step)
+        assertNull(row.photoPath)
+        assertNull(row.lastError)
+        assertEquals("u1", row.cameoId)
+        assertNull(repo.get(d.clientRequestId)!!.photoPath)
+    }
+
+    @Test
+    fun markSubmitted_setsTrack_clearsError() = runTest {
+        val d = repo.getOrCreateDraft("c1")
+        repo.markCreated(d.clientRequestId, "u1")
+        repo.recordError(d.clientRequestId, "x")
+        repo.markSubmitted(d.clientRequestId)
+        val row = dao.rows.getValue(d.clientRequestId)
+        assertEquals("TRACK", row.step)
+        assertNull(row.lastError)
+        assertEquals("u1", row.cameoId)
+    }
+
+    @Test
+    fun markUploadedAndSubmitted_missingRow_noOp() = runTest {
+        repo.markUploaded("ghost")
+        repo.markSubmitted("ghost")
+        assertTrue(dao.rows.isEmpty())
+    }
+
+    @Test
+    fun unknownStep_dependsOnCameoId() = runTest {
+        dao.upsert(PendingCameoEntity("a", "c1", "u1", "FUTURE", null, null, 1))
+        dao.upsert(PendingCameoEntity("b", "c1", null, "FUTURE", null, null, 2))
+        assertEquals(PendingStep.UPLOAD, repo.get("a")!!.step)
+        assertEquals(PendingStep.CREATE, repo.get("b")!!.step)
     }
 }

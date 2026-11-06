@@ -24,6 +24,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -265,5 +266,113 @@ class ViewModelTest {
         a.complete(pointsOf(100)) // 舊回應晚到
         advanceUntilIdle()
         assertEquals(Load.Success(Points(90, 0)), vm.points.value)
+    }
+
+    // ---- refreshLedger ----
+
+    @Test
+    fun refreshLedger_whenIdle_replacesFirstPageAndCursor() = runTest {
+        val fake = FakePoints(
+            ArrayDeque(listOf(DomainResult.Success(Points(1, 0)))),
+            ArrayDeque(
+                listOf(
+                    DomainResult.Success(LedgerPage(listOf(entry("l1")), "cur1")),
+                    DomainResult.Success(LedgerPage(listOf(entry("l2"), entry("l1")), "cur2")),
+                ),
+            ),
+        )
+        val vm = pointsVm(fake)
+        advanceUntilIdle()
+        vm.refreshLedger()
+        advanceUntilIdle()
+        assertEquals(listOf("l2", "l1"), vm.ledger.value.items.map { it.id })
+        assertEquals("cur2", vm.ledger.value.nextCursor)
+        assertEquals(LedgerPhase.Idle, vm.ledger.value.phase)
+        assertEquals(listOf<String?>(null, null), fake.cursors)
+    }
+
+    @Test
+    fun refreshLedger_failureKeepsItemsAndState() = runTest {
+        val fake = FakePoints(
+            ArrayDeque(listOf(DomainResult.Success(Points(1, 0)))),
+            ArrayDeque(listOf(DomainResult.Success(LedgerPage(listOf(entry("l1")), "cur1")), failure)),
+        )
+        val vm = pointsVm(fake)
+        advanceUntilIdle()
+        val before = vm.ledger.value
+        vm.refreshLedger()
+        advanceUntilIdle()
+        assertEquals(before, vm.ledger.value)
+        assertEquals(LedgerPhase.Idle, vm.ledger.value.phase)
+    }
+
+    @Test
+    fun refreshLedger_doesNotRunWhileLoadingMoreOrLoadingOrError() = runTest {
+        val fake = FakePoints(
+            ArrayDeque(listOf(DomainResult.Success(Points(1, 0)))),
+            ArrayDeque(
+                listOf(
+                    DomainResult.Success(LedgerPage(listOf(entry("l1")), "cur1")),
+                    DomainResult.Success(LedgerPage(listOf(entry("l2")), null)),
+                ),
+            ),
+        )
+        val vm = pointsVm(fake)
+        vm.refreshLedger() // 第一頁還在載入
+        advanceUntilIdle()
+        vm.loadMore()
+        assertEquals(LedgerPhase.LoadingMore, vm.ledger.value.phase)
+        vm.refreshLedger()
+        advanceUntilIdle()
+        assertEquals(listOf(null, "cur1"), fake.cursors)
+        assertEquals(listOf("l1", "l2"), vm.ledger.value.items.map { it.id })
+    }
+
+    private class GatedLedger(val gates: ArrayDeque<CompletableDeferred<DomainResult<LedgerPage>>>) : PointsRepository {
+        override suspend fun getPoints() = DomainResult.Success(Points(1, 0))
+        override suspend fun getLedger(cursor: String?): DomainResult<LedgerPage> = gates.removeFirst().await()
+    }
+
+    @Test
+    fun refreshLedger_olderResponseDoesNotOverwriteNewer() = runTest {
+        val first = CompletableDeferred<DomainResult<LedgerPage>>()
+        val a = CompletableDeferred<DomainResult<LedgerPage>>()
+        val b = CompletableDeferred<DomainResult<LedgerPage>>()
+        val fake = GatedLedger(ArrayDeque(listOf(first, a, b)))
+        val vm = PointsViewModel(GetPointsUseCase(fake), GetLedgerPageUseCase(fake))
+        first.complete(DomainResult.Success(LedgerPage(listOf(entry("l0")), null)))
+        advanceUntilIdle()
+        vm.refreshLedger() // a
+        advanceUntilIdle()
+        vm.refreshLedger() // b，取消 a
+        advanceUntilIdle()
+        b.complete(DomainResult.Success(LedgerPage(listOf(entry("lb")), null)))
+        advanceUntilIdle()
+        a.complete(DomainResult.Success(LedgerPage(listOf(entry("la")), null))) // 舊回應晚到
+        advanceUntilIdle()
+        assertEquals(listOf("lb"), vm.ledger.value.items.map { it.id })
+    }
+
+    @Test
+    fun refreshLedger_responseArrivingDuringLoadMore_isDropped_andLoadMoreKeepsItems() = runTest {
+        val first = CompletableDeferred<DomainResult<LedgerPage>>()
+        val refresh = CompletableDeferred<DomainResult<LedgerPage>>()
+        val more = CompletableDeferred<DomainResult<LedgerPage>>()
+        val fake = GatedLedger(ArrayDeque(listOf(first, refresh, more)))
+        val vm = PointsViewModel(GetPointsUseCase(fake), GetLedgerPageUseCase(fake))
+        first.complete(DomainResult.Success(LedgerPage(listOf(entry("l1")), "cur1")))
+        advanceUntilIdle()
+        vm.refreshLedger() // 進行中
+        advanceUntilIdle()
+        vm.loadMore()
+        assertEquals(LedgerPhase.LoadingMore, vm.ledger.value.phase)
+        refresh.complete(DomainResult.Success(LedgerPage(listOf(entry("lr")), null))) // refresh 先回來
+        advanceUntilIdle()
+        assertTrue(vm.ledger.value.phase != LedgerPhase.Idle)
+        assertEquals(listOf("l1"), vm.ledger.value.items.map { it.id })
+        more.complete(DomainResult.Success(LedgerPage(listOf(entry("l2")), null)))
+        advanceUntilIdle()
+        assertEquals(LedgerPhase.Idle, vm.ledger.value.phase)
+        assertEquals(listOf("l1", "l2"), vm.ledger.value.items.map { it.id })
     }
 }

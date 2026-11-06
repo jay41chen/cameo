@@ -1,6 +1,10 @@
 package com.kimhit.cameo.ui
 
 import androidx.lifecycle.SavedStateHandle
+import com.kimhit.cameo.domain.model.Cameo
+import com.kimhit.cameo.domain.model.CameoOrder
+import com.kimhit.cameo.domain.model.CameoStatus
+import com.kimhit.cameo.domain.model.Clip
 import com.kimhit.cameo.domain.model.PendingCameo
 import com.kimhit.cameo.domain.model.PendingStep
 import org.junit.Assert.assertEquals
@@ -97,5 +101,34 @@ class CameoNavTest {
     fun confirmRoute_encodesPhotoPath() {
         assertEquals("confirm/c1?photo=%2Fcache%2Fcaptures%2Fa%20b.jpg", confirmRoute("c1", "/cache/captures/a b.jpg"))
         assertEquals("confirm/c1", confirmRoute("c1"))
+    }
+
+    @Test
+    fun continue_withCameoId_goesToProgress_regardlessOfPhoto() {
+        val created = PendingCameo("k1", "c1", "u1", PendingStep.UPLOAD, null, "/files/selfies/k1.jpg")
+        assertEquals("cameo/k1", continueRoute(created))
+        assertEquals("cameo/k1", continueRoute(created.copy(photoPath = null)))
+    }
+
+    @Test
+    fun cameoAndCameraRoutes_encodeArguments() {
+        assertEquals("cameo/k1?photo=%2Fcache%2Fa%20b.jpg", cameoRoute("k1", "/cache/a b.jpg"))
+        assertEquals("camera/c1?request=k1", cameraRoute("c1", "k1"))
+        assertEquals("camera/c1", cameraRoute("c1"))
+    }
+
+    private fun orderWith(status: CameoStatus) = CameoOrder(
+        Cameo("u1", Clip("c1", "雨夜重逢", 10), status, null, null),
+        null,
+    )
+
+    @Test
+    fun canContinue_onlyWhileAwaitingUploadOrUploaded() {
+        assertTrue(canContinueOrder(orderWith(CameoStatus.AWAITING_UPLOAD)))
+        assertTrue(canContinueOrder(orderWith(CameoStatus.UPLOADED)))
+        for (s in listOf(CameoStatus.QUEUED, CameoStatus.GENERATING, CameoStatus.SUCCEEDED, CameoStatus.FAILED, CameoStatus.EXPIRED, CameoStatus.UNKNOWN)) {
+            assertFalse("$s", canContinueOrder(orderWith(s)))
+        }
+        assertFalse(canContinueOrder(null))
     }
 }

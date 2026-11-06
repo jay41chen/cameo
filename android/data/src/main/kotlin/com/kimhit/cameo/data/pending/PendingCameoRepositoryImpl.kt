@@ -99,6 +99,29 @@ internal class PendingCameoRepositoryImpl(
 
     override suspend fun list(): List<PendingCameo> = dao.list().map { it.toDomain() }
 
+    override suspend fun get(clientRequestId: String): PendingCameo? = dao.get(clientRequestId)?.toDomain()
+
+    override suspend fun markUploaded(clientRequestId: String) {
+        val row = dao.get(clientRequestId) ?: return
+        withContext(Dispatchers.IO) {
+            photoFile(clientRequestId)?.delete()
+            tempFile(clientRequestId)?.delete()
+        }
+        dao.upsert(
+            row.copy(
+                step = PendingStep.SUBMIT.name,
+                photoPath = null,
+                lastError = null,
+                updatedAt = now(),
+            ),
+        )
+    }
+
+    override suspend fun markSubmitted(clientRequestId: String) {
+        val row = dao.get(clientRequestId) ?: return
+        dao.upsert(row.copy(step = PendingStep.TRACK.name, lastError = null, updatedAt = now()))
+    }
+
     /** key 是 App 自己產生的 UUID；仍只接受安全字元，固定檔名組合，不讓路徑穿越。 */
     private fun photoFile(id: String): File? = if (SAFE_KEY.matches(id)) File(photoDir, "$id.jpg") else null
 
@@ -113,7 +136,8 @@ private fun PendingCameoEntity.toDomain() = PendingCameo(
     clientRequestId = clientRequestId,
     clipId = clipId,
     cameoId = cameoId,
-    step = runCatching { PendingStep.valueOf(step) }.getOrDefault(PendingStep.CREATE),
+    step = runCatching { PendingStep.valueOf(step) }
+        .getOrDefault(if (cameoId != null) PendingStep.UPLOAD else PendingStep.CREATE),
     lastError = lastError,
     photoPath = photoPath?.takeIf { File(it).isFile },
 )
