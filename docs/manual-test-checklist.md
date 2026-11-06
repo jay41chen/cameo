@@ -667,3 +667,55 @@ cd backend && TEST_DATABASE_URL='postgres://cameo:cameo@127.0.0.1:15442/cameo?ss
 - 情境 2 用 `am kill` 驗到「程序死掉後通知仍在」，系統自行回收程序的情況未測；真機未測。
 - 多則通知時各自點按的對應（都只開分頁，不定位單筆）。
 - 操作紀錄：情境 1 之後有兩次建單的 UI 腳本在清單尚未載入時點擊落空，已重跑；不影響各情境結果。
+
+## 5.3 Integration（A、C 組）
+
+本節是首頁改版前的實測結果，未經獨立審查；改版後的情境在 H9 重跑。
+
+### 範圍與環境
+- 範圍：A（A1～A5）與 C（C1～C3）。A 組與 C 組分兩次啟動環境跑（C 組是第二次，重新建置後端、重新啟動模擬器、`pm clear` 後執行）。
+- **未驗證**：B（通知權限）、D（上傳途中）、E（refreshRequest）、點數頁捲動位置。
+- 環境：只有 API 37 模擬器（`Pixel_10_Pro`），**未測真機**；隔離後端 `docker compose -p cameo53`、`DAILY_LIMIT=50`，初始 100 點、每筆 10 點。每項前以 `VENDOR_DELAY_SEC=<n> docker compose -p cameo53 up -d vendor-sim` 重建並以 `docker inspect` 確認延遲。
+- 證據 `~/cameo-iter5-evidence/r53-*`；時間為宿主機／模擬器時間（同為 CST）。
+- 記錄：A 組首次啟動相機權限、通知權限對話框皆按允許。C 組第二次啟動時，相機權限用 `pm grant` 授予（非對話框），通知權限對話框按允許；皆不屬驗證項目。
+
+### 結果
+| # | 情境（延遲） | 結果 | 實測 | 證據 |
+|---|---|---|---|---|
+| A1 | 停在進度頁等完成（30 秒） | **不通過（預期內）**：目前沒有前景即時更新機制（WebSocket 往後排，進度頁也沒有輪詢），列為 known issue，不算功能故障 | 01:19:31 送出；後端 01:20:01 `SUCCEEDED`；之後多等 19 秒（01:20:20）畫面仍是「排隊中／完成後會通知你」，只有「回片段清單」按鈕。按 Home 再回前景（含 10 秒後）仍是「排隊中」。進度頁停留期間，系統通知已出現一則「已完成」。示範路徑：送出後按 Home、收到通知、點開「我的客串」 | `r53-a1-*` |
+| A2 | 真正 2 分鐘背景（150 秒） | 通過 | 01:21:34 按 Home，訂單 01:21:33 建立；後端 01:24:05 `SUCCEEDED`（距按 Home 約 151 秒）；01:24:15 起通知列有一則「已完成」；點通知到「我的客串」，最上面為該筆「已完成」 | `r53-a2-*` |
+| A3 | 滑掉 App（60 秒） | 通過 | 01:25:11 建單、01:25:21 從最近使用滑掉；`dumpsys activity recents` 無該 task；`pidof` 滑掉前後皆 2647、前景服務 `CameoTrackService` 仍在。後端 01:26:12 完成；01:26:25（打開前）已有一則「已完成」通知，服務已結束；用圖示打開後（01:26:41）pid 仍 2647、無 FATAL、「我的客串」可見該筆「已完成」，該筆通知仍只有一則（id 不變） | `r53-a3-*` |
+| A4 | 生成失敗（150 秒，手送失敗回呼） | 通過 | 餘額 70 → 建單後 60；01:27:29 建單（`QUEUED`），01:27:50 送 `manual-a4-1` FAILED 回呼，回 `200 {}`；訂單 `FAILED`、`REFUNDED`、`failure_reason=VENDOR_FAILED`；餘額回 70；明細 `REFUND +10` 一筆；通知一則「生成失敗／點數已退還」；「我的客串」顯示「生成失敗／點數已退還」。01:30:01 vendor-sim 記錄 `callback sent`，api 記錄 `callback ignored: cameo not in generation`，之後訂單仍 `FAILED`、無第二筆退點、通知列無新通知 | `r53-a4-*` |
+| A5 | 進度頁點通知再從未完成列繼續（90 秒） | 前段通過；「按繼續接續」是測試步驟設計錯誤，不是產品失敗 | 見下 | `r53-a5-*` |
+| C1 | 恢復追蹤：送出後 force-stop 再重開（90 秒） | 通過 | 見下 | `r53-c1-*` |
+| C2 | 草稿已刪後導覽還原（30 秒） | 通過 | 見下 | `r53-c2-*` |
+| C3 | 程序被殺但 task 還在時點通知（30 秒） | 通過 | 見下 | `r53-c3-*` |
+
+### A5 細節
+- X 01:31:07 建單、回片段清單；Y（屋頂告白）01:31:57 建單，停在 Y 進度頁。X 於 01:32:38 完成，Y 此時 `GENERATING`。
+- 01:32:50 點 X 的完成通知：到「我的客串」（Y 顯示「生成中」），流程頁已結束。切到片段清單，Y 出現在「未完成的客串」，顯示「屋頂告白／生成中／完成後會通知你」。
+- Y 只扣一次（明細 Y 的 `CHARGE` 一筆；全程 6 筆扣點、1 筆退點，餘額 100 → 50，`r53-a5-ledger.txt`、`r53-a5-balance-final.txt`）；Y 於 01:33:28 完成，通知列有一則（id 1659936109）。
+- 該列沒有「繼續」按鈕。這是測試步驟設計錯誤：`CameoNav.kt:39` 只對 `AWAITING_UPLOAD`、`UPLOADED` 顯示「繼續」，Y 已送出，沒有東西要接續（讀碼推論；產品意圖 `[待確認]`）。
+- Y 完成後未完成列約 30 秒內仍顯示「生成中」：只觀察一次、沒切分頁；推論與 A1 同類（無即時更新），未驗證，不補驗。
+
+### C 組細節（第二次啟動環境；初始 100 點）
+**C1（延遲 90 秒）**
+- 01:40:26 建單（`GENERATING`，餘額 90）；01:40:34 `pidof` 為 2479，`dumpsys activity services` 有 `CameoTrackService`；01:40:35 `am force-stop`，`pidof` 空、服務數 0，後端訂單仍 `GENERATING`。
+- 01:40:43 用 monkey 重開 App，新 pid 4170。logcat：01:40:47 `CameoTrack: track start id=9b160eb5… tracked=1`，之後每 10 秒一筆 `poll … decision=CONTINUE`，共一條輪詢序列。01:41:58 `poll … decision=NOTIFY_AND_STOP status=SUCCEEDED`、`notified … title=已完成`、`all finished, stopping`、`service destroyed`（後端 01:41:56 完成）。
+- 01:42:13：`dumpsys notification --noredact` 只有一則「已完成」（id 890187844），服務數 0。沒有重複通知。證據：`r53-c1-*`（含 `-logcat-all.txt`、`-notif.txt`、`-pid-*.txt`、`-services-*.txt`）。
+- 重開後畫面為片段清單，未完成列顯示「雨夜重逢／生成中／完成後會通知你」（`r53-c1-relaunch.png`）。
+
+**C2（延遲 30 秒）**
+- 01:43:12 建單，停在進度頁，01:43:23 按 Home（沒滑掉）。logcat 01:43:51 `notified id=903f4378…`，通知列新增 id 1889057734（服務已認領並刪草稿——草稿刪除本身未直接檢查，依後續畫面推論）。
+- 殺程序：`am kill` 一次就成功。pid 前 4170、後空（`r53-c2-pid-before.txt`、`r53-c2-pid-after-amkill.txt`），沒有用 `run-as kill -9`。`dumpsys activity recents` 仍有 `Task #232 A=10230:com.kimhit.cameo`。
+- 01:44:16 從 launcher（monkey）回到 App，新 pid 4771，**導覽還原到進度頁並顯示「這筆客串已結束」與「回片段清單」按鈕**；`FATAL EXCEPTION` 計數 0。按「回片段清單」到片段清單（額度 48 次），正常。證據：`r53-c2-*`。
+
+**C3（延遲 30 秒）**
+- 01:45:04 建單，按 Home；01:45:43 `notified id=7c581167…`，通知列 id 1100631366。`am kill` 成功：pid 前 4771、後空；`recents` 仍有 `Task #232`。
+- 展開通知列，點最上面（標示 now）的「已完成」。01:46:10 App 開到「我的客串」（底部該分頁為選中），新 pid 5255，列表三筆，最新 01:45 即該筆「已完成」；`FATAL EXCEPTION` 計數 0。
+- 切到片段清單（額度 47 次）、點數（可用 70，三筆扣點，01:45 一筆）再回「我的客串」，都正常。
+- 在「我的客串」按返回鍵：01:46:45 App 仍在前景（`topResumedActivity=…MainActivity t232`，pid 5255），畫面變成片段清單分頁；沒有崩潰、沒有跳回過期流程頁。證據：`r53-c3-*`。
+
+### 未驗證與限制
+- 未驗證：B（通知權限）、D（上傳途中）、E（refreshRequest）、點數頁捲動位置。
+- 只在 API 37 模擬器測過，未測真機；系統自行回收程序（非 `am kill`）的情況未測。
