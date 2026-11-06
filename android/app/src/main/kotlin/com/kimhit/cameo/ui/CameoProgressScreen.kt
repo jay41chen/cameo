@@ -8,11 +8,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.dropUnlessResumed
 import com.kimhit.cameo.domain.usecase.CameoStep
 
 internal const val UPLOADING_TEXT = "上傳中…"
 internal const val SUBMITTING_TEXT = "送出中…"
-internal const val NEED_PHOTO_TEXT = "照片已遺失或無法使用，請重新拍照"
+internal const val NEED_PHOTO_TEXT = "照片無法使用，請重新拍照"
 internal const val GONE_TEXT = "這筆客串已不存在"
 
 @Composable
@@ -55,7 +56,8 @@ fun CameoProgressScreen(
         }
         is ProgressUiState.Failed -> Body {
             Text(s.message ?: GENERIC_ERROR)
-            if (s.retryable) Button(onClick = viewModel::retry) { Text("重試") }
+            // 頁面離開中的點擊不啟動扣款流程；這不是完整的取消機制
+            if (s.retryable) Button(onClick = dropUnlessResumed { viewModel.retry() }) { Text("重試") }
             Button(onClick = onBack) { Text("回片段清單") }
         }
         is ProgressUiState.NotCreated -> {

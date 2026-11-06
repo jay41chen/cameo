@@ -142,14 +142,14 @@ Room 草稿：`adb exec-out run-as com.kimhit.cameo cat databases/pending.db`（
 
 ### 未涵蓋
 
-- `PhotoMissing` 畫面（「照片已遺失，請重新拍照」）未在模擬器出現過；只有單元測試涵蓋。步驟 9 驗到的是列的判斷提前改走相機。
+- `PhotoMissing` 畫面（當時文案「照片已遺失，請重新拍照」，4.4 後統一為「照片無法使用，請重新拍照」）未在模擬器出現過；只有單元測試涵蓋。步驟 9 驗到的是列的判斷提前改走相機。
 - 拍照失敗畫面（「拍照失敗，請再試一次」）、「這台裝置無法使用相機」、永久拒絕後的系統行為、從系統設定手動開啟權限（步驟 2 用 `pm grant` 代替）未在模擬器驗證。
 - 預覽方向只用虛擬相機（EXIF `Orientation=8（ROTATE_270）`）驗到一種；鏡像分支沒有在模擬器驗到；其他方向、真機未驗。取景為鏡像、存檔與預覽不鏡像（自拍水平鏡射已列 spec 第 12 節 Backlog）。
 - 程序在確認途中被系統回收，可能誤判「照片已遺失」，最多多拍一次。
-- 程序被回收後回到 Ready 再按確認，可能建出第二張單（只占用點數、不扣款；第 3 輪已存在，預計 4.3 處理）。
+- 程序被回收後回到 Ready 再按確認：現在建單成功後會導到進度畫面並把確認頁移出返回堆疊（4.3），第二張單改成實際處理；建單成功導頁之前仍有一段窗口，窗口上限未量到。這個情境（程序被回收後回到 Ready）沒有在模擬器驗過。4.4 情境 10 測的是另一件事：返回轉場中誤點「確認支付」，修正前會建單、修正後 7 次都沒有建單（見第 4 輪 Integration）；兩者不要混為一談。
 - 本輪審查後的修正（相機初始化／綁定失敗不閃退並顯示「這台裝置無法使用相機」、過期訂單刪照片、「照片不存在，請重新拍照」文案、Manifest 的 `camera` 改為非必要）只有單元測試或讀碼，沒有在模擬器重驗，留到 4.4。
 - 相機頁處理程序被系統回收後的 `SavedStateHandle` 還原，只有單元測試涵蓋；模擬器只驗旋轉。
-- 逾期確認頁的「重新客串」按鈕現在會導到相機；此路徑未在模擬器驗證，且逾期列「移除」後舊檔被刪也未在模擬器驗（只驗「重新客串」）。
+- 逾期確認頁的「重新客串」按鈕現在會導到相機；此路徑未在模擬器驗證，且逾期列「移除」後舊檔被刪也未在模擬器驗（只驗「重新客串」）。4.4 情境 8 只驗了未完成清單列的「重新客串」，確認頁 `Expired` 與進度畫面 `Expired` 仍未驗。
 - 不加 `-camera-front emulated` 的 AVD 預設相機未測。
 - 當輪（4.2）上傳、送出尚未實作，4.3 已接上；通知尚未實作。
 
@@ -159,8 +159,131 @@ Room 草稿：`adb exec-out run-as com.kimhit.cameo cat databases/pending.db`（
 
 - 建單後進進度畫面：上傳中、送出中、完成（`QUEUED`）的顯示與扣點、點數明細（回點數頁時明細會靜默刷新）。
 - 上傳或送出途中斷網／殺 App 後，從未完成列「繼續」是否接續；送出回應遺失後不重複扣款。
-- 上傳逾期（`UPLOAD_TTL` 縮短）時進度畫面顯示過期，「重新客串」導到相機並用新 key。
-- 照片被刪或後端回 `INVALID_SELFIE`／`SELFIE_TOO_LARGE` 時的「重新拍照」流程，重拍後從未完成列回進度畫面並成功上傳。
+- 上傳逾期（`UPLOAD_TTL` 縮短）時進度畫面顯示過期，「重新客串」導到相機並用新 key。（4.4 只驗了清單列的「重新客串」，進度畫面 `Expired` 未驗。）
+- 照片被刪或後端回 `INVALID_SELFIE`／`SELFIE_TOO_LARGE` 時的「重新拍照」流程，重拍後從未完成列回進度畫面並成功上傳。（4.4 只有情境 9 走完重拍；情境 11 只到「重新拍照」按鈕出現，重拍沒有再驗。）
 - 訂單已不存在（`CAMEO_NOT_FOUND`）時的畫面與草稿清除。
 - 上傳 client 在連線中斷時不自動重送整個 body（單元測試只驗到 MockWebServer 的 `requestCount == 1`）；主 client 閒置後重開首頁無 network error 的回歸。
 - 上傳中離開畫面後請求被取消、草稿與照片仍在。
+
+## 第 4 輪：Integration（4.4）
+
+模擬器接真實後端，驗上傳、送出、接續。證據在 repo 外的 `~/cameo-iter4-evidence/`，檔名皆以 `44-<情境>-` 開頭；DB、Room、檔案、curl 輸出為 `.txt`，截圖只留判斷用的幾張。
+
+### 環境
+
+- 後端：`docker compose -p cameo44 up --build -d`（隔離的 Postgres 與 selfies volume）；情境需要時以環境變數重建 api：`DAILY_LIMIT=50`（避免額度用完）、`UPLOAD_TTL=45s EXPIRY_SWEEP_INTERVAL=2s`（逾期）、`MAX_SELFIE_BYTES=1000`（413）、`DAILY_LIMIT=1`（額度用完）；每次都用 `printenv` 確認生效並於結束後恢復。
+- 模擬器：AVD `Pixel_10_Pro`（API 37），`-no-snapshot-save -no-boot-anim -no-audio -camera-front emulated -camera-back virtualscene`；相機為虛擬畫面。
+- 修正後重跑（情境 10、主流程）的證據檔名以 `44b-` 開頭，環境同上，後端為 `docker compose -p cameo44 up --build -d`。
+- App：debug APK，以 `pm clear` 乾淨狀態開始，除情境 14 外 `pm grant` 相機。操作用 uiautomator dump 與 `input tap`；Room 用 `run-as cat databases/pending.db`（含 `-wal`、`-shm`）拉出後以 `sqlite3` 讀。
+
+### 製造「訂單已建立」狀態的方法（如實）
+
+App 的建單、上傳、送出在本機幾乎瞬間完成，時機抓不到，所以用兩種方法：
+
+- **方法 A（curl 模擬回應遺失）：** 先進確認頁，`stop api`，按「確認支付」留下 CREATE 草稿 K（照片已 attach、Room 無 `cameo_id`），`start api`，再用 curl 以 K 建單（`POST /v1/cameos`），視情境再 curl `PUT selfie`、`POST submit`。此時 Room 仍是 `CREATE`，「繼續」會回確認頁，再按「確認支付」由冪等建單取回原訂單。情境 4a、4b 使用。
+- **方法 B（改 Room）：** 方法 A 之後 `am force-stop`，把 Room 列改成 `step=UPLOAD`、`cameo_id=<訂單 id>`（pull、`sqlite3` 改、checkpoint、push 回 `run-as`），重開後「繼續」直接進進度畫面，從 `GET /v1/cameos/{id}` 開始。情境 5、6、7、8、9、14（逾期移除）使用。
+- 兩種都不是真實的「建單後當機」；Room 狀態是人工構造，與 App 自己寫出來的 `UPLOAD` 列欄位相同（`photo_path` 保留、`cameo_id` 有值），但「`markCreated` 之後才中斷」的時序沒有被真實走過 `[待確認]`。
+- 「繼續」的第一個請求一律是 `GET /v1/cameos/{id}`（`AdvanceCameoUseCase`）。所以情境 5、6 的失敗／取消都發生在 **GET**，不是 PUT；本輪沒有驗到「PUT 途中失敗」。
+
+### 實際指令（最小序列）
+
+```sh
+# reset（每次前）：App 與隔離 DB
+adb shell pm clear com.kimhit.cameo && adb shell pm grant com.kimhit.cameo android.permission.CAMERA
+docker compose -p cameo44 exec -T postgres psql -U cameo -d cameo \
+  -c "delete from ledger_entries; delete from cameos; update points_account set balance=100"
+
+# 讀 DB 狀態
+docker compose -p cameo44 exec -T postgres psql -U cameo -d cameo -At \
+  -c "select count(*) from cameos" -c "select id,status,points_state from cameos" \
+  -c "select count(*) from ledger_entries where type='CHARGE'" -c "select balance from points_account"
+
+# 拉 Room（-wal、-shm 一起拉，沒有的略過；只拉 .db 會漏掉還沒 checkpoint 的寫入）
+for f in pending.db pending.db-wal pending.db-shm; do
+  adb exec-out run-as com.kimhit.cameo cat databases/$f > /tmp/room/$f; done
+sqlite3 /tmp/room/pending.db "select client_request_id,clip_id,cameo_id,step,photo_path from pending_cameos"
+
+# 方法 B 改 Room（App 先 am force-stop；改完把 .db 推回，並刪掉裝置上舊的 -wal、-shm，否則舊 WAL 會蓋掉修改）
+adb shell am force-stop com.kimhit.cameo
+sqlite3 /tmp/room/pending.db "pragma wal_checkpoint(truncate); update pending_cameos set step='UPLOAD', cameo_id='<訂單 id>'"
+adb push /tmp/room/pending.db /data/local/tmp/pending.db
+adb shell "run-as com.kimhit.cameo sh -c 'cp /data/local/tmp/pending.db databases/pending.db; rm -f databases/pending.db-wal databases/pending.db-shm'"
+
+# 情境 10（座標由 uiautomator dump 取得；修正後重跑為 (205,516)）
+adb shell "input keyevent 4; sleep $d; input tap 205 516"    # d = 0 0.05 0.1 0.2 0.3 0.5 0.7
+
+# 情境 13：插 45 筆 CHARGE（cameo_id NULL，created_at 依序遞減 1 分鐘）
+docker compose -p cameo44 exec -T postgres psql -U cameo -d cameo -c \
+  "insert into ledger_entries(type,amount,cameo_id,clip_title,created_at)
+   select 'CHARGE',10,NULL,'測試'||g, now() - (g||' minutes')::interval from generate_series(1,45) g"
+```
+
+以上是為文件整理的最小序列：reset、DB 查詢、拉 Room、情境 10 的指令是 4.4 修正後重跑實際用的；方法 B 的改 Room／push 步驟與情境 13 的 SQL 是依當時做法重寫的，沒有再執行一次確認 `[待確認]`。
+
+### 步驟與結果
+
+| # | 情境 | 預期 | 實際 | 結果 | 證據 |
+|---|---|---|---|---|---|
+| 1 | 全新安裝 → 雨夜重逢 → 拍照 → 使用這張 → 確認支付 | 最後「排隊中」「完成後會通知你」 | 符合；連續 3 次 dump 都已是「排隊中」，途中的「上傳中」「送出中」來不及看到 | 通過（途中文字未見） | `44-s1-ui-seq.txt`、`44-s1-final.png` |
+| 2 | 點數頁與 API、DB、清單 | 可用 90、占用 0；明細 1 筆 `CHARGE -10`；quota 少 1；DB `QUEUED/CHARGED`；未完成列「排隊中」無按鈕 | 符合：`{"available":90,"held":0}`、quota 3→2、明細 1 筆、DB 1 筆；未完成列只有文字無可點項 | 通過 | `44-s2-api-db.txt`、`44-s2-list-ui.txt`、`44-s2-points-ui.txt` |
+| 3 | 檔案與 Room | 伺服器有 `<cameo_id>.jpg`（JPEG）；App `files/selfies`、`cache/captures` 空；Room `TRACK`、`photo_path` 空 | 符合：伺服器 38209 bytes、開頭 `ff d8 ff`；Room `step=TRACK`、`photo_path` 空 | 通過 | `44-s3-files-room.txt` |
+| 4a | 上傳回應遺失（方法 A，再 curl PUT）→「繼續」→ 確認 | 不重傳內容、1 筆 `CHARGE`、照片已刪 | 符合：伺服器檔 sha256 `a3dffd68…` 與 curl 那份一致（3006 bytes，非 App 的照片）；DB 1 筆訂單、1 筆 `CHARGE`、balance 90；App 照片已刪；Room `TRACK`；最後「排隊中」 | 通過 | `44-s4a-before.txt`、`44-s4a-after.txt` |
+| 4b | 送出回應遺失（再 curl submit）→「繼續」→ 確認 | `QUEUED` 直接結束、1 筆 `CHARGE`、balance 90 | 符合：curl 後 DB 已是 `QUEUED/CHARGED`；App 確認後 1 筆訂單、1 筆 `CHARGE`、balance 90、伺服器檔仍是 curl 那份、照片已刪、「排隊中」 | 通過 | `44-s4b-before.txt`、`44-s4b-after.txt` |
+| 5 | 清單載入後 `stop api` →「繼續」→ 錯誤與「重試」→ `start api` → 重試 | 錯誤、Room 照片還在、重試後完成 | 符合：失敗發生在 **GET**（api 停止，第一個請求即失敗）；畫面「發生錯誤，請稍後再試」「重試」「回片段清單」，Room 與 `files/selfies` 照片仍在、DB 仍 `AWAITING_UPLOAD`；重試後 `QUEUED/CHARGED`、1 筆 `CHARGE`、伺服器 38434 bytes | 通過 | `44-s5-error-ui.txt`、`44-s5-error.png`、`44-s5-after-fail.txt`、`44-s5-after-retry.txt` |
+| 6 | `pause api` →「繼續」→ 返回 → `unpause` → 再「繼續」 | 請求取消後可接續；1 筆訂單、1 筆 `CHARGE` | 符合：中斷時請求停在 **GET**（api 暫停，請求懸著）；「請求取消」是由畫面與本機狀態推得，沒有在伺服器端或網路層直接觀察 `[待確認]`；返回後回清單，Room 照片仍在、DB 仍 `AWAITING_UPLOAD`；`unpause` 後「繼續」完成，1 筆訂單、1 筆 `CHARGE`。暫停期間的畫面沒有取得 dump（dump 無輸出），只確認返回後的清單 | 通過（暫停期間畫面未記錄） | `44-s6-after-back.txt`、`44-s6-after-continue.txt` |
+| 7 | 方法 B 後 `am force-stop` → 重開 → 「繼續」 | 完成、不多占 | 符合：1 筆訂單、1 筆 `CHARGE`、balance 90、照片已刪、Room `TRACK` | 通過 | `44-s7-after.txt` |
+| 8 | `UPLOAD_TTL=45s` 逾期 → 回前景 → 清單列「重新客串」→ 確認（只驗清單列；確認頁 `Expired`、進度畫面 `Expired` 未驗） | 顯示「已過期」與原因；照片已刪、Room 列在；額度恢復；新 key | 符合：列顯示「已過期」「上傳期限已過，點數沒有扣款，請重新客串。」；`files/selfies` 空、Room 列仍在；quota 49→50、`/v1/points` 100/0；「重新客串」進相機、確認後 DB 第二筆 key 不同（`3557101d…` ≠ `f06ab721…`），`QUEUED/CHARGED`，舊列（`EXPIRED/RELEASED`）仍在 DB；Room 只剩新 key 的 `TRACK` 列。之後恢復預設 TTL（`printenv` 確認 `1h`） | 通過 | `44-s8-ui.txt`、`44-s8-expired.png`、`44-s8-after-expire.txt`、`44-s8-restart.txt` |
+| 9 | 刪照片 →「繼續」→「重新拍照」→ 拍 → 使用這張 | 「照片已遺失…」；回進度畫面完成；同一筆訂單、1 筆 `CHARGE` | 符合：進度畫面顯示「照片已遺失或無法使用，請重新拍照」（修正前文案，現已統一為「照片無法使用，請重新拍照」，修正後未在模擬器重驗）；重拍後「排隊中」；DB 仍只有同一筆訂單（`04e62794…`）、1 筆 `CHARGE`。第一次嘗試時 `run-as rm files/selfies/*.jpg` 的萬用字元沒有展開、檔案沒刪，該次「繼續」直接完成，已改用完整檔名重做 | 通過 | `44-s9-ui.txt`、`44-s9-missing.png`、`44-s9-after.txt` |
+| 10 | 確認頁返回轉場中誤點：`input keyevent 4; [sleep d;] input tap <確認支付>`，d＝0、0.05、0.1、0.2、0.3、0.5、0.7，每個 d 跑 1 次 | 記錄最後畫面、訂單數、狀態、`CHARGE`、balance、Room | **修正前（舊 APK，d＝0、0.05、0.1、0.2、0.3、0 共 6 次）：** 6 次都建出 1 筆訂單；d≤0.2 的 5 次畫面「排隊中」、Room `TRACK`，依程式碼已扣 10 點，但證據沒有直接記錄 `CHARGE` 筆數；d＝0.3 的 1 次畫面回到清單，Room `CREATE`（無 `cameo_id`），訂單狀態未記錄。每次先 reset，只看到 1 筆，沒有觀察到第二張單。實驗限制：adb 依序執行、實際間隔未量、每個 d 只有 1 次。證據 `44-s10-fadetap.txt`。**修正後（`dropUnlessResumed`，7 個 d 各 1 次）：** 確認頁都是 Ready（按鈕在）；d＝0、0.05、0.1、0.2、0.3、0.5 最後畫面是片段清單，d＝0.7 是相機頁（點擊落在清單上的「屋頂告白」列，與此修法無關）；7 次 DB 訂單數都是 0、`CHARGE` 0 筆、balance 100，Room 查詢無輸出（無列），`points_state` 無列可記。按鈕座標 (205,516)。限制同上（每個 d 1 次、間隔未量），只能說這 7 次沒有重現，不能證明窗口已完全關閉。**摘要：** 7 次未建單，但不是 7 次都打到按鈕：d＝0.7 的點擊落在清單列（相機頁）；d＝0.5 沒有修正前對照；可與修正前直接對照的只有 d＝0、0.05、0.1、0.2、0.3 這 5 個值，每個 d 只跑 1 次。「確認頁 Ready（`ready: 1`）」的判定方式在 `44b-s10-fadetap.txt` 中只看得到結果，未記錄判定方式 | 修正前：發現；修正後：7/7 未建單 | `44-s10-fadetap.txt`（修正前）、`44b-s10-fadetap.txt`、`44b-s10-d<d>.png`（修正後） |
+| 11 | `MAX_SELFIE_BYTES=1000` 走主流程 | 記錄 App 實際結果 | 變數生效（`printenv` 顯示 1000）；確認後上傳被拒，App 顯示「照片已遺失或無法使用，請重新拍照」（修正前文案）與「重新拍照」（「收到 `SELFIE_TOO_LARGE`」是由畫面與本機狀態推得，未直接記錄回應 `[待確認]`）；DB `AWAITING_UPLOAD/HELD`、無 `CHARGE`、App 照片已刪、Room 仍是 `UPLOAD` 列。文案只說「遺失或無法使用」，沒有說太大。已恢復預設（`10485760`）。重拍後送出沒有再驗 | 通過（文案籠統） | `44-s11-env.txt`、`44-s11-ui.txt`、`44-s11.png`、`44-s11-state.txt` |
+| 13 | 插 45 筆 `CHARGE`（`cameo_id` NULL），點數頁捲到底 → Home → 回前景 | 只記錄 | 捲到底時顯示「測試32」到「測試45」（第 3 頁已載入）；Home 後回前景，從測試 32–45 跳到 7–20（第一頁尾端）；再往下捲才接著載入，不會連鎖載入。閱讀位置丟失（已列 spec 第 12 節 Backlog）。資料已清掉。 | 發現（未修） | `44-s13-before-home.txt`、`44-s13-after-foreground.txt`、`44-s13-after-scroll-end.txt`、`44-s13-before.png`、`44-s13-after.png` |
+| 14a | 未授權點片段 → 權限對話框 → 拒絕 → `pm grant` → 回前景 | 說明與「前往設定」；回前景看到相機 | 符合：對話框後按「Don't allow」顯示「需要相機權限才能拍攝自拍」「允許相機」「前往設定」；`pm grant` 後回前景為相機（拍照鈕）。（`pm revoke` 會殺掉 App，需重開後再點） | 通過 | `44-s14-perm-dialog.txt`、`44-s14-perm-dialog.png`、`44-s14-denied-ui.txt`、`44-s14-after-grant-ui.txt` |
+| 14b | 額度用完點片段 | 提示、不進相機 | 符合：`DAILY_LIMIT=1` 並用 curl 完成 1 筆後 quota 0；點片段跳「今日客串次數已用完，2026-11-07 00:00 重置」「知道了」，沒有進相機 | 通過 | `44-s14-quota-ui.txt`、`44-s14-quota.png` |
+| 14c | CREATE 草稿「移除」；再點同片段 | 列消失、照片消失、新 key | 符合：移除前 `files/selfies` 有檔、Room 有列；移除後兩者皆無、清單回原樣；再建草稿 key 為新的（`dbdfa5bc…` → `8b8d7182…`） | 通過 | `44-s14-remove.txt` |
+| 14d | 逾期列「移除」 | 列消失 | 符合：Room 列與清單項消失；DB 的 `EXPIRED/RELEASED` 訂單仍在（伺服器端本來就不刪） | 通過 | `44-s14-expired-remove.txt` |
+| 14e | CREATE 草稿照片遺失的文案 | 「照片不存在，請重新拍照」 | 符合但路徑不同：刪檔後清單重新載入（Home 回前景）列文字為「照片不存在，請重新拍照」。若不重新載入就按「繼續」→「確認支付」，畫面是確認頁的「照片已遺失，請重新拍照」；此時 DB 無訂單、無 `CHARGE`。以上是修正前的文案，三處（列、確認頁、進度畫面）各不相同；之後統一為「照片無法使用，請重新拍照」，只有單元測試（`CameraFailureTest`）涵蓋，未在模擬器重驗 | 通過（文案不一致，見下） | `44-s14-draftmissing-list-ui.txt`、`44-s14-draftmissing-list.png`、`44-s14-draftmissing-ui.txt`、`44-s14-draftmissing2.png` |
+
+上表是修正前的結果（情境 10、13 為發現；其他情境通過，文案類為修正前）。4.4 審查後的修正（確認頁「確認支付」與進度畫面「重試」加 `dropUnlessResumed`；照片文案統一）已重跑情境 10 與主流程，見該列與「修正後主流程」。
+
+實際有證據的項目（證據檔都在 `~/cameo-iter4-evidence/`）：
+
+- 最後畫面有文字或截圖證據：情境 1（`44-s1-ui-seq.txt`、`44-s1-final.png`）、2（`44-s2-list-ui.txt`、`44-s2-points-ui.txt`）、5（`44-s5-error-ui.txt`、`44-s5-error.png`）、8 的逾期列（`44-s8-ui.txt`、`44-s8-expired.png`）、9 的「需要重拍」畫面（`44-s9-ui.txt`、`44-s9-missing.png`）、10（`44-s10-fadetap.txt`）、11（`44-s11-ui.txt`、`44-s11.png`）、13、14。
+- 4a、4b、6、7、8、9 的最後畫面（「排隊中」等）沒有文字證據：這幾個情境的證據檔只有 DB、`CHARGE`、balance、Room、檔案（`44-s4a-*`、`44-s4b-*`、`44-s6-*`、`44-s7-after.txt`、`44-s8-after-expire.txt`、`44-s8-restart.txt`、`44-s9-after.txt`），表中寫的最後畫面是當時操作時的觀察，沒有留存 `[待確認]`。
+- DB 訂單數、`CHARGE` 筆數、balance、Room 有證據檔：情境 2、3、4a、4b、5、6、7、8、9、11（`44-s11-state.txt`）；情境 14c、14d 只有 Room 與檔案；情境 10 修正前只有訂單數與 Room。
+
+### 4.2 留下的項目在本輪驗到哪些
+
+- 清單列的「重新客串」導到相機、新 key：情境 8 驗到（確認頁 `Expired` 的「重新客串」未驗）。
+- 逾期列「移除」（含照片檔）：情境 14d 驗到（逾期時照片已由列載入刪除，移除時沒有檔）。
+- 「照片不存在，請重新拍照」新文案（已於 4.4 統一為「照片無法使用，請重新拍照」）：情境 14e 驗到修正前的版本（僅清單列）。
+- `PhotoMissing` 畫面：情境 9（進度畫面）與 14e（確認頁）出現過。
+- 確認頁返回轉場中誤點「確認支付」：情境 10 修正前會建單，修正後 7 次未建單。「程序被回收後回到 Ready 再按確認」沒有在模擬器驗。
+- 4.3 清單：建單後進度畫面、「排隊中」、扣點與明細（1、2）；上傳／送出回應遺失後接續且只扣一次（4a、4b，以 curl 模擬）；上傳逾期後清單列重新客串（8）；照片遺失重拍（只算 9；11 只到按鈕出現）；離開畫面後請求取消、草稿與照片仍在（6，只驗到 GET）。
+- 仍未驗：相機初始化／綁定失敗的「這台裝置無法使用相機」畫面、Manifest `camera` 非必要的實際效果、`INVALID_SELFIE`（非 JPEG）在 App 的畫面（單元測試涵蓋）、`CAMEO_NOT_FOUND` 畫面、上傳 client 連線中斷不自動重送整個 body、主 client 閒置後重開首頁無 network error 的回歸、不加 `-camera-front emulated` 的 AVD 預設相機。
+
+### 發現
+
+1. 確認頁返回淡出期間仍可點「確認支付」並建單（情境 10 修正前，6/6 次建單）。**已修（只修一段）：** 「確認支付」與進度畫面「重試」改用 `dropUnlessResumed`，頁面已在離開中的點擊不啟動扣款流程；修正後 7 次未建單（見情境 10）。**這不是完整解法**：使用者先按確認、再按返回時，請求可能已經到後端，App 收不回來。分兩種情況（以下皆為讀碼與修正前證據的推論，未實測）：(a) 回應在頁面銷毀後才回來：只占用，不上傳、不扣款；按「繼續」接續，或等上傳期限釋放。(b) 回應在淡出期間（頁面尚未銷毀）回來：一樣導到進度畫面，自動上傳、送出、扣款；`dropUnlessResumed` 擋的是「返回後才點」，不包含這種情況。(b) 是 MVP 決定，取捨見 `ARCHITECTURE.md` 第 8 節（按確認後立刻返回仍可能被扣款且無法取消，正式版需再評估）。按未完成列的「移除」只刪本機：伺服器端的占用與每日額度留到上傳期限，App 沒有列可以解釋。`dropUnlessResumed` 是 Compose 接線，沒有 JVM 測試。
+2. 後端回 `SELFIE_TOO_LARGE` 與照片遺失共用同一句文案，沒有說「太大」（情境 11）。
+3. 照片遺失的文案原本有三種（情境 9、14e）；已統一為「照片無法使用，請重新拍照」（單元測試涵蓋，模擬器未重驗）。
+4. 點數明細 Home 回前景後，清單縮回第一頁，閱讀位置丟失（情境 13）；已列 spec 第 12 節 Backlog。
+
+### 修正後主流程（4.4 重跑）
+
+全新開始（reset）→ 點「雨夜重逢」→ 拍照 →「使用這張」→ 等 3 秒 → 按「確認支付」：最後畫面「排隊中」；DB 1 筆訂單 `QUEUED/CHARGED`、`CHARGE` 1 筆、balance 90；伺服器有 JPEG（`ff d8 ff e1`，38134 bytes）；App 的 `files/selfies`、`cache/captures` 為空；Room 一列 `TRACK`。確認修正後正常確認沒被擋。另做一次「使用這張」後立刻（同一個 `adb shell` 內，間隔未量）點「確認支付」：點擊被丟棄，仍停在確認頁，DB 0 筆、balance 100；只做 1 次，無法說明淡入窗口多長。單元測試 `:app:testDebugUnitTest --rerun-tasks`：82 筆、0 失敗、0 錯誤、0 略過（筆數取自 XML）。證據：`44b-main.txt`、`44b-main.png`、`44b-fadein.txt`、`44b-fadein.png`、`44b-unit-test.txt`、`44b-unit-count.txt`。
+
+### 未涵蓋
+
+- 上傳途中進背景（程序仍活著時能否完成）：本機上傳幾乎瞬間完成，很難剛好在途中按 Home；系統是否凍結程序、封鎖網路也看時機，結果不能當結論，移到第 5 輪；本輪不對這個情境做保證。
+- 相機初始化失敗畫面、真機與真實前鏡頭、真實斷線（第 8 輪）、`401`。
+- 失敗發生在 PUT／POST submit 請求途中（5、6 只驗到 GET 階段）；Room 狀態是用方法 A／B 製造，不是 App 自己在建單後中斷。
+- 真實回應遺失的 Room 組合未走過：`UPLOAD`＋伺服器 `UPLOADED`、`SUBMIT`＋伺服器 `QUEUED`。
+- 傳輸中途被殺未實測：情境 7 是閒置時強制停止，且 Room 為人工修改。
+- 真實手勢返回（情境 10 用 `keyevent 4`）與真實網路延遲未測。
+- 確認頁 `Expired`、進度畫面 `Expired`（情境 8 只驗清單列的「重新客串」）。
+- 先按確認再按返回：只讀碼與修正前證據推論，未實測。回應在頁面銷毀後才回來：只占用，按「繼續」或等期限釋放；回應在淡出期間回來：導到進度畫面，自動上傳、送出、扣款（MVP 決定，見 `ARCHITECTURE.md` 第 8 節；`dropUnlessResumed` 不涵蓋此情況）。
+- 「程序被回收後回到 Ready」未在模擬器驗。
+- 已建單的重拍流程：相機頁「使用這張」沒有 `dropUnlessResumed`，返回淡出期間點到可能接著上傳、送出（讀碼，未實測；使用者按的是明確操作，MVP 不改）。
+- 上傳途中、送出途中「真實」的回應遺失只用 curl 模擬。
+- 通知尚未實作。
+- 只在 API 37 模擬器與虛擬相機驗證，照片是同一張虛擬畫面。

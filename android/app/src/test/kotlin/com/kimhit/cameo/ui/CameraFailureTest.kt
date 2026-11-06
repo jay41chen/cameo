@@ -38,7 +38,7 @@ class PendingNoOrderTextTest {
         PendingCameo("k", "c", null, PendingStep.CREATE, err, photo)
 
     @Test
-    fun noPhotoNoError_saysPhotoMissing() = assertEquals("照片不存在，請重新拍照", pendingNoOrderText(p(null, null)))
+    fun noPhotoNoError_saysPhotoMissing() = assertEquals("照片無法使用，請重新拍照", pendingNoOrderText(p(null, null)))
 
     @Test
     fun error_wins() {

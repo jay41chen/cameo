@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.dropUnlessResumed
 
 @Composable
 fun ConfirmScreen(
@@ -30,7 +31,8 @@ fun ConfirmScreen(
             Text(s.clip.title, style = MaterialTheme.typography.titleLarge)
             Text("確認後會占用 ${s.clip.cost} 點，送出後才扣款")
             if (s.failed && !s.submitting) Text(s.error ?: GENERIC_ERROR, color = MaterialTheme.colorScheme.error)
-            Button(onClick = viewModel::confirm, enabled = !s.submitting) {
+            // 頁面離開中的點擊不啟動扣款流程；這不是完整的取消機制
+            Button(onClick = dropUnlessResumed { viewModel.confirm() }, enabled = !s.submitting) {
                 Text(if (s.failed) "重試" else "確認支付")
             }
         }
@@ -44,7 +46,7 @@ fun ConfirmScreen(
             Button(onClick = onBack) { Text("回片段清單") }
         }
         ConfirmUiState.PhotoMissing -> Body {
-            Text("照片已遺失，請重新拍照")
+            Text(NEED_PHOTO_TEXT)
             Button(onClick = onRetake) { Text("重新拍照") }
         }
         is ConfirmUiState.Expired -> Body {

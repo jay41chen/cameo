@@ -278,7 +278,7 @@ private fun QuotaHeader(quota: Load<Quota>, onRetry: () -> Unit) {
 /** 尚未建立訂單（cameoId == null）的未完成列文字。 */
 internal fun pendingNoOrderText(p: PendingCameo): String = when {
     p.lastError != null -> p.lastError!!
-    p.photoPath == null -> "照片不存在，請重新拍照"
+    p.photoPath == null -> NEED_PHOTO_TEXT
     else -> "尚未確認是否建立成功"
 }
 
