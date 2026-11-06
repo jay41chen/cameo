@@ -2,6 +2,7 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -33,6 +34,12 @@ func WithVendorWebhook(secret []byte) Option {
 	return func(s *server) { s.webhookSecret = secret }
 }
 
+// WithSampleVideo 啟用 GET /v1/cameos/{id}/video，所有 SUCCEEDED 訂單都回這支影片。
+// video 為空時不註冊這條路由（回 404）。
+func WithSampleVideo(video []byte) Option {
+	return func(s *server) { s.sampleVideo = video }
+}
+
 // Handler 組出所有路由。檢查順序：先比對路由（404、405），再驗 token（401）。
 // 廠商 webhook 不用 token，改以簽章驗證。
 func Handler(svc *usecase.Service, opts ...Option) http.Handler {
@@ -52,6 +59,9 @@ func Handler(svc *usecase.Service, opts ...Option) http.Handler {
 	handleMethods(mux, "/v1/cameos/{id}", map[string]http.HandlerFunc{http.MethodGet: s.getCameo})
 	handleMethods(mux, "/v1/cameos/{id}/selfie", map[string]http.HandlerFunc{http.MethodPut: s.putSelfie})
 	handleMethods(mux, "/v1/cameos/{id}/submit", map[string]http.HandlerFunc{http.MethodPost: s.submitCameo})
+	if len(s.sampleVideo) > 0 {
+		handleMethods(mux, "/v1/cameos/{id}/video", map[string]http.HandlerFunc{http.MethodGet: s.cameoVideo})
+	}
 	if len(s.webhookSecret) > 0 {
 		mux.HandleFunc("POST /webhooks/vendor", s.vendorWebhook)
 		mux.HandleFunc("/webhooks/vendor", func(w http.ResponseWriter, _ *http.Request) {
@@ -101,6 +111,7 @@ func requireAuth(next http.HandlerFunc) http.Handler {
 type server struct {
 	svc           *usecase.Service
 	webhookSecret []byte
+	sampleVideo   []byte
 }
 
 func (s *server) clips(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +274,7 @@ func toCameoJSON(c domain.Cameo) cameoJSON {
 	j.Display.Title, j.Display.Message = d.Title, d.Message
 	j.PointsState = c.PointsState
 	j.FailureReason = c.FailureReason
+	j.VideoAvailable = c.VideoAvailable()
 	j.CreatedAt = c.CreatedAt.In(taipei).Format(time.RFC3339)
 	j.UpdatedAt = c.UpdatedAt.In(taipei).Format(time.RFC3339)
 	return j
@@ -316,6 +328,24 @@ func (s *server) getCameo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toCameoResponse(c))
+}
+
+// cameoVideo 回固定範例影片，Range 與 HEAD 由 http.ServeContent 處理；不設 ETag／Last-Modified。
+func (s *server) cameoVideo(w http.ResponseWriter, r *http.Request) {
+	err := s.svc.CameoVideo(r.Context(), r.PathValue("id"))
+	switch {
+	case errors.Is(err, domain.ErrVideoNotReady):
+		writeError(w, http.StatusNotFound, "VIDEO_NOT_READY", "影片尚未完成", false)
+		return
+	case writeCameoError(w, err):
+		return
+	case err != nil:
+		writeInternal(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(s.sampleVideo))
 }
 
 // putSelfie 只看內容（前 3 bytes 是否為 JPEG），不看 Content-Type。

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"cameo/backend/assets"
 	"cameo/backend/internal/adapter/filestore"
 	apihttp "cameo/backend/internal/adapter/http"
 	"cameo/backend/internal/adapter/postgres"
@@ -65,7 +66,7 @@ func run() error {
 	dispatchEvery := getenvDuration("DISPATCH_SWEEP_INTERVAL", 2*time.Second)
 	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), usecase.SystemClock{}, cfg, files).
 		WithVendor(vendor.NewClient(getenv("VENDOR_URL", "http://localhost:9000")))
-	return app.Serve(ctx, svc, apihttp.Handler(svc, apihttp.WithVendorWebhook([]byte(webhookSecret))), addr, sweepEvery, dispatchEvery)
+	return app.Serve(ctx, svc, apihttp.Handler(svc, apihttp.WithVendorWebhook([]byte(webhookSecret)), apihttp.WithSampleVideo(assets.SampleVideo)), addr, sweepEvery, dispatchEvery)
 }
 
 // connect 會重試一小段時間，避免資料庫剛啟動時失敗。

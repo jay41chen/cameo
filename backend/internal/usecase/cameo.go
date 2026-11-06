@@ -90,6 +90,19 @@ func (s *Service) Cameo(ctx context.Context, id string) (domain.Cameo, error) {
 	return s.q.CameoByID(ctx, id)
 }
 
+// CameoVideo 檢查訂單影片是否可播放：不存在回 domain.ErrCameoNotFound，
+// 非 SUCCEEDED 回 domain.ErrVideoNotReady。影片位元組由 HTTP 層提供。
+func (s *Service) CameoVideo(ctx context.Context, id string) error {
+	c, err := s.Cameo(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !c.VideoAvailable() {
+		return domain.ErrVideoNotReady
+	}
+	return nil
+}
+
 // Quota 回傳當日額度，由訂單計算。
 func (s *Service) Quota(ctx context.Context) (domain.Quota, error) {
 	from, to := domain.TaipeiDayBounds(s.clock.Now())

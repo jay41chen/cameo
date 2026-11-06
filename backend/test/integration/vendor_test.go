@@ -196,7 +196,7 @@ func TestVendorSucceededFlow(t *testing.T) {
 	f.wantNoFiles(t)
 	g = call(t, f.h, http.MethodGet, "/v1/cameos/"+id, "", "")
 	c := cameoOf(g)
-	if c["status"] != "SUCCEEDED" || c["points_state"] != "CHARGED" || c["video_available"] != false || c["failure_reason"] != nil {
+	if c["status"] != "SUCCEEDED" || c["points_state"] != "CHARGED" || c["video_available"] != true || c["failure_reason"] != nil {
 		t.Fatalf("cameo = %v", c)
 	}
 	if d := c["display"].(map[string]any); d["title"] != "已完成" || d["message"] != "你的客串短片完成了" {

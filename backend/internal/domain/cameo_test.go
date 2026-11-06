@@ -87,3 +87,19 @@ func TestIsJPEGPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestVideoAvailable(t *testing.T) {
+	for status, want := range map[string]bool{
+		StatusAwaitingUpload: false,
+		StatusUploaded:       false,
+		StatusQueued:         false,
+		StatusGenerating:     false,
+		StatusSucceeded:      true,
+		StatusFailed:         false,
+		StatusExpired:        false,
+	} {
+		if got := (Cameo{Status: status}).VideoAvailable(); got != want {
+			t.Errorf("VideoAvailable(%s) = %v, want %v", status, got, want)
+		}
+	}
+}

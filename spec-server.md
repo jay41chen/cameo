@@ -89,7 +89,7 @@
 | `PUT /v1/cameos/{id}/selfie`（README） | 上傳自拍 | 已實作 |
 | `POST /v1/cameos/{id}/submit`（README） | 送出 | 已實作 |
 | `POST /webhooks/vendor`（README） | 廠商回呼，HMAC 驗簽 | 已實作 |
-| `GET /v1/cameos/{id}/video`（README） | 播放，回傳固定範例影片（`spec.md` §2）；訂單不存在或不屬於該使用者回 `404 CAMEO_NOT_FOUND`，存在但非 `SUCCEEDED` 回 `404 VIDEO_NOT_READY` | 未實作 |
+| `GET /v1/cameos/{id}/video`（README） | 播放，回傳固定範例影片（`spec.md` §2）；訂單不存在或不屬於該使用者回 `404 CAMEO_NOT_FOUND`，存在但非 `SUCCEEDED` 回 `404 VIDEO_NOT_READY` | 已實作（7.1）：SUCCEEDED 回 200／206（Range）、HEAD、`video/mp4`；其他狀態 `404 VIDEO_NOT_READY`；實測（Docker）下載 sha256 與 `sample.mp4` 相符，`Range: bytes=0-99` 回 206、超出檔尾回 416；`video_available` 同步為 true |
 | `PUT`、`DELETE /v1/cameos/{id}/share`（README） | 建立與取消分享；`PUT` 成功一律 `200`，非 `SUCCEEDED` 回 `409 NOT_SHAREABLE`；`DELETE` 冪等回 `204`；訂單不存在回 `404 CAMEO_NOT_FOUND`（見下方「影片與分享約定」） | 未實作 |
 | `GET /s/{token}`（README） | 分享網頁，免登入；已取消或不存在回簡短 HTML 404（通用錯誤格式的例外） | 未實作 |
 | `GET /s/{token}/video` | 分享頁播放，免登入，回固定範例影片；分享已取消或不存在維持 JSON `404` | 未實作 |

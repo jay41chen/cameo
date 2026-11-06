@@ -67,6 +67,9 @@ type Cameo struct {
 	UpdatedAt time.Time
 }
 
+// VideoAvailable 回傳影片是否可播放：只有 SUCCEEDED。
+func (c Cameo) VideoAvailable() bool { return c.Status == StatusSucceeded }
+
 // Display 是給使用者看的狀態文字。
 type Display struct {
 	Title   string

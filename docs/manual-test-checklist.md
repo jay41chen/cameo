@@ -719,3 +719,19 @@ cd backend && TEST_DATABASE_URL='postgres://cameo:cameo@127.0.0.1:15442/cameo?ss
 ### 未驗證與限制
 - 未驗證：B（通知權限）、D（上傳途中）、E（refreshRequest）、點數頁捲動位置。
 - 只在 API 37 模擬器測過，未測真機；系統自行回收程序（非 `am kill`）的情況未測。
+
+## 7.1 輪：後端影片端點 `GET /v1/cameos/{id}/video`（Server）
+
+環境：`VENDOR_DELAY_SEC=2 docker compose -p cameo-server up -d --build`；`T="Authorization: Bearer test-token"`，`B=http://localhost:8080`。
+
+| 步驟 | 指令 | 結果 |
+|---|---|---|
+| 建單後（AWAITING_UPLOAD）取影片 | `curl -i $B/v1/cameos/$ID/video -H "$T"` | 404 `{"code":"VIDEO_NOT_READY","message":"影片尚未完成","retryable":false}` |
+| 上傳、送出、等回呼（約 4 秒） | `PUT selfie`、`POST submit`，輪詢 `GET /v1/cameos/$ID` | QUEUED → GENERATING → SUCCEEDED，`video_available:true`，無 `video_url` |
+| 下載整支 | `curl -D - $B/v1/cameos/$ID/video -H "$T" -o full.mp4` | 200，`Content-Type: video/mp4`、`Accept-Ranges: bytes`、`Content-Length: 557914`；`shasum -a 256` = `972000c2…c6f6`，與 `backend/assets/sample.mp4` 相同 |
+| Range | `-H 'Range: bytes=0-99'` | 206，`Content-Range: bytes 0-99/557914`，100 bytes 與前 100 bytes 相同 |
+| 無效 Range | `-H 'Range: bytes=999999999-'` | 416 |
+| HEAD | `curl -I ...` | 200，`Content-Length: 557914`，無 body |
+| 沒 token | 不帶 `-H "$T"` | 401 |
+
+未驗證：用 App 或真實播放器播放。

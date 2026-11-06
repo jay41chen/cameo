@@ -15,4 +15,5 @@ var (
 	ErrInvalidState        = errors.New("cameo is not in a state that allows this")
 	ErrSelfieNotUploaded   = errors.New("selfie not uploaded")
 	ErrInvalidSelfie       = errors.New("selfie is not a JPEG")
+	ErrVideoNotReady       = errors.New("video not ready")
 )
