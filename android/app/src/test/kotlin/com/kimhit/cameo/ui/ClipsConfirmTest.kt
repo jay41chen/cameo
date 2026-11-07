@@ -166,9 +166,11 @@ class MyCameosDraftTest {
         cameos.gets["u1"] = DomainResult.Success(testOrder(CameoStatus.EXPIRED))
         quotaReturns(DomainResult.Success(quotaOf(0)), DomainResult.Success(quotaOf(0)))
         val vm = vm()
+        val navs = collectStartNavigation(vm)
         vm.onResume()
         advanceUntilIdle()
-        assertFalse(vm.restart(expiredRow))
+        vm.onRestartClick(expiredRow, StartPermission.PROCEED)
+        assertTrue(navs.isEmpty())
         advanceUntilIdle()
         assertEquals(1, pending.rows.size)
     }
@@ -179,9 +181,11 @@ class MyCameosDraftTest {
         cameos.gets["u1"] = DomainResult.Success(testOrder(CameoStatus.EXPIRED))
         quotaReturns(DomainResult.Success(quotaOf(1)))
         val vm = vm()
+        val navs = collectStartNavigation(vm)
         vm.onResume()
         advanceUntilIdle()
-        assertTrue(vm.restart(expiredRow))
+        vm.onRestartClick(expiredRow, StartPermission.PROCEED)
+        assertEquals(listOf<StartNavigation>(StartNavigation.OpenCamera("c1")), navs)
         advanceUntilIdle()
         assertTrue(pending.rows.isEmpty())
     }
@@ -508,18 +512,18 @@ class ThrottledRestartTest {
         val unfinished = UnfinishedCameo(row, testOrder(CameoStatus.EXPIRED))
         var t = 0L
         val th = ClickThrottle(1000L) { t }
-        var navigations = 0
+        val navs = collectStartNavigation(vm)
         var restartCalls = 0
         fun tap() = th.guarded {
             restartCalls++
-            if (vm.restart(unfinished)) navigations++
+            vm.onRestartClick(unfinished, StartPermission.PROCEED)
         }
         tap()
         t = 300
         tap()
         advanceUntilIdle()
         assertEquals(1, restartCalls)
-        assertEquals(1, navigations)
+        assertEquals(1, navs.size)
         assertTrue(pending.rows.isEmpty())
     }
 }

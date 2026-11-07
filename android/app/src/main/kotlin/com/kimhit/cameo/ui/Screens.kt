@@ -1,5 +1,8 @@
 package com.kimhit.cameo.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -463,6 +466,41 @@ fun MyCameosScreen(
         previousTop = listTop
         if (shouldScroll) listState.animateScrollToItem(0)
     }
+    val context = LocalContext.current
+    val startPrompt by viewModel.startPrompt.collectAsState()
+    val notificationStore = remember(context) { SharedPrefsAskedStore(context) }
+    fun startPermission() = currentStartPermission(context)
+    // afterDenial：同意後用 false，下一項權限才會請求；拒絕後用 true，才能分辨系統還能不能問
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        // 收到結果後才寫旗標（確認頁到 H7b 前仍讀這個旗標）
+        val ok = onPermissionResult(granted, notificationStore)
+        viewModel.onPermissionResult(ok, currentStartPermission(context, afterDenial = !ok))
+    }
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        viewModel.onPermissionResult(granted, currentStartPermission(context, afterDenial = !granted))
+    }
+    LaunchedEffect(startPrompt) {
+        when (startPrompt) {
+            StartPrompt.REQUEST_NOTIFICATION -> {
+                viewModel.onPermissionRequestLaunched()
+                notificationLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+            StartPrompt.REQUEST_CAMERA -> {
+                viewModel.onPermissionRequestLaunched()
+                cameraLauncher.launch(android.Manifest.permission.CAMERA)
+            }
+            else -> Unit
+        }
+    }
+    LaunchedEffect(viewModel) {
+        viewModel.startNavigation.collect { nav ->
+            when (nav) {
+                StartNavigation.OpenClips -> onStartClick()
+                is StartNavigation.OpenCamera -> onStartCamera(nav.clipId)
+                is StartNavigation.Continue -> onContinue(nav.pending)
+            }
+        }
+    }
     val snackbarHost = remember { SnackbarHostState() }
     LaunchedEffect(viewModel) {
         viewModel.refreshErrors.collectLatest { message ->
@@ -486,7 +524,9 @@ fun MyCameosScreen(
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(onClick = { throttle.guarded { onStartClick() } }) { Text("＋客串") }
+            ExtendedFloatingActionButton(
+                onClick = { throttle.guarded { viewModel.onStartClick(startPermission()) } },
+            ) { Text("＋客串") }
         },
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
@@ -507,12 +547,8 @@ fun MyCameosScreen(
                         UnfinishedRow(
                             row = row,
                             clips = clips,
-                            onContinue = { throttle.guarded { onContinue(row.pending) } },
-                            onRestart = {
-                                throttle.guarded {
-                                    if (viewModel.restart(row)) onStartCamera(row.pending.clipId)
-                                }
-                            },
+                            onContinue = { throttle.guarded { viewModel.onContinueClick(row, startPermission()) } },
+                            onRestart = { throttle.guarded { viewModel.onRestartClick(row, startPermission()) } },
                             onRemove = { viewModel.remove(row) },
                         )
                     }
@@ -558,6 +594,12 @@ fun MyCameosScreen(
         }
     }
     QuotaBlockedDialog(hint, viewModel::dismissHint)
+    StartPermissionDialog(
+        prompt = startPrompt,
+        onDismiss = viewModel::dismissStartPrompt,
+        onOpenNotificationSettings = { openNotificationSettings(context) },
+        onOpenAppSettings = { openAppSettings(context) },
+    )
 }
 
 @Composable

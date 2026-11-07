@@ -2,14 +2,11 @@ package com.kimhit.cameo.ui
 
 import android.Manifest
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
-import android.net.Uri
-import android.provider.Settings
 import android.util.Size
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -74,7 +71,7 @@ internal suspend fun <T : Any> cameraCatching(block: suspend () -> T): T? =
         null
     }
 
-private fun hasCameraPermission(context: Context) =
+internal fun hasCameraPermission(context: Context) =
     ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
 @Composable
@@ -105,11 +102,7 @@ fun CameraScreen(onUsePhoto: (String) -> Unit, viewModel: CameraViewModel = hilt
             Text(NO_PERMISSION_TEXT)
             Button(onClick = { launcher.launch(Manifest.permission.CAMERA) }) { Text("允許相機") }
             if (asked) {
-                OutlinedButton(onClick = {
-                    context.startActivity(
-                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
-                    )
-                }) { Text("前往設定") }
+                OutlinedButton(onClick = { openAppSettings(context) }) { Text("前往設定") }
             }
         }
         else -> Viewfinder(state = s, viewModel = viewModel)

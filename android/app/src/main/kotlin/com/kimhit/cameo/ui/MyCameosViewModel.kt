@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.kimhit.cameo.domain.model.Cameo
 import com.kimhit.cameo.domain.model.Clip
 import com.kimhit.cameo.domain.model.DomainResult
+import com.kimhit.cameo.domain.model.PendingCameo
 import com.kimhit.cameo.domain.model.Quota
 import com.kimhit.cameo.domain.model.UnfinishedCameo
 import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
@@ -22,6 +23,29 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+
+/** 首頁按下後等權限檢查通過才執行的動作。 */
+sealed interface StartAction {
+    data object OpenClips : StartAction
+    data class Restart(val row: UnfinishedCameo) : StartAction
+    data class Continue(val row: UnfinishedCameo) : StartAction
+}
+
+enum class StartPrompt {
+    NONE,
+    REQUEST_NOTIFICATION,
+    REQUEST_CAMERA,
+    NOTIFICATION_DENIED,
+    NOTIFICATION_SETTINGS,
+    CAMERA_DENIED,
+    CAMERA_SETTINGS,
+}
+
+sealed interface StartNavigation {
+    data object OpenClips : StartNavigation
+    data class OpenCamera(val clipId: String) : StartNavigation
+    data class Continue(val pending: PendingCameo) : StartNavigation
+}
 
 @HiltViewModel
 class MyCameosViewModel @Inject constructor(
@@ -116,14 +140,125 @@ class MyCameosViewModel @Inject constructor(
 
     fun dismissHint() = gate.dismissHint()
 
-    /** 重新客串：額度允許才刪掉舊草稿並回 true；不允許時不刪。 */
-    fun restart(row: UnfinishedCameo): Boolean {
-        if (!gate.tryStart()) return false
-        viewModelScope.launch {
-            deletePending(row.pending.clientRequestId)
-            refreshUnfinished()
+    private val _startPrompt = MutableStateFlow(StartPrompt.NONE)
+
+    /** 開始客串前的權限提示；`REQUEST_*` 由畫面啟動系統對話框，其餘為 App 自己的說明對話框。 */
+    val startPrompt: StateFlow<StartPrompt> = _startPrompt
+
+    private val _startNavigation = Channel<StartNavigation>(Channel.CONFLATED)
+
+    /** 檢查通過後的一次性導頁事件。 */
+    val startNavigation: Flow<StartNavigation> = _startNavigation.receiveAsFlow()
+
+    private var pendingAction: StartAction? = null
+    private var requested: StartPermission? = null
+
+    fun onStartClick(permission: StartPermission) = begin(StartAction.OpenClips, permission)
+
+    /** 已建單的繼續不檢查；尚未建單的繼續走和 FAB 一樣的檢查。 */
+    fun onContinueClick(row: UnfinishedCameo, permission: StartPermission) {
+        if (row.pending.cameoId != null) {
+            _startNavigation.trySend(StartNavigation.Continue(row.pending))
+            return
         }
-        return true
+        begin(StartAction.Continue(row), permission)
+    }
+
+    /** 重新客串：先看額度（用完只顯示額度提示），再查權限；兩者都通過才刪草稿。 */
+    fun onRestartClick(row: UnfinishedCameo, permission: StartPermission) {
+        if (!gate.tryStart()) return
+        begin(StartAction.Restart(row), permission)
+    }
+
+    private fun begin(action: StartAction, permission: StartPermission) {
+        if (pendingAction != null) return
+        pendingAction = action
+        apply(permission)
+    }
+
+    private fun apply(permission: StartPermission) {
+        when (permission) {
+            StartPermission.PROCEED -> complete()
+            StartPermission.REQUEST_NOTIFICATION -> {
+                requested = permission
+                _startPrompt.value = StartPrompt.REQUEST_NOTIFICATION
+            }
+            StartPermission.REQUEST_CAMERA -> {
+                requested = permission
+                _startPrompt.value = StartPrompt.REQUEST_CAMERA
+            }
+            StartPermission.NOTIFICATION_SETTINGS -> stop(StartPrompt.NOTIFICATION_SETTINGS)
+            StartPermission.CAMERA_SETTINGS -> stop(StartPrompt.CAMERA_SETTINGS)
+        }
+    }
+
+    /** 中止目前動作並顯示說明；從設定回來要使用者再按一次。 */
+    private fun stop(prompt: StartPrompt) {
+        pendingAction = null
+        requested = null
+        _startPrompt.value = prompt
+    }
+
+    private fun complete() {
+        val action = pendingAction
+        pendingAction = null
+        requested = null
+        when (action) {
+            null -> Unit
+            StartAction.OpenClips -> _startNavigation.trySend(StartNavigation.OpenClips)
+            is StartAction.Continue -> _startNavigation.trySend(StartNavigation.Continue(action.row.pending))
+            is StartAction.Restart -> {
+                // 刪草稿只發生在這裡：額度與權限都通過之後
+                viewModelScope.launch {
+                    deletePending(action.row.pending.clientRequestId)
+                    refreshUnfinished()
+                }
+                _startNavigation.trySend(StartNavigation.OpenCamera(action.row.pending.clipId))
+            }
+        }
+    }
+
+    /** 畫面已啟動系統權限對話框：清掉 `REQUEST_*`，待處理動作保留到結果回來。 */
+    fun onPermissionRequestLaunched() {
+        if (_startPrompt.value == StartPrompt.REQUEST_NOTIFICATION || _startPrompt.value == StartPrompt.REQUEST_CAMERA) {
+            _startPrompt.value = StartPrompt.NONE
+        }
+    }
+
+    /**
+     * 系統權限對話框結果。[permission] 是結果回來後重新檢查的結果。
+     * 程序重建後待處理動作已不在，直接忽略。
+     */
+    fun onPermissionResult(granted: Boolean, permission: StartPermission) {
+        if (pendingAction == null) return
+        val asked = requested
+        if (!granted) {
+            pendingAction = null
+            requested = null
+            _startPrompt.value = when (asked) {
+                StartPermission.REQUEST_NOTIFICATION ->
+                    if (permission == StartPermission.NOTIFICATION_SETTINGS) StartPrompt.NOTIFICATION_SETTINGS
+                    else StartPrompt.NOTIFICATION_DENIED
+                StartPermission.REQUEST_CAMERA ->
+                    if (permission == StartPermission.CAMERA_SETTINGS) StartPrompt.CAMERA_SETTINGS
+                    else StartPrompt.CAMERA_DENIED
+                else -> _startPrompt.value
+            }
+            return
+        }
+        if (permission == asked) {
+            // 已同意但系統仍判定要再問同一項：視同要去設定，避免循環
+            stop(
+                if (asked == StartPermission.REQUEST_NOTIFICATION) StartPrompt.NOTIFICATION_SETTINGS
+                else StartPrompt.CAMERA_SETTINGS,
+            )
+            return
+        }
+        apply(permission)
+    }
+
+    fun dismissStartPrompt() {
+        _startPrompt.value = StartPrompt.NONE
     }
 
     fun remove(row: UnfinishedCameo) {

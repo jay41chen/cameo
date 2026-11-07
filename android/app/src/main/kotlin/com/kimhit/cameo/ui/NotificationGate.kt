@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.app.ActivityCompat
@@ -67,14 +68,17 @@ internal class SharedPrefsAskedStore(context: Context) : PermissionAskedStore {
     }
 }
 
-internal fun currentNotificationGate(context: Context, store: PermissionAskedStore): NotificationGate {
+internal fun currentNotificationGate(context: Context, store: PermissionAskedStore): NotificationGate =
+    currentNotificationGate(context, askedBefore = store.asked())
+
+internal fun currentNotificationGate(context: Context, askedBefore: Boolean): NotificationGate {
     val enabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
     val channelBlocked = isDoneChannelBlocked(context)
     val rationale = Build.VERSION.SDK_INT >= POST_NOTIFICATIONS_MIN_SDK &&
         context.findActivity()?.let {
             ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.POST_NOTIFICATIONS)
         } == true
-    return decideNotificationGate(enabled, Build.VERSION.SDK_INT, store.asked(), rationale, channelBlocked)
+    return decideNotificationGate(enabled, Build.VERSION.SDK_INT, askedBefore, rationale, channelBlocked)
 }
 
 internal fun openNotificationSettings(context: Context) {
@@ -84,7 +88,13 @@ internal fun openNotificationSettings(context: Context) {
     context.startActivity(intent)
 }
 
-private fun Context.findActivity(): Activity? {
+internal fun openAppSettings(context: Context) {
+    context.startActivity(
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
+    )
+}
+
+internal fun Context.findActivity(): Activity? {
     var c: Context? = this
     while (c is ContextWrapper) {
         if (c is Activity) return c

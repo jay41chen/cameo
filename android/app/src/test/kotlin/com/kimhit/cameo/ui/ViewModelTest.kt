@@ -29,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -84,6 +85,14 @@ private class CountingClips(val results: ArrayDeque<DomainResult<List<Clip>>>) :
  * MyCameosViewModel 的測試組裝。init 會呼叫 listCameos，而 FakeCameoRepo.listCameos 會丟錯，
  * 所以只覆寫 listCameos，其餘委派給同一個 [cameos] 實例。
  */
+/** 收集 [MyCameosViewModel.startNavigation]（同 refreshErrors 測試的寫法）。 */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal fun TestScope.collectStartNavigation(vm: MyCameosViewModel): MutableList<StartNavigation> {
+    val events = mutableListOf<StartNavigation>()
+    backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.startNavigation.collect { events += it } }
+    return events
+}
+
 internal fun myCameosVm(
     pending: PendingCameoRepository = FakePendingRepo(),
     cameos: FakeCameoRepo = FakeCameoRepo(),
@@ -573,6 +582,7 @@ class ViewModelTest {
         val quota = FakeQuota()
         repeat(2) { quota.queue.addLast { DomainResult.Success(quotaOf(0)) } }
         val vm = myCameosVm(pending = pending, quota = quota, listCameos = { pages.removeFirst() })
+        val navs = collectStartNavigation(vm)
         advanceUntilIdle()
         assertTrue(vm.unfinished.value.isEmpty())
         assertEquals(listOf("u1"), vm.state.value.items.map { it.id })
@@ -581,7 +591,8 @@ class ViewModelTest {
         advanceUntilIdle()
         assertEquals(listOf("k1"), vm.unfinished.value.map { it.pending.clientRequestId })
         assertEquals(listOf("u0", "u1"), vm.state.value.items.map { it.id })
-        assertFalse(vm.restart(vm.unfinished.value[0])) // 額度已刷新為 0
+        vm.onRestartClick(vm.unfinished.value[0], StartPermission.PROCEED) // 額度已刷新為 0
+        assertTrue(navs.isEmpty())
         assertEquals(quotaOf(0), vm.blockedHint.value)
     }
 
@@ -593,10 +604,12 @@ class ViewModelTest {
         val stuck = CompletableDeferred<DomainResult<com.kimhit.cameo.domain.model.Quota>>()
         quota.queue.addLast { stuck.await() }
         val vm = myCameosVm(pending = pending, quota = quota)
+        val navs = collectStartNavigation(vm)
         vm.onResume()
         advanceUntilIdle()
         assertEquals(1, vm.unfinished.value.size)
-        assertTrue(vm.restart(vm.unfinished.value[0]))
+        vm.onRestartClick(vm.unfinished.value[0], StartPermission.PROCEED)
+        assertEquals(listOf<StartNavigation>(StartNavigation.OpenCamera("c1")), navs)
         advanceUntilIdle()
         assertTrue(pending.rows.isEmpty())
         assertNull(vm.blockedHint.value)
@@ -609,9 +622,11 @@ class ViewModelTest {
         val quota = FakeQuota()
         repeat(2) { quota.queue.addLast { DomainResult.Success(quotaOf(0)) } }
         val vm = myCameosVm(pending = pending, quota = quota)
+        val navs = collectStartNavigation(vm)
         vm.onResume()
         advanceUntilIdle()
-        assertFalse(vm.restart(vm.unfinished.value[0]))
+        vm.onRestartClick(vm.unfinished.value[0], StartPermission.PROCEED)
+        assertTrue(navs.isEmpty())
         assertEquals(quotaOf(0), vm.blockedHint.value)
         assertEquals(1, pending.rows.size)
         vm.dismissHint()
