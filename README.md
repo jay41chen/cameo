@@ -1,6 +1,6 @@
-# 客串短劇（Kimhit 候選人作業）
+# 客串短劇
 
-> 狀態：進行中。主流程（選片段到生成完成通知）的後端與 Android App 已接通，只在 API 37 模擬器驗證過；後端的影片與分享 API 已完成；App 首頁改版、App 的播放與分享入口、異常 API 尚未完成。驗證細節與未涵蓋項目見 `docs/manual-test-checklist.md`。
+> 狀態：進行中。主流程（選片段到生成完成通知）的後端與 Android App 已接通，只在 API 37 模擬器驗證過；後端的影片與分享 API 已完成；App 首頁改版、App 的播放與分享入口尚未完成；異常的登記與重設已完成，異常的實際觸發尚未完成。驗證細節與未涵蓋項目見 `docs/manual-test-checklist.md`。
 
 ## 專案介紹
 
@@ -34,7 +34,7 @@ docker compose up --build
 | `SELFIE_DIR` | `/data/selfies` | 自拍存放目錄；`docker-compose.yml` 把 named volume `selfies` 掛在這裡，容器重啟後檔案仍在（容器以 `nobody` 執行，目錄在映像檔內已設為可寫） |
 | `MAX_SELFIE_BYTES` | `10485760` | 自拍檔案大小上限（bytes），超過回 `413 SELFIE_TOO_LARGE` |
 | `GENERATION_TTL` | `30m`（compose 將設為 `2m`，尚未實作，目前 compose 仍為 `30m`） | 生成期限：送出（轉 `QUEUED`）起算，涵蓋排隊與生成；到期（`<=` 現在）仍未完成的訂單轉 `FAILED`（原因 `TIMEOUT`）並退點。期限在送出時寫入訂單，改設定只影響新訂單。`VENDOR_DELAY_SEC` 調到接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時 |
-| `DEBUG_API_ENABLED` | 關閉（compose 將預設開啟，尚未實作） | 控制 `/debug/*`（見「Debug 異常 API」）；未開啟時回 `404`。尚未實作 |
+| `DEBUG_API_ENABLED` | 程式預設關閉；compose 預設 `true` | 控制 `/debug/*`（見「Debug 異常 API」）；只有值為 `true` 才開啟，未開啟時 `/debug/*` 回 `404` |
 | `PUBLIC_BASE_URL` | `http://localhost:8080`（程式與 compose 相同） | 分享網址的 base，不寫死。預設用電腦瀏覽器開；要在模擬器內開，設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用 |
 | `DISPATCH_SWEEP_INTERVAL` | `2s` | 派工與生成逾時掃描間隔；每個週期先處理逾時、再派工（每次最多 20 筆，`created_at` 由舊到新） |
 | `VENDOR_URL` | `http://localhost:9000`（compose 設為 `http://vendor-sim:9000`） | 廠商的 base URL；派工是對 `{VENDOR_URL}/jobs` 的 `POST`，單次逾時 5 秒 |
@@ -53,11 +53,19 @@ docker compose up --build
 | `VENDOR_PUBLIC_URL` | `http://vendor-sim:9000` | 回呼 `video_url` 的 base（`{base}/videos/{job_id}.mp4`） |
 | `VENDOR_WEBHOOK_SECRET` | `cameo-sim-secret` | 與 `api` 相同；空字串時拒絕啟動 |
 
-`vendor-sim` 的行為：`POST /jobs`，body `{"job_id":"..."}`，回 `202`；同一 `job_id` 重送也回 `202`，不開第二個工作（去重只在記憶體，重啟後清空）；缺 `job_id` 回 `400`。等 `VENDOR_DELAY_SEC` 後送一次 `SUCCEEDED` 回呼（`event_id` 隨機，`X-Signature` 為對原始 body 的 HMAC-SHA256 hex）；回呼失敗只記 log、不重試，由 `GENERATION_TTL` 兜底。`vendor-sim` 不接收照片、不提供影片檔（`video_url` 指向的檔案不存在），目前也不會回報失敗（異常 API 實作後，由 `vendor_*` 異常控制）。
+`vendor-sim` 的行為：`POST /jobs`，body `{"job_id":"..."}`，回 `202`；同一 `job_id` 重送也回 `202`，不開第二個工作（去重只在記憶體，重啟後清空）；缺 `job_id` 回 `400`。等 `VENDOR_DELAY_SEC` 後送一次 `SUCCEEDED` 回呼（`event_id` 隨機，`X-Signature` 為對原始 body 的 HMAC-SHA256 hex）；回呼失敗只記 log、不重試，由 `GENERATION_TTL` 兜底。`vendor-sim` 不接收照片、不提供影片檔（`video_url` 指向的檔案不存在），目前也不會回報失敗（異常的實際觸發實作後，由 `vendor_*` 異常控制）。
 
 背景掃描（逾期釋放、派工、生成逾時）假設同一時間只有一個 `api` 實例，不做多實例協調。
 
 Seed：測試帳號初始 100 點；3 個片段（`c1` 雨夜重逢、`c2` 屋頂告白、`c3` 最後一班車），每段 10 點；點數明細初始為空。
+
+要把環境重設回初始狀態（訂單、點數明細、廠商事件、自拍檔案與異常清空，餘額回到初始 100 點，額度恢復）：
+
+```bash
+curl -X POST -H "Authorization: Bearer test-token" http://localhost:8080/debug/reset
+```
+
+成功回 `204`。不會清 App 本機資料。`DEBUG_API_ENABLED` 不是 `true` 時回 `404`，細節見「Debug 異常 API」。
 
 快速檢查：
 
@@ -295,7 +303,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 ### 影片與分享
 
-以下端點滿足作業的影片播放與分享需求。影片端點 `GET /v1/cameos/{id}/video`，以及 `PUT`／`DELETE /v1/cameos/{id}/share`、`GET /s/{token}`、`GET /s/{token}/video` 都已實作；App 的播放與分享入口尚未實作。
+以下端點提供影片播放與分享。影片端點 `GET /v1/cameos/{id}/video`，以及 `PUT`／`DELETE /v1/cameos/{id}/share`、`GET /s/{token}`、`GET /s/{token}/video` 都已實作；App 的播放與分享入口尚未實作。
 
 - `GET /v1/cameos/{id}/video`：影片串流，需要 token，支援 `HEAD` 與 Range：單段 Range 已測試（例如 `Range: bytes=0-99` 回 `206`），多段 Range 由標準庫處理、未測試；起點超出檔尾（例如 `bytes=999999999-`）回 `416`，`416` 的 body 是標準庫的純文字，不是通用 JSON 錯誤格式，屬通用格式的例外。不設 `ETag`、`Last-Modified`，帶 `If-Range` 時回整支影片。此端點尚未用真實播放器驗證（App 播放入口尚未實作）。訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
 - `PUT /v1/cameos/{id}/share`：`{"share":{"active":true,"url":"..."}}`，成功一律回 `200`。僅 `SUCCEEDED` 可分享，否則 `409 NOT_SHAREABLE`；訂單不存在回 `404 CAMEO_NOT_FOUND`。分享中重複 PUT 回同一個 URL；取消後再分享會發新 token，舊連結永久失效。
@@ -306,7 +314,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 - 驗證：Agent 以 Claude in Chrome 在桌面 Chrome 自動化驗證 `<video>` 可載入、播放與跳轉（JS 操作、靜音），取消分享後舊連結失效（頁面顯示「找不到這個分享。」、影片回 `404`）。未經真人操作，也未在 App 或模擬器驗證。Range 由自動測試與 curl 驗證，沒有瀏覽器紀錄。資料庫真的斷線時的 HTML `500` 也尚未驗證（目前只用已取消的 context 模擬）。
 - token 以 Go 標準庫 `crypto/rand.Text()` 產生，存在 `cameos.share_token`，`NULL` 代表未分享。
 - 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，把它設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。
-- 範例影片：`backend/assets/sample.mp4`（約 558 KB、H.264、無音軌），所有 `SUCCEEDED` 訂單共用。實測長度 15 秒、解析度 640×360；畫面上有 `…IMHIT CAMEO WATERMAR…`、`…AMPLE - NOT FOR REUSE` 字樣（兩端被裁切，照原樣記錄），分享頁會顯示這些字。來源與授權未確認。
+- 範例影片：`backend/assets/sample.mp4`（約 558 KB、H.264、無音軌），所有 `SUCCEEDED` 訂單共用。實測長度 15 秒、解析度 640×360；畫面上有浮水印字樣與 `…AMPLE - NOT FOR REUSE`（兩端被裁切，照原樣記錄），分享頁會顯示這些字。來源與授權未確認。
 - 訂單資料的 `video_available` 在 `SUCCEEDED` 時為 `true`；`share` 反映實際分享狀態（`{"active":true,"url":"..."}` 或 `{"active":false,"url":null}`）。App 的播放與分享入口依這兩個欄位判斷。
 
 ### 即時事件
@@ -345,7 +353,9 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 ### Debug 異常 API
 
-**以下是已定案的約定，尚未實作**（目前程式沒有任何 `/debug/*` 端點）。
+已實作 `GET`／`POST`／`DELETE /debug/faults` 與 `POST /debug/reset`；**設定異常目前只會登記，不會真的觸發**。`POST /debug/faults/consume` 與 6 種異常的實際行為是已定案的約定，尚未實作。
+
+驗證程度：自動測試涵蓋上述端點；在 Docker 實測確認 reset、互斥、並存和部分輸入驗證。`DEBUG_API_ENABLED=false` 在目前版本未於 Docker 重跑，開關讀環境變數的判斷也沒有自動測試；同名覆蓋和其餘輸入驗證只有自動測試，沒有 Docker 實測。
 
 僅存在於模擬環境，不檢查 App 版本；不做 console 網站。
 
@@ -357,9 +367,9 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 | `POST /debug/faults` | 設定異常，成功回 `200` 和目前清單（同 `GET`） |
 | `DELETE /debug/faults` | 全部清除，回 `204` |
 | `POST /debug/reset` | 重設環境，回 `204` |
-| `POST /debug/faults/consume` | 內部端點，只給 `vendor-sim` 取得異常；和其他 `/debug/*` 一樣受 `DEBUG_API_ENABLED` 與 Bearer token 保護 |
+| `POST /debug/faults/consume` | 尚未實作（目前回 `404`）。內部端點，只給 `vendor-sim` 取得異常；和其他 `/debug/*` 一樣受 `DEBUG_API_ENABLED` 與 Bearer token 保護 |
 
-`POST /debug/reset`：清空訂單、點數明細、廠商事件、自拍檔案和異常；餘額回到 seed 的值；片段保留；額度因訂單清空而恢復。重設後才到的廠商回呼，照未知 `job_id` 的處理（見上方 webhook 檢查順序：回 `404 CAMEO_NOT_FOUND`、事件不留），訂單不會復活。
+`POST /debug/reset`：清空訂單、點數明細、廠商事件、自拍檔案和異常；餘額回到 seed 的值；片段保留；額度因訂單清空而恢復。重設後才到的廠商回呼，照未知 `job_id` 的處理（見上方 webhook 檢查順序：回 `404 CAMEO_NOT_FOUND`、事件不留），訂單不會復活。reset 不會清 App 本機資料。自拍檔案只刪被清除訂單對應的檔案，刪除失敗只記 log，仍回 `204`。
 
 設定異常 body：
 
@@ -367,17 +377,18 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 {"name":"response_lost_after_commit","target":"create","times":1,"params":{}}
 ```
 
+- 輸入驗證：body 是空的、JSON 語法錯誤、尾端有多餘內容、含多個 JSON 值、超過 64 KB、不是合法 UTF-8、或頂層不是物件，回 `400 INVALID_REQUEST`；`name`、`times`、`target` 型別錯誤回 `400 INVALID_FAULT`。
 - 未知名稱回 `400 UNKNOWN_FAULT`；其他參數錯誤（`times` 小於 1、缺 `target` 等）回 `400 INVALID_FAULT`。
 - `times` 預設 1。`target` 只用於 `response_lost_after_commit`，必填，值為 `create` 或 `submit`。
 - `params` 帶不認得的 key，或 `response_lost_after_commit` 以外的異常帶了 `target`，都回 `400 INVALID_FAULT`。
 - 同名異常重複設定就覆蓋。同一時間只允許一種 `vendor_*` 異常：已有另一種 `vendor_*` 時，設定新的回 `400 INVALID_FAULT`，要換就先 `DELETE`。其他異常可並存。
 - `vendor_*` 異常的 `times`：每個被接受的工作扣 1，連續套用到接下來 N 個工作，和 `vendor_duplicate_callback` 的 `count` 無關。
 - 異常存在記憶體，API 重啟就清空。
-- 情境檔：`backend/faults/*.json` 每種異常一個檔案，只當 `curl -d @backend/faults/<name>.json` 的 body，後端不載入。
+- 情境檔：`backend/faults/*.json` 每種異常一個檔案，只當 `curl -d @...` 的 body，後端不載入。檔名是異常名稱把底線改成連字號再加 `.json`，例如 `backend/faults/response-lost-after-commit.json`（對應 `response_lost_after_commit`）。
 
 `vendor-sim` 取得異常：收到新工作時對 `POST /debug/faults/consume` 呼叫一次，重送的同一 `job_id` 不再呼叫。查詢失敗就當沒有異常、正常回呼，並記 log。異常綁定下一個被接受的工作。
 
-可設定的異常名稱（6 種）與行為：
+可設定的異常名稱（6 種）與約定行為（尚未觸發）：
 
 | 名稱 | 行為 |
 |---|---|

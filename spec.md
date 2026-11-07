@@ -139,7 +139,7 @@ stateDiagram-v2
 
 只寫文件、不實作（7 種）：`socket_event_lost`、`upgrade_required`、`server_error`、`slow_network`、`vendor_dispatch_error`、`vendor_out_of_order`、`unknown_status`。
 
-registry 放 adapter 層，提供 debug API。異常用 `GET/POST/DELETE /debug/faults` 觸發；`backend/faults/*.json` 每種異常一個檔案，只當 `curl -d @backend/faults/<name>.json` 的 body，後端不載入；另提供 `POST /debug/reset`（清空訂單與異常，重設點數與額度）；不做 console 網站。各異常的預期表現與參數已定案、尚未實作，細節見 README「Debug 異常 API」與 spec-server.md 第 7 節。
+registry 放 adapter 層，提供 debug API。異常用 `GET/POST/DELETE /debug/faults` 設定；`backend/faults/*.json` 每種異常一個檔案，只當 `curl -d @...` 的 body，後端不載入，檔名是異常名稱把底線改成連字號再加 `.json`（例如 `backend/faults/response-lost-after-commit.json`）；另提供 `POST /debug/reset`（清空訂單與異常，重設點數與額度）；不做 console 網站。登記、重設與開關已實作；`POST /debug/faults/consume` 和各異常的實際觸發已定案、尚未實作，細節見 README「Debug 異常 API」與 spec-server.md 第 7 節。
 
 ## 9. 技術基礎
 
@@ -236,6 +236,8 @@ type FileStore interface {
 - 自拍水平鏡射：讓預覽與取景方向一致；上傳給廠商的檔案是否也鏡射，實作時再決定。
 - 自拍儲存的崩潰一致性：rename 後當機未 fsync 目錄可能遺失檔案；掃描 commit 後、刪檔前當機，EXPIRED 訂單的檔案不會再被刪。MVP 只記錄，不處理。
 - 點數明細回前景時保留閱讀位置：目前會縮回第一頁；可把新資料併到現有清單前面（先確認 cursor 在新資料插入後是否穩定）。
+- 換掉範例影片：`backend/assets/sample.mp4` 畫面有公司名稱和 `NOT FOR REUSE`，來源與授權未確認；換法見 `spec-server.md` 影片與分享約定第 6 點；本機沒有 ffmpeg，要自己產生影片得先確認工具。有時間再做。
+- 改 App 套件名稱：`com.kimhit.cameo`（`namespace`、`applicationId`、`android/` 下約 65 個檔案、README 啟動指令）。要重跑測試與冒煙，有空再討論。
 
 ## 13. Iteration
 
