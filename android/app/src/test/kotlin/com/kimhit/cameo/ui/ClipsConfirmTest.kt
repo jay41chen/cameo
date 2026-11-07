@@ -57,8 +57,6 @@ class ClipsQuotaTest {
     private fun vm() = ClipsViewModel(
         GetClipsUseCase(FakeClips(ArrayDeque(listOf(clipsOk())))),
         GetQuotaUseCase(quota),
-        GetUnfinishedCameosUseCase(pending, cameos),
-        DeletePendingCameoUseCase(pending),
     )
 
     private fun quotaReturns(vararg r: DomainResult<com.kimhit.cameo.domain.model.Quota>) {
@@ -113,6 +111,65 @@ class ClipsQuotaTest {
     }
 
     @Test
+    fun refreshQuota_doesNotFlashLoading_andFailureBecomesError() = runTest {
+        quotaReturns(
+            DomainResult.Success(quotaOf(2)),
+            DomainResult.Success(quotaOf(1)),
+            DomainResult.Failure(DomainError("壞了", true)),
+        )
+        val vm = vm()
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(Load.Success(quotaOf(2)), vm.quota.value)
+        vm.onResume()
+        assertEquals(Load.Success(quotaOf(2)), vm.quota.value) // 重查中不閃 Loading
+        advanceUntilIdle()
+        assertEquals(Load.Success(quotaOf(1)), vm.quota.value)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(Load.Error("壞了"), vm.quota.value) // 不沿用舊值
+    }
+
+    @Test
+    fun refreshQuota_newerQueryCancelsOlder() = runTest {
+        val slow = CompletableDeferred<DomainResult<com.kimhit.cameo.domain.model.Quota>>()
+        quota.queue.addLast { slow.await() }
+        quota.queue.addLast { DomainResult.Success(quotaOf(1)) }
+        val vm = vm()
+        vm.onResume()
+        advanceUntilIdle()
+        vm.onResume()
+        advanceUntilIdle()
+        slow.complete(DomainResult.Success(quotaOf(5))) // 舊回應晚到，不可蓋掉新的
+        advanceUntilIdle()
+        assertEquals(Load.Success(quotaOf(1)), vm.quota.value)
+    }
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class MyCameosDraftTest {
+    @Before
+    fun setUp() = Dispatchers.setMain(StandardTestDispatcher())
+
+    @After
+    fun tearDown() = Dispatchers.resetMain()
+
+    private val pending = FakePendingRepo()
+    private val cameos = FakeCameoRepo()
+    private val quota = FakeQuota()
+
+    private fun vm() = myCameosVm(pending, cameos, quota)
+
+    private fun quotaReturns(vararg r: DomainResult<com.kimhit.cameo.domain.model.Quota>) {
+        r.forEach { v -> quota.queue.addLast { v } }
+    }
+
+    private val expiredRow = UnfinishedCameo(
+        PendingCameo("k1", "c1", "u1", PendingStep.UPLOAD, null),
+        testOrder(CameoStatus.EXPIRED),
+    )
+
+    @Test
     fun restart_doesNotDeleteDraftWhenQuotaZero() = runTest {
         pending.rows += expiredRow.pending
         cameos.gets["u1"] = DomainResult.Success(testOrder(CameoStatus.EXPIRED))
@@ -150,41 +207,6 @@ class ClipsQuotaTest {
         advanceUntilIdle()
         assertTrue(vm.unfinished.value.isEmpty())
     }
-
-    @Test
-    fun refreshQuota_doesNotFlashLoading_andFailureBecomesError() = runTest {
-        quotaReturns(
-            DomainResult.Success(quotaOf(2)),
-            DomainResult.Success(quotaOf(1)),
-            DomainResult.Failure(DomainError("壞了", true)),
-        )
-        val vm = vm()
-        vm.onResume()
-        advanceUntilIdle()
-        assertEquals(Load.Success(quotaOf(2)), vm.quota.value)
-        vm.onResume()
-        assertEquals(Load.Success(quotaOf(2)), vm.quota.value) // 重查中不閃 Loading
-        advanceUntilIdle()
-        assertEquals(Load.Success(quotaOf(1)), vm.quota.value)
-        vm.onResume()
-        advanceUntilIdle()
-        assertEquals(Load.Error("壞了"), vm.quota.value) // 不沿用舊值
-    }
-
-    @Test
-    fun refreshQuota_newerQueryCancelsOlder() = runTest {
-        val slow = CompletableDeferred<DomainResult<com.kimhit.cameo.domain.model.Quota>>()
-        quota.queue.addLast { slow.await() }
-        quota.queue.addLast { DomainResult.Success(quotaOf(1)) }
-        val vm = vm()
-        vm.onResume()
-        advanceUntilIdle()
-        vm.onResume()
-        advanceUntilIdle()
-        slow.complete(DomainResult.Success(quotaOf(5))) // 舊回應晚到，不可蓋掉新的
-        advanceUntilIdle()
-        assertEquals(Load.Success(quotaOf(1)), vm.quota.value)
-    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -205,12 +227,7 @@ class ClipsUnfinishedTest {
         val slow = CompletableDeferred<List<PendingCameo>>()
         pending.lists.addLast { slow.await() }
         pending.lists.addLast { listOf(rowNew) }
-        val vm = ClipsViewModel(
-            GetClipsUseCase(FakeClips(ArrayDeque(listOf(clipsOk())))),
-            GetQuotaUseCase(quota),
-            GetUnfinishedCameosUseCase(pending, FakeCameoRepo()),
-            DeletePendingCameoUseCase(FakePendingRepo()),
-        )
+        val vm = myCameosVm(pending = pending, quota = quota)
         vm.onResume()
         advanceUntilIdle()
         vm.onResume()
@@ -496,12 +513,7 @@ class ThrottledRestartTest {
         val row = PendingCameo("k1", "c1", "u1", PendingStep.UPLOAD, null)
         pending.rows += row
         val quota = FakeQuota()
-        val vm = ClipsViewModel(
-            GetClipsUseCase(FakeClips(ArrayDeque(listOf(clipsOk())))),
-            GetQuotaUseCase(quota),
-            GetUnfinishedCameosUseCase(pending, FakeCameoRepo()),
-            DeletePendingCameoUseCase(pending),
-        )
+        val vm = myCameosVm(pending = pending, quota = quota)
         val unfinished = UnfinishedCameo(row, testOrder(CameoStatus.EXPIRED))
         var t = 0L
         val th = ClickThrottle(1000L) { t }

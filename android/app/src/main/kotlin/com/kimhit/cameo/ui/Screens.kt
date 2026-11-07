@@ -76,6 +76,8 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
         composable(ROUTE_MY_CAMEOS) {
             MyCameosScreen(
                 refreshRequest = openMyCameosRequest,
+                onStartCamera = { rootNav.navigateSingleTop(cameraRoute(it)) },
+                onContinue = { rootNav.navigateSingleTop(continueRoute(it)) },
                 onStartClick = { rootNav.navigateSingleTop(ROUTE_CLIPS) },
                 onOpenPoints = { rootNav.navigateSingleTop(ROUTE_POINTS) },
             )
@@ -84,7 +86,6 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
             FlowScaffold {
                 ClipsScreen(
                     onStartCamera = { rootNav.navigateSingleTop(cameraRoute(it)) },
-                    onContinue = { rootNav.navigateSingleTop(continueRoute(it)) },
                 )
             }
         }
@@ -160,7 +161,7 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
     }
 }
 
-/** 流程頁（相機、確認、進度）的外框：保留系統列留白。 */
+/** 選片段、點數與流程頁（相機、確認、進度）的外框：保留系統列留白。 */
 @Composable
 private fun FlowScaffold(content: @Composable () -> Unit) {
     Scaffold { padding -> Box(Modifier.padding(padding)) { content() } }
@@ -208,13 +209,11 @@ internal fun ErrorBox(message: String?, onRetry: () -> Unit, modifier: Modifier 
 @Composable
 fun ClipsScreen(
     onStartCamera: (String) -> Unit,
-    onContinue: (PendingCameo) -> Unit,
     viewModel: ClipsViewModel = hiltViewModel(),
 ) {
     val throttle = rememberNavClickThrottle()
     val state by viewModel.state.collectAsState()
     val quota by viewModel.quota.collectAsState()
-    val unfinished by viewModel.unfinished.collectAsState()
     val hint by viewModel.blockedHint.collectAsState()
     OnResume(viewModel::onResume)
     when (val s = state) {
@@ -222,26 +221,6 @@ fun ClipsScreen(
         is Load.Error -> ErrorBox(s.message, viewModel::load, Modifier.fillMaxSize())
         is Load.Success -> LazyColumn(Modifier.fillMaxSize()) {
             item { QuotaHeader(quota, viewModel::refreshQuota) }
-            if (unfinished.isNotEmpty()) {
-                item {
-                    Text(
-                        "未完成的客串",
-                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                }
-                items(unfinished, key = { it.pending.clientRequestId }) { row ->
-                    UnfinishedRow(
-                        row = row,
-                        clips = s.value,
-                        onContinue = { throttle.guarded { onContinue(row.pending) } },
-                        onRestart = {
-                            throttle.guarded { if (viewModel.restart(row)) onStartCamera(row.pending.clipId) }
-                        },
-                        onRemove = { viewModel.remove(row) },
-                    )
-                }
-            }
             items(s.value, key = { it.id }) { clip ->
                 Row(
                     Modifier.fillMaxWidth()
@@ -258,11 +237,16 @@ fun ClipsScreen(
             }
         }
     }
+    QuotaBlockedDialog(hint, viewModel::dismissHint)
+}
+
+@Composable
+private fun QuotaBlockedDialog(hint: Quota?, onDismiss: () -> Unit) {
     hint?.let { q ->
         AlertDialog(
-            onDismissRequest = viewModel::dismissHint,
+            onDismissRequest = onDismiss,
             text = { Text("${q.display}，${formatTime(q.resetsAt)} 重置") },
-            confirmButton = { TextButton(onClick = viewModel::dismissHint) { Text("知道了") } },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } },
         )
     }
 }
@@ -431,12 +415,17 @@ private fun LazyListScope.pagedFooter(state: PagedUiState<*>, loadMore: () -> Un
 @Composable
 fun MyCameosScreen(
     refreshRequest: Int = 0,
+    onStartCamera: (String) -> Unit,
+    onContinue: (PendingCameo) -> Unit,
     onStartClick: () -> Unit,
     onOpenPoints: () -> Unit,
     viewModel: MyCameosViewModel = hiltViewModel(),
 ) {
     val throttle = rememberNavClickThrottle()
     val state by viewModel.state.collectAsState()
+    val unfinished by viewModel.unfinished.collectAsState()
+    val clips by viewModel.clips.collectAsState()
+    val hint by viewModel.blockedHint.collectAsState()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val showBackToTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
@@ -452,9 +441,9 @@ fun MyCameosScreen(
         previousFirstId = firstId
         if (shouldScroll) listState.animateScrollToItem(0)
     }
-    OnResume(viewModel::refresh)
-    // [待確認] 已在此分頁時點通知可能不觸發 OnResume，用請求計數補一次刷新（未驗證）
-    LaunchedEffect(refreshRequest) { if (refreshRequest > 0) viewModel.refresh() }
+    OnResume(viewModel::onResume)
+    // [待確認] 已在首頁時點通知可能不觸發 OnResume，用請求計數補一次刷新（未驗證）
+    LaunchedEffect(refreshRequest) { if (refreshRequest > 0) viewModel.onResume() }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -485,8 +474,39 @@ fun MyCameosScreen(
                             state = listState,
                             contentPadding = PaddingValues(bottom = 80.dp),
                         ) {
+                            if (unfinished.isNotEmpty()) {
+                                item {
+                                    Text(
+                                        "待處理",
+                                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                }
+                                items(unfinished, key = { it.pending.clientRequestId }) { row ->
+                                    UnfinishedRow(
+                                        row = row,
+                                        clips = clips,
+                                        onContinue = { throttle.guarded { onContinue(row.pending) } },
+                                        onRestart = {
+                                            throttle.guarded {
+                                                if (viewModel.restart(row)) onStartCamera(row.pending.clipId)
+                                            }
+                                        },
+                                        onRemove = { viewModel.remove(row) },
+                                    )
+                                }
+                            }
                             if (state.items.isEmpty()) {
                                 item { Text("還沒有客串", Modifier.padding(16.dp)) }
+                            }
+                            if (unfinished.isNotEmpty() && state.items.isNotEmpty()) {
+                                item {
+                                    Text(
+                                        "已送出",
+                                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                }
                             }
                             items(state.items, key = { it.id }) { MyCameoRow(it) }
                             pagedFooter(state, viewModel::loadMore)
@@ -502,6 +522,7 @@ fun MyCameosScreen(
             }
         }
     }
+    QuotaBlockedDialog(hint, viewModel::dismissHint)
 }
 
 @Composable

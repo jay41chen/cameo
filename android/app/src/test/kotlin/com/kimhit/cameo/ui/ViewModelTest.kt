@@ -11,7 +11,11 @@ import com.kimhit.cameo.domain.model.LedgerPage
 import com.kimhit.cameo.domain.model.LedgerType
 import com.kimhit.cameo.domain.model.Points
 import com.kimhit.cameo.domain.model.Page
+import com.kimhit.cameo.domain.model.PendingCameo
+import com.kimhit.cameo.domain.model.PendingStep
 import com.kimhit.cameo.domain.repository.CameoRepository
+import com.kimhit.cameo.domain.repository.ClipRepository
+import com.kimhit.cameo.domain.repository.PendingCameoRepository
 import com.kimhit.cameo.domain.repository.PointsRepository
 import com.kimhit.cameo.domain.usecase.GetCameoPageUseCase
 import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
@@ -30,6 +34,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -53,9 +59,38 @@ private fun entry(id: String) =
 internal fun clipsVm(clips: FakeClips) = ClipsViewModel(
     GetClipsUseCase(clips),
     GetQuotaUseCase(FakeQuota()),
-    GetUnfinishedCameosUseCase(FakePendingRepo(), FakeCameoRepo()),
-    DeletePendingCameoUseCase(FakePendingRepo()),
 )
+
+private class CountingClips(val results: ArrayDeque<DomainResult<List<Clip>>>) : ClipRepository {
+    var calls = 0
+    override suspend fun getClips(): DomainResult<List<Clip>> {
+        calls++
+        return results.removeFirst()
+    }
+}
+
+/**
+ * MyCameosViewModel 的測試組裝。init 會呼叫 listCameos，而 FakeCameoRepo.listCameos 會丟錯，
+ * 所以只覆寫 listCameos，其餘委派給同一個 [cameos] 實例。
+ */
+internal fun myCameosVm(
+    pending: PendingCameoRepository = FakePendingRepo(),
+    cameos: FakeCameoRepo = FakeCameoRepo(),
+    quota: FakeQuota = FakeQuota(),
+    clips: ClipRepository = FakeClips(ArrayDeque(listOf(DomainResult.Success(listOf(Clip("c1", "雨夜重逢", 10)))))),
+    listCameos: suspend (String?) -> DomainResult<CameoPage> = { DomainResult.Success(Page(emptyList(), null)) },
+): MyCameosViewModel {
+    val repo = object : CameoRepository by cameos {
+        override suspend fun listCameos(cursor: String?): DomainResult<CameoPage> = listCameos(cursor)
+    }
+    return MyCameosViewModel(
+        GetCameoPageUseCase(repo),
+        GetQuotaUseCase(quota),
+        GetClipsUseCase(clips),
+        GetUnfinishedCameosUseCase(pending, cameos),
+        DeletePendingCameoUseCase(pending),
+    )
+}
 
 private val failure = DomainResult.Failure(DomainError("後端訊息", true))
 
@@ -396,10 +431,7 @@ class ViewModelTest {
                 DomainResult.Success(Page(listOf(cameo("u0"), cameo("u1")), "other")),
             ),
         )
-        val repo = object : CameoRepository by FakeCameoRepo() {
-            override suspend fun listCameos(cursor: String?): DomainResult<CameoPage> = pages.removeFirst()
-        }
-        val vm = MyCameosViewModel(GetCameoPageUseCase(repo))
+        val vm = myCameosVm(listCameos = { pages.removeFirst() })
         advanceUntilIdle()
         vm.loadMore()
         advanceUntilIdle()
@@ -410,5 +442,107 @@ class ViewModelTest {
         assertEquals(CameoStatus.SUCCEEDED, s.items.first { it.id == "u1" }.status)
         assertEquals("cur2", s.nextCursor)
         assertEquals(PagePhase.Idle, s.phase)
+    }
+
+    // ---- MyCameosViewModel：待處理區、額度、片段名稱 ----
+
+    private val draftRow = PendingCameo("k1", "c1", null, PendingStep.CREATE, "err")
+
+    @Test
+    fun myCameos_onResume_refreshesUnfinishedQuotaAndList() = runTest {
+        val pages = ArrayDeque(
+            listOf<DomainResult<CameoPage>>(
+                DomainResult.Success(Page(listOf(cameo("u1")), null)),
+                DomainResult.Success(Page(listOf(cameo("u0"), cameo("u1")), null)),
+            ),
+        )
+        val pending = FakePendingRepo()
+        val quota = FakeQuota()
+        repeat(2) { quota.queue.addLast { DomainResult.Success(quotaOf(0)) } }
+        val vm = myCameosVm(pending = pending, quota = quota, listCameos = { pages.removeFirst() })
+        advanceUntilIdle()
+        assertTrue(vm.unfinished.value.isEmpty())
+        assertEquals(listOf("u1"), vm.state.value.items.map { it.id })
+        pending.rows += draftRow
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(listOf("k1"), vm.unfinished.value.map { it.pending.clientRequestId })
+        assertEquals(listOf("u0", "u1"), vm.state.value.items.map { it.id })
+        assertFalse(vm.restart(vm.unfinished.value[0])) // 額度已刷新為 0
+        assertEquals(quotaOf(0), vm.blockedHint.value)
+    }
+
+    @Test
+    fun myCameos_restart_whenQuotaNotLoaded_returnsTrueAndDeletesDraft() = runTest {
+        val pending = FakePendingRepo()
+        pending.rows += draftRow
+        val quota = FakeQuota()
+        val stuck = CompletableDeferred<DomainResult<com.kimhit.cameo.domain.model.Quota>>()
+        quota.queue.addLast { stuck.await() }
+        val vm = myCameosVm(pending = pending, quota = quota)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(1, vm.unfinished.value.size)
+        assertTrue(vm.restart(vm.unfinished.value[0]))
+        advanceUntilIdle()
+        assertTrue(pending.rows.isEmpty())
+        assertNull(vm.blockedHint.value)
+    }
+
+    @Test
+    fun myCameos_restart_whenQuotaZero_setsHint_andDismissClearsIt() = runTest {
+        val pending = FakePendingRepo()
+        pending.rows += draftRow
+        val quota = FakeQuota()
+        repeat(2) { quota.queue.addLast { DomainResult.Success(quotaOf(0)) } }
+        val vm = myCameosVm(pending = pending, quota = quota)
+        vm.onResume()
+        advanceUntilIdle()
+        assertFalse(vm.restart(vm.unfinished.value[0]))
+        assertEquals(quotaOf(0), vm.blockedHint.value)
+        assertEquals(1, pending.rows.size)
+        vm.dismissHint()
+        assertNull(vm.blockedHint.value)
+    }
+
+    private val clipList = listOf(Clip("c1", "雨夜重逢", 10))
+
+    private fun quotaOk() = FakeQuota().also { q -> repeat(3) { q.queue.addLast { DomainResult.Success(quotaOf(1)) } } }
+
+    @Test
+    fun myCameos_clips_loadedOnResume() = runTest {
+        val clips = CountingClips(ArrayDeque(listOf(DomainResult.Success(clipList))))
+        val vm = myCameosVm(quota = quotaOk(), clips = clips)
+        advanceUntilIdle()
+        assertTrue(vm.clips.value.isEmpty())
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(clipList, vm.clips.value)
+    }
+
+    @Test
+    fun myCameos_clips_failureStaysEmpty_andNextResumeRetries() = runTest {
+        val clips = CountingClips(ArrayDeque(listOf(failure, DomainResult.Success(clipList))))
+        val vm = myCameosVm(quota = quotaOk(), clips = clips)
+        vm.onResume()
+        advanceUntilIdle()
+        assertTrue(vm.clips.value.isEmpty())
+        assertEquals(1, clips.calls)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(2, clips.calls)
+        assertEquals(clipList, vm.clips.value)
+    }
+
+    @Test
+    fun myCameos_clips_notRequeriedOnceLoaded() = runTest {
+        val clips = CountingClips(ArrayDeque(listOf(DomainResult.Success(clipList))))
+        val vm = myCameosVm(quota = quotaOk(), clips = clips)
+        vm.onResume()
+        advanceUntilIdle()
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(1, clips.calls)
+        assertEquals(clipList, vm.clips.value)
     }
 }
