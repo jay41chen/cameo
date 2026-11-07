@@ -15,19 +15,19 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -45,11 +45,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavController
-import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.kimhit.cameo.domain.model.LedgerEntry
@@ -67,24 +65,28 @@ internal const val EXPIRED_MESSAGE = "上傳期限已過，點數沒有扣款，
 
 @Composable
 fun CameoRoot(openMyCameosRequest: Int = 0) {
-    // 外層 rootNav：main（三個分頁）與流程頁；內層 tabNav：三個分頁。
-    // tabNav 放在這裡，從流程頁返回 main 時分頁狀態才不會遺失。
+    // 單一導覽堆疊：首頁是我的客串，選片段、點數與流程頁都從首頁進入。
     val rootNav = rememberNavController()
-    val tabNav = rememberNavController()
     val throttle = remember { ClickThrottle(NAV_CLICK_INTERVAL_MS, SystemClock::elapsedRealtime) }
-    var handledRequest by remember { mutableIntStateOf(0) }
-    NavHost(rootNav, startDestination = ROUTE_MAIN) {
-        composable(ROUTE_MAIN) {
-            MainTabs(
-                tabNav = tabNav,
+    NavHost(rootNav, startDestination = ROUTE_MY_CAMEOS) {
+        composable(ROUTE_MY_CAMEOS) {
+            MyCameosScreen(
+                refreshRequest = openMyCameosRequest,
                 throttle = throttle,
-                openMyCameosRequest = openMyCameosRequest,
-                handledRequest = handledRequest,
-                onRequestHandled = { handledRequest = it },
-                onStartCamera = { rootNav.navigateSingleTop(cameraRoute(it)) },
-                onContinue = { rootNav.navigateSingleTop(continueRoute(it)) },
+                onStartClick = { rootNav.navigateSingleTop(ROUTE_CLIPS) },
+                onOpenPoints = { rootNav.navigateSingleTop(ROUTE_POINTS) },
             )
         }
+        composable(ROUTE_CLIPS) {
+            FlowScaffold {
+                ClipsScreen(
+                    throttle = throttle,
+                    onStartCamera = { rootNav.navigateSingleTop(cameraRoute(it)) },
+                    onContinue = { rootNav.navigateSingleTop(continueRoute(it)) },
+                )
+            }
+        }
+        composable(ROUTE_POINTS) { FlowScaffold { PointsScreen() } }
         composable(
             ROUTE_CAMERA,
             arguments = listOf(
@@ -150,9 +152,9 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
         }
     }
     // 必須在 NavHost 之後 [待確認：冷啟動時 graph 要先設定好才能導覽，放前面是否出錯未驗證]
-    // 點通知：流程頁一律結束，回到 main（分頁由 MainTabs 切到「我的客串」）
+    // 點通知：流程頁一律結束，回首頁
     LaunchedEffect(openMyCameosRequest) {
-        if (openMyCameosRequest > 0) rootNav.popBackStack(ROUTE_MAIN, inclusive = false)
+        if (openMyCameosRequest > 0) rootNav.popBackStack(ROUTE_MY_CAMEOS, inclusive = false)
     }
 }
 
@@ -160,59 +162,6 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
 @Composable
 private fun FlowScaffold(content: @Composable () -> Unit) {
     Scaffold { padding -> Box(Modifier.padding(padding)) { content() } }
-}
-
-@Composable
-private fun MainTabs(
-    tabNav: NavHostController,
-    throttle: ClickThrottle,
-    openMyCameosRequest: Int,
-    handledRequest: Int,
-    onRequestHandled: (Int) -> Unit,
-    onStartCamera: (String) -> Unit,
-    onContinue: (PendingCameo) -> Unit,
-) {
-    val entry by tabNav.currentBackStackEntryAsState()
-    val current = entry?.destination?.route
-    Scaffold(
-        bottomBar = {
-            NavigationBar {
-                listOf(ROUTE_CLIPS to "片段清單", ROUTE_POINTS to "點數", ROUTE_MY_CAMEOS to "我的客串").forEach { (route, label) ->
-                    NavigationBarItem(
-                        selected = current == route,
-                        onClick = { tabNav.navigateToTab(route) },
-                        icon = {},
-                        label = { Text(label) },
-                        alwaysShowLabel = true,
-                    )
-                }
-            }
-        },
-    ) { padding ->
-        NavHost(tabNav, startDestination = ROUTE_CLIPS, modifier = Modifier.padding(padding)) {
-            composable(ROUTE_CLIPS) {
-                ClipsScreen(throttle = throttle, onStartCamera = onStartCamera, onContinue = onContinue)
-            }
-            composable(ROUTE_POINTS) { PointsScreen() }
-            composable(ROUTE_MY_CAMEOS) { MyCameosScreen(openMyCameosRequest) }
-        }
-        // 每次從流程頁返回 main 都會重新進入這個 effect，必須比較已處理的請求，否則會被拉到「我的客串」
-        LaunchedEffect(openMyCameosRequest) {
-            if (openMyCameosRequest > handledRequest) {
-                onRequestHandled(openMyCameosRequest)
-                tabNav.navigateToTab(ROUTE_MY_CAMEOS)
-            }
-        }
-    }
-}
-
-/** 底部列與點通知共用的分頁切換。 */
-private fun NavController.navigateToTab(route: String) {
-    navigate(route) {
-        popUpTo(ROUTE_CLIPS) { saveState = true }
-        launchSingleTop = true
-        restoreState = true
-    }
 }
 
 /** launchSingleTop：快速連點不會推兩層頁面。[popUpToRoute] 不為 null 時連同該頁一起彈出。 */
@@ -476,8 +425,15 @@ private fun LazyListScope.pagedFooter(state: PagedUiState<*>, loadMore: () -> Un
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MyCameosScreen(refreshRequest: Int = 0, viewModel: MyCameosViewModel = hiltViewModel()) {
+fun MyCameosScreen(
+    refreshRequest: Int = 0,
+    throttle: ClickThrottle,
+    onStartClick: () -> Unit,
+    onOpenPoints: () -> Unit,
+    viewModel: MyCameosViewModel = hiltViewModel(),
+) {
     val state by viewModel.state.collectAsState()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -497,35 +453,49 @@ fun MyCameosScreen(refreshRequest: Int = 0, viewModel: MyCameosViewModel = hiltV
     OnResume(viewModel::refresh)
     // [待確認] 已在此分頁時點通知可能不觸發 OnResume，用請求計數補一次刷新（未驗證）
     LaunchedEffect(refreshRequest) { if (refreshRequest > 0) viewModel.refresh() }
-    when (state.phase) {
-        PagePhase.Loading -> LoadingBox()
-        PagePhase.Error -> ErrorBox(state.errorMessage, viewModel::loadFirstPage, Modifier.fillMaxSize())
-        else -> Column(Modifier.fillMaxSize()) {
-            // 刷新失敗的提示固定在列表外，不論捲到哪都看得到
-            if (state.refreshFailed) {
-                if (state.refreshing) {
-                    Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) { CircularProgressIndicator() }
-                } else {
-                    ErrorBox(state.errorMessage, viewModel::refresh, Modifier.fillMaxWidth())
-                }
-            }
-            Box(Modifier.weight(1f)) {
-                LazyColumn(
-                    Modifier.fillMaxSize(),
-                    state = listState,
-                    contentPadding = PaddingValues(bottom = 80.dp),
-                ) {
-                    if (state.items.isEmpty()) {
-                        item { Text("還沒有客串", Modifier.padding(16.dp)) }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("我的客串") },
+                actions = { TextButton(onClick = { throttle.guarded { onOpenPoints() } }) { Text("點數") } },
+            )
+        },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(onClick = { throttle.guarded { onStartClick() } }) { Text("＋客串") }
+        },
+    ) { padding ->
+        Box(Modifier.padding(padding)) {
+            when (state.phase) {
+                PagePhase.Loading -> LoadingBox()
+                PagePhase.Error -> ErrorBox(state.errorMessage, viewModel::loadFirstPage, Modifier.fillMaxSize())
+                else -> Column(Modifier.fillMaxSize()) {
+                    // 刷新失敗的提示固定在列表外，不論捲到哪都看得到
+                    if (state.refreshFailed) {
+                        if (state.refreshing) {
+                            Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) { CircularProgressIndicator() }
+                        } else {
+                            ErrorBox(state.errorMessage, viewModel::refresh, Modifier.fillMaxWidth())
+                        }
                     }
-                    items(state.items, key = { it.id }) { MyCameoRow(it) }
-                    pagedFooter(state, viewModel::loadMore)
-                }
-                if (showBackToTop) {
-                    Button(
-                        onClick = { scope.launch { listState.scrollToItem(0) } },
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                    ) { Text("回到頂端") }
+                    Box(Modifier.weight(1f)) {
+                        LazyColumn(
+                            Modifier.fillMaxSize(),
+                            state = listState,
+                            contentPadding = PaddingValues(bottom = 80.dp),
+                        ) {
+                            if (state.items.isEmpty()) {
+                                item { Text("還沒有客串", Modifier.padding(16.dp)) }
+                            }
+                            items(state.items, key = { it.id }) { MyCameoRow(it) }
+                            pagedFooter(state, viewModel::loadMore)
+                        }
+                        if (showBackToTop) {
+                            Button(
+                                onClick = { scope.launch { listState.scrollToItem(0) } },
+                                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+                            ) { Text("回到頂端") }
+                        }
+                    }
                 }
             }
         }

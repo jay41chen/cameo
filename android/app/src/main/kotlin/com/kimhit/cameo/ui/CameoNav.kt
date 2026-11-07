@@ -5,7 +5,6 @@ import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.PendingCameo
 import java.net.URLEncoder
 
-internal const val ROUTE_MAIN = "main"
 internal const val ROUTE_CLIPS = "clips"
 internal const val ROUTE_POINTS = "points"
 internal const val ROUTE_MY_CAMEOS = "my_cameos"
