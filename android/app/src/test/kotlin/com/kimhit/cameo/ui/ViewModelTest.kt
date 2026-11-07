@@ -27,7 +27,9 @@ import com.kimhit.cameo.domain.usecase.GetUnfinishedCameosUseCase
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -453,6 +455,106 @@ class ViewModelTest {
         assertEquals(CameoStatus.SUCCEEDED, s.items.first { it.id == "u1" }.status)
         assertEquals("cur2", s.nextCursor)
         assertEquals(PagePhase.Idle, s.phase)
+    }
+
+    // ---- MyCameosViewModel.onResume：列表載入失敗與刷新失敗 ----
+
+    private fun quotaFor(resumes: Int) = FakeQuota().also { q ->
+        repeat(resumes) { q.queue.addLast { DomainResult.Success(quotaOf(1)) } }
+    }
+
+    @Test
+    fun myCameos_onResume_afterInitialLoadFailure_reloadsFirstPage() = runTest {
+        val pages = ArrayDeque(
+            listOf<DomainResult<CameoPage>>(failure, DomainResult.Success(Page(listOf(cameo("u1")), null))),
+        )
+        var calls = 0
+        val vm = myCameosVm(quota = quotaFor(1), listCameos = { calls++; pages.removeFirst() })
+        advanceUntilIdle()
+        assertEquals(PagePhase.Error, vm.state.value.phase)
+        assertEquals(1, calls)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(2, calls)
+        assertEquals(PagePhase.Idle, vm.state.value.phase)
+        assertEquals(listOf("u1"), vm.state.value.items.map { it.id })
+    }
+
+    @Test
+    fun myCameos_onResume_afterInitialLoadFailure_failsAgain_staysErrorWithoutRefreshEvent() = runTest {
+        val pending = FakePendingRepo()
+        pending.rows += draftRow
+        var calls = 0
+        val vm = myCameosVm(pending = pending, quota = quotaFor(1), listCameos = { calls++; failure })
+        val events = mutableListOf<String?>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.refreshErrors.collect { events += it } }
+        advanceUntilIdle()
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(2, calls)
+        assertEquals(PagePhase.Error, vm.state.value.phase)
+        assertEquals(listOf("k1"), vm.unfinished.value.map { it.pending.clientRequestId })
+        assertTrue(events.isEmpty())
+    }
+
+    @Test
+    fun myCameos_onResume_afterLoadMoreFailure_keepsItemsAndPhaseWithoutReload() = runTest {
+        val pages = ArrayDeque(
+            listOf<DomainResult<CameoPage>>(
+                DomainResult.Success(Page(listOf(cameo("u1")), "cur1")),
+                failure,
+            ),
+        )
+        var calls = 0
+        val vm = myCameosVm(quota = quotaFor(1), listCameos = { calls++; pages.removeFirst() })
+        advanceUntilIdle()
+        vm.loadMore()
+        advanceUntilIdle()
+        assertEquals(PagePhase.LoadMoreError, vm.state.value.phase)
+        assertEquals(2, calls)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(2, calls)
+        assertEquals(PagePhase.LoadMoreError, vm.state.value.phase)
+        assertEquals(listOf("u1"), vm.state.value.items.map { it.id })
+    }
+
+    @Test
+    fun myCameos_onResume_whenIdleWithItems_keepsItemsAndPhaseWhileQueryPending() = runTest {
+        val stuck = CompletableDeferred<DomainResult<CameoPage>>()
+        var calls = 0
+        val vm = myCameosVm(quota = quotaFor(1), listCameos = {
+            if (calls++ == 0) DomainResult.Success(Page(listOf(cameo("u1")), null)) else stuck.await()
+        })
+        advanceUntilIdle()
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(2, calls)
+        assertEquals(PagePhase.Idle, vm.state.value.phase)
+        assertEquals(listOf("u1"), vm.state.value.items.map { it.id })
+    }
+
+    @Test
+    fun myCameos_onResume_whenIdleWithItems_refreshFailureEmitsEventAndKeepsItems() = runTest {
+        val pages = ArrayDeque(
+            listOf<DomainResult<CameoPage>>(
+                DomainResult.Success(Page(listOf(cameo("u1")), null)),
+                failure,
+                DomainResult.Success(Page(listOf(cameo("u1")), null)),
+            ),
+        )
+        val vm = myCameosVm(quota = quotaFor(2), listCameos = { pages.removeFirst() })
+        val events = mutableListOf<String?>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.refreshErrors.collect { events += it } }
+        advanceUntilIdle()
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(listOf<String?>("後端訊息"), events)
+        assertEquals(listOf("u1"), vm.state.value.items.map { it.id })
+        assertEquals(PagePhase.Idle, vm.state.value.phase)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(listOf<String?>("後端訊息"), events)
     }
 
     // ---- MyCameosViewModel：待處理區、額度、片段名稱 ----

@@ -13,9 +13,9 @@ enum class PagePhase { Loading, Idle, Error, LoadingMore, LoadMoreError }
 
 /**
  * [refreshFailed]：靜默刷新失敗（列表保留，[errorMessage] 為錯誤訊息）。
- * 下一次載入更多、重新載入或刷新成功時清掉。
- * [refreshing]：刷新查詢進行中。畫面只在 [refreshFailed] 為 true 時用它顯示重試的轉圈；
- * 沒有失敗的回前景刷新不該顯示轉圈。刷新成功、失敗、被載入更多或重新載入取代時都清成 false。
+ * 下一次載入更多、重新載入或刷新成功時清掉。畫面不用它顯示錯誤，刷新失敗改由
+ * [PagedList] 的 onRefreshFailed 回呼通知。
+ * [refreshing]：刷新查詢進行中。畫面不用它顯示轉圈。刷新成功、失敗、被載入更多或重新載入取代時都清成 false。
  */
 data class PagedUiState<T>(
     val items: List<T> = emptyList(),
@@ -33,6 +33,7 @@ data class PagedUiState<T>(
 class PagedList<T>(
     private val scope: CoroutineScope,
     private val idOf: ((T) -> String)? = null,
+    private val onRefreshFailed: ((String?) -> Unit)? = null,
     private val fetch: suspend (String?) -> DomainResult<Page<T>>,
 ) {
     private val _state = MutableStateFlow(PagedUiState<T>())
@@ -63,7 +64,8 @@ class PagedList<T>(
      * 回到畫面時靜默刷新第一頁。只在 [PagePhase.Idle] 執行；查詢期間只設 [PagedUiState.refreshing]，
      * items 與 phase 不變。成功時：有傳 [idOf] 且第一頁與現有列表有重疊，就地更新既有項目、
      * 新項目放最前、保留已載入項目與游標；沒有重疊（含空頁）或沒傳 [idOf] 時整份取代（含游標）。
-     * 失敗保留 items 與 phase，設 [PagedUiState.refreshFailed]。兩種結果都清掉 refreshing。
+     * 失敗保留 items 與 phase，設 [PagedUiState.refreshFailed]，寫入狀態後呼叫一次 onRefreshFailed
+     * 並帶錯誤訊息（成功、被取消、[loadFirstPage]、[loadMore] 都不呼叫）。兩種結果都清掉 refreshing。
      */
     fun refresh() {
         if (_state.value.phase != PagePhase.Idle) return
@@ -89,6 +91,7 @@ class PagedList<T>(
                     errorMessage = r.error.message,
                 )
             }
+            if (r is DomainResult.Failure) onRefreshFailed?.invoke(r.error.message)
         }
     }
 

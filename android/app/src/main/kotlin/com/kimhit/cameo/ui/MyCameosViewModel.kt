@@ -16,8 +16,11 @@ import com.kimhit.cameo.domain.usecase.GetUnfinishedCameosUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 @HiltViewModel
@@ -29,7 +32,19 @@ class MyCameosViewModel @Inject constructor(
     private val getUnfinished: GetUnfinishedCameosUseCase,
     private val deletePending: DeletePendingCameoUseCase,
 ) : ViewModel() {
-    private val list = PagedList<Cameo>(viewModelScope, idOf = { it.id }) { getCameoPage(it) }
+    private val _refreshErrors = Channel<String?>(Channel.CONFLATED)
+
+    /**
+     * 列表已載入後刷新失敗的一次性事件（帶錯誤訊息），畫面收到後跳提示。已送出的事件在畫面重建時
+     * 不會重播，但旋轉會重新觸發 [onResume]，刷新仍失敗時會發新事件。旋轉行為為讀碼推論，尚未實測。[待確認]
+     */
+    val refreshErrors: Flow<String?> = _refreshErrors.receiveAsFlow()
+
+    private val list = PagedList<Cameo>(
+        viewModelScope,
+        idOf = { it.id },
+        onRefreshFailed = { _refreshErrors.trySend(it) },
+    ) { getCameoPage(it) }
     val state: StateFlow<PagedUiState<Cameo>> = list.state
 
     private val gate = QuotaGate(viewModelScope, getQuota)
@@ -61,9 +76,12 @@ class MyCameosViewModel @Inject constructor(
     fun refresh() = list.refresh()
     fun loadMore() = list.loadMore()
 
-    /** 畫面回到前景時呼叫：刷新列表、待處理區、額度、點數，片段名稱還沒有時補查。 */
+    /**
+     * 畫面回到前景時呼叫：列表第一次載入失敗（[PagePhase.Error]）就重新載入，否則靜默刷新；
+     * 另刷新待處理區、額度、點數，片段名稱還沒有時補查。
+     */
     fun onResume() {
-        refresh()
+        if (state.value.phase == PagePhase.Error) loadFirstPage() else refresh()
         refreshUnfinished()
         gate.refresh()
         loadClipsIfEmpty()

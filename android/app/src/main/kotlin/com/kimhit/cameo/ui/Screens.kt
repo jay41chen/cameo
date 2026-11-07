@@ -20,6 +20,10 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -31,6 +35,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -458,10 +463,22 @@ fun MyCameosScreen(
         previousTop = listTop
         if (shouldScroll) listState.animateScrollToItem(0)
     }
+    val snackbarHost = remember { SnackbarHostState() }
+    LaunchedEffect(viewModel) {
+        viewModel.refreshErrors.collectLatest { message ->
+            val result = snackbarHost.showSnackbar(
+                message = message ?: GENERIC_ERROR,
+                actionLabel = "重試",
+                duration = SnackbarDuration.Short,
+            )
+            if (result == SnackbarResult.ActionPerformed) viewModel.refresh()
+        }
+    }
     OnResume(viewModel::onResume)
     // [待確認] 已在首頁時點通知可能不觸發 OnResume，用請求計數補一次刷新（未驗證）
     LaunchedEffect(refreshRequest) { if (refreshRequest > 0) viewModel.onResume() }
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHost) },
         topBar = {
             TopAppBar(
                 title = { Text("我的客串") },
@@ -472,83 +489,71 @@ fun MyCameosScreen(
             ExtendedFloatingActionButton(onClick = { throttle.guarded { onStartClick() } }) { Text("＋客串") }
         },
     ) { padding ->
-        Box(Modifier.padding(padding)) {
-            Column(Modifier.fillMaxSize()) {
-                // 刷新失敗的提示固定在列表外，不論捲到哪都看得到
-                if (state.refreshFailed) {
-                    if (state.refreshing) {
-                        Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) { CircularProgressIndicator() }
-                    } else {
-                        ErrorBox(state.errorMessage, viewModel::refresh, Modifier.fillMaxWidth())
+        Box(Modifier.padding(padding).fillMaxSize()) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(bottom = 80.dp),
+            ) {
+                if (unfinished.isNotEmpty()) {
+                    item(key = PENDING_HEADER_KEY) {
+                        Text(
+                            "待處理",
+                            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                    items(unfinished, key = { it.pending.clientRequestId }) { row ->
+                        UnfinishedRow(
+                            row = row,
+                            clips = clips,
+                            onContinue = { throttle.guarded { onContinue(row.pending) } },
+                            onRestart = {
+                                throttle.guarded {
+                                    if (viewModel.restart(row)) onStartCamera(row.pending.clipId)
+                                }
+                            },
+                            onRemove = { viewModel.remove(row) },
+                        )
                     }
                 }
-                Box(Modifier.weight(1f)) {
-                    LazyColumn(
-                        Modifier.fillMaxSize(),
-                        state = listState,
-                        contentPadding = PaddingValues(bottom = 80.dp),
-                    ) {
-                        if (unfinished.isNotEmpty()) {
-                            item(key = PENDING_HEADER_KEY) {
+                when (
+                    submittedSection(
+                        state.phase,
+                        state.items.isNotEmpty(),
+                        unfinishedLoaded,
+                        unfinished.isNotEmpty(),
+                    )
+                ) {
+                    SubmittedSection.Loading -> item {
+                        Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                    SubmittedSection.Error -> item {
+                        ErrorBox(state.errorMessage, viewModel::loadFirstPage, Modifier.fillMaxWidth())
+                    }
+                    SubmittedSection.AllEmpty -> item { Text("還沒有客串", Modifier.padding(16.dp)) }
+                    SubmittedSection.Content -> {
+                        if (unfinished.isNotEmpty() && state.items.isNotEmpty()) {
+                            item(key = SUBMITTED_HEADER_KEY) {
                                 Text(
-                                    "待處理",
+                                    "已送出",
                                     Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                                     style = MaterialTheme.typography.titleMedium,
                                 )
                             }
-                            items(unfinished, key = { it.pending.clientRequestId }) { row ->
-                                UnfinishedRow(
-                                    row = row,
-                                    clips = clips,
-                                    onContinue = { throttle.guarded { onContinue(row.pending) } },
-                                    onRestart = {
-                                        throttle.guarded {
-                                            if (viewModel.restart(row)) onStartCamera(row.pending.clipId)
-                                        }
-                                    },
-                                    onRemove = { viewModel.remove(row) },
-                                )
-                            }
                         }
-                        when (
-                            submittedSection(
-                                state.phase,
-                                state.items.isNotEmpty(),
-                                unfinishedLoaded,
-                                unfinished.isNotEmpty(),
-                            )
-                        ) {
-                            SubmittedSection.Loading -> item {
-                                Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
-                                    CircularProgressIndicator()
-                                }
-                            }
-                            SubmittedSection.Error -> item {
-                                ErrorBox(state.errorMessage, viewModel::loadFirstPage, Modifier.fillMaxWidth())
-                            }
-                            SubmittedSection.AllEmpty -> item { Text("還沒有客串", Modifier.padding(16.dp)) }
-                            SubmittedSection.Content -> {
-                                if (unfinished.isNotEmpty() && state.items.isNotEmpty()) {
-                                    item(key = SUBMITTED_HEADER_KEY) {
-                                        Text(
-                                            "已送出",
-                                            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                            style = MaterialTheme.typography.titleMedium,
-                                        )
-                                    }
-                                }
-                                items(state.items, key = { it.id }) { MyCameoRow(it) }
-                                pagedFooter(state, viewModel::loadMore)
-                            }
-                        }
-                    }
-                    if (showBackToTop) {
-                        Button(
-                            onClick = { scope.launch { listState.scrollToItem(0) } },
-                            modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
-                        ) { Text("回到頂端") }
+                        items(state.items, key = { it.id }) { MyCameoRow(it) }
+                        pagedFooter(state, viewModel::loadMore)
                     }
                 }
+            }
+            if (showBackToTop) {
+                Button(
+                    onClick = { scope.launch { listState.scrollToItem(0) } },
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+                ) { Text("回到頂端") }
             }
         }
     }

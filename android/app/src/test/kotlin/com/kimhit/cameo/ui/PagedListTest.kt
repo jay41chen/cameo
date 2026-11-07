@@ -479,4 +479,79 @@ class PagedListTest {
         assertEquals(listOf("a", "n"), l.state.value.items)
         assertEquals("c9", l.state.value.nextCursor)
     }
+
+    // ---- onRefreshFailed 回呼 ----
+
+    private fun TestScope.callbackList(g: Gates, calls: MutableList<String?>) = PagedList<String>(
+        CoroutineScope(StandardTestDispatcher(testScheduler)),
+        onRefreshFailed = { calls += it },
+    ) { g.fetch(it) }
+
+    private fun TestScope.callbackLoaded(g: Gates, calls: MutableList<String?>): PagedList<String> {
+        val l = callbackList(g, calls)
+        g.next().complete(ok("a", next = "c1"))
+        l.loadFirstPage()
+        advanceUntilIdle()
+        return l
+    }
+
+    @Test
+    fun onRefreshFailed_calledOncePerFailedRefreshWithMessage() = runTest {
+        val g = Gates()
+        val calls = mutableListOf<String?>()
+        val l = callbackLoaded(g, calls)
+        g.next().complete(fail("第一次"))
+        l.refresh()
+        advanceUntilIdle()
+        assertEquals(listOf<String?>("第一次"), calls)
+        g.next().complete(fail("第二次"))
+        l.refresh()
+        advanceUntilIdle()
+        assertEquals(listOf<String?>("第一次", "第二次"), calls)
+    }
+
+    @Test
+    fun onRefreshFailed_notCalledOnRefreshSuccess() = runTest {
+        val g = Gates()
+        val calls = mutableListOf<String?>()
+        val l = callbackLoaded(g, calls)
+        g.next().complete(ok("a", "b", next = "c1"))
+        l.refresh()
+        advanceUntilIdle()
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test
+    fun onRefreshFailed_notCalledOnLoadFirstPageOrLoadMoreFailure() = runTest {
+        val g = Gates()
+        val calls = mutableListOf<String?>()
+        val l = callbackList(g, calls)
+        g.next().complete(fail("首頁失敗"))
+        l.loadFirstPage()
+        advanceUntilIdle()
+        g.next().complete(ok("a", next = "c1"))
+        l.loadFirstPage()
+        advanceUntilIdle()
+        g.next().complete(fail("分頁失敗"))
+        l.loadMore()
+        advanceUntilIdle()
+        assertEquals(PagePhase.LoadMoreError, l.state.value.phase)
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test
+    fun onRefreshFailed_notCalledWhenRefreshCancelledByNewAction() = runTest {
+        val g = Gates()
+        val calls = mutableListOf<String?>()
+        val l = callbackLoaded(g, calls)
+        val stuck = g.next()
+        l.refresh()
+        advanceUntilIdle()
+        g.next().complete(ok("a", "b", next = "c2"))
+        l.loadMore()
+        advanceUntilIdle()
+        stuck.complete(fail("遲到的失敗"))
+        advanceUntilIdle()
+        assertTrue(calls.isEmpty())
+    }
 }
