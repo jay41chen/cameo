@@ -396,9 +396,15 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 | `response_lost_after_commit` | 交易提交後中斷連線，不送回應；`target` 為 `create` 或 `submit` |
 | `upload_interrupted` | `params.after_bytes`（預設 1024），內容超過這個值才中斷連線，長度相等會成功且不消耗異常；小於 3 時以 3 計算（要先檢查是不是 JPEG），`GET /debug/faults` 仍顯示原設定值；以上只保證固定長度內容，chunked 長度相等也可能中斷；暫存檔丟棄、訂單狀態不變。App 看到的是網路錯誤，不是 `408`（`408 UPLOAD_INTERRUPTED` 仍是真實的讀取失敗規則） |
 | `upload_expired` | 作用在下一次上傳或送出請求所指的訂單，把該訂單的上傳期限（`upload_expires_at`）設為現在，走真實的 `410` 和釋放流程。訂單已不是 `AWAITING_UPLOAD`／`UPLOADED` 時不消耗這次異常。內容檢查仍先於逾期判斷，所以內容不合法時回 `400`／`413`，不是 `410` |
-| `vendor_failed` | `params.reason` 預設空值（記為 `VENDOR_FAILED`），可設 `CONTENT_REJECTED`。`reason` 含 NUL 字元時可以登記，但回呼會回 `400`，訂單要等 `GENERATION_TTL` 才逾時 |
+| `vendor_failed` | `params.reason` 預設空值（記為 `VENDOR_FAILED`），可設 `CONTENT_REJECTED`。`reason` 含 NUL 字元時回 `400 INVALID_FAULT`；`null`、省略、空字串和其他一般字串都可以登記 |
 | `vendor_duplicate_callback` | `params.count` 預設 3、`params.status` 預設 `SUCCEEDED`；前 count-1 次用同一個 `event_id`，最後一次用新的 `event_id`，預設值會走到兩條去重路徑。`params.status` 為 `null` 回 `400 INVALID_FAULT`；省略時用預設值 |
 | `vendor_no_callback` | 不回呼，靠 `GENERATION_TTL` 逾時 |
+
+已知限制（僅影響模擬，不影響真實規則）：
+
+- `upload_expired` 在交易內取用，交易回滾時異常仍會被消耗，訂單不變。
+- `upload_interrupted` 不看上傳期限：已過期、但背景掃描還沒處理的訂單，上傳仍會被中斷，不是回 `410`。
+- `upload_interrupted` 的 `after_bytes` 小於自拍上限（預設 10 MiB）時，超大內容會先中斷，不回 `413`。
 
 `socket_event_lost`、`upgrade_required` 只寫在規格文件，不實作。
 
