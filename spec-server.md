@@ -145,7 +145,7 @@
   - `vendor_duplicate_callback`
   - `vendor_no_callback`
 - **只寫文件：** `socket_event_lost`、`upgrade_required`、`server_error`、`slow_network`、`vendor_dispatch_error`、`vendor_out_of_order`、`unknown_status`。
-- **做法（部分實作）：** 登記（`GET`／`POST`／`DELETE /debug/faults`）、重設（`POST /debug/reset`）與開關（`DEBUG_API_ENABLED`）已實作；`POST /debug/faults/consume` 和 6 種異常的實際觸發尚未實作。`docker-compose.yml` 的 `GENERATION_TTL` 目前仍是 `30m`，改為 `2m` 尚未實作。
+- **做法（部分實作）：** 登記（`GET`／`POST`／`DELETE /debug/faults`）、重設（`POST /debug/reset`）、開關（`DEBUG_API_ENABLED`），以及 `response_lost_after_commit`、`upload_interrupted`、`upload_expired` 的實際觸發已實作；`POST /debug/faults/consume` 和 `vendor_*` 3 種的實際觸發尚未實作。`docker-compose.yml` 的 `GENERATION_TTL` 目前仍是 `30m`，改為 `2m` 尚未實作。
   - 生成期限：程式預設 `GENERATION_TTL` 維持 30 分鐘；`docker-compose.yml` 預設將改為 `2m`（尚未實作）；期限在送出時寫入訂單，改設定只影響新訂單；`VENDOR_DELAY_SEC` 接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時。
   - registry 放 adapter 層。
   - 開關：`/debug/*` 由 `DEBUG_API_ENABLED` 控制，程式預設關閉，未開啟回 `404`；`docker-compose.yml` 預設開啟；同時需要 Bearer token。
@@ -155,7 +155,7 @@
   - `vendor_*` 異常的 `times`：每個被接受的工作扣 1，連續套用到接下來 N 個工作，和 `vendor_duplicate_callback` 的 `count` 無關。
   - `POST /debug/faults/consume` 和其他 `/debug/*` 一樣受 `DEBUG_API_ENABLED` 與 Bearer token 保護，只給 vendor-sim 用。
   - vendor-sim 收到新工作時呼叫一次內部端點 `POST /debug/faults/consume`，重送的同一 `job_id` 不再呼叫；查詢失敗當沒有異常、正常回呼並記 log；異常綁定下一個被接受的工作。
-  - 六種異常行為：`response_lost_after_commit` 交易提交後中斷連線、不送回應；`upload_interrupted` 的 `params.after_bytes`（預設 1024）讀到後中斷連線，暫存檔丟棄、狀態不變，App 看到網路錯誤而非 `408`；登記時接受任何正整數，`GET /debug/faults` 顯示原設定值；小於 3 時實際在讀到 3 bytes 後才中斷，因為要先讀前 3 bytes 檢查是不是 JPEG，內容不合法才能回 `400` 且不消耗異常（取捨：設定 1、2 時，設定值和實際斷線位置有落差；沒選登記時拒絕，是為了不改 API）；固定長度內容要超過 `after_bytes` 才中斷，長度相等會成功且不消耗（帶 `Content-Length` 實測，chunked 尾端分開抵達未驗證）；`upload_expired` 作用在下一次上傳或送出請求所指的訂單，把該訂單的上傳期限（`upload_expires_at`）設為現在，走真實的 `410` 與釋放，訂單已不是 `AWAITING_UPLOAD`／`UPLOADED` 時不消耗這次異常，內容檢查仍先於逾期判斷（內容不合法回 `400`／`413`，不是 `410`）；`vendor_failed` 的 `params.reason` 預設空值（記為 `VENDOR_FAILED`），可設 `CONTENT_REJECTED`；`vendor_duplicate_callback` 的 `params.count` 預設 3、`params.status` 預設 `SUCCEEDED`，前 count-1 次同一 `event_id`、最後一次新 `event_id`，預設值會走到兩條去重路徑；`vendor_no_callback` 不回呼，靠 `GENERATION_TTL` 逾時。
+  - 六種異常行為：`response_lost_after_commit` 交易提交後中斷連線、不送回應；`upload_interrupted` 的 `params.after_bytes`（預設 1024）讀到後中斷連線，暫存檔丟棄、狀態不變，App 看到網路錯誤而非 `408`；登記時接受任何正整數，`GET /debug/faults` 顯示原設定值；小於 3 時生效值是 3，因為要先讀前 3 bytes 檢查是不是 JPEG，內容不合法才能回 `400` 且不消耗異常（取捨：設定 1、2 時，設定值和實際斷線位置有落差；沒選登記時拒絕，是為了不改 API）；固定長度內容超過生效值才中斷，長度相等回 `200` 且不消耗；chunked 不在保證內：最後一段和結尾標記分開抵達（結尾延後 50ms）時，3 bytes（`after_bytes` 3）和 100 bytes（`after_bytes` 100）實測都會中斷並消耗，同時抵達未測；`upload_expired` 作用在下一次上傳或送出請求所指的訂單，把該訂單的上傳期限（`upload_expires_at`）設為現在，走真實的 `410` 與釋放，訂單已不是 `AWAITING_UPLOAD`／`UPLOADED` 時不消耗這次異常，內容檢查仍先於逾期判斷（內容不合法回 `400`／`413`，不是 `410`）；`vendor_failed` 的 `params.reason` 預設空值（記為 `VENDOR_FAILED`），可設 `CONTENT_REJECTED`；`vendor_duplicate_callback` 的 `params.count` 預設 3、`params.status` 預設 `SUCCEEDED`，前 count-1 次同一 `event_id`、最後一次新 `event_id`，預設值會走到兩條去重路徑；`vendor_no_callback` 不回呼，靠 `GENERATION_TTL` 逾時。
 
 ## 8. 架構與測試（§9、§11）
 

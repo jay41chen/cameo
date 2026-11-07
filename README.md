@@ -1,6 +1,6 @@
 # 客串短劇
 
-> 狀態：進行中。主流程（選片段到生成完成通知）的後端與 Android App 已接通，只在 API 37 模擬器驗證過；後端的影片與分享 API 已完成；App 首頁改版、App 的播放與分享入口尚未完成；異常的登記與重設已完成，異常的實際觸發尚未完成。已驗證與未涵蓋項目的總表，待完整情境驗證後補上。
+> 狀態：進行中。主流程（選片段到生成完成通知）的後端與 Android App 已接通，只在 API 37 模擬器驗證過；後端的影片與分享 API 已完成；App 首頁改版、App 的播放與分享入口尚未完成；異常的登記與重設已完成；上傳與回應類 3 種異常已會觸發，廠商回呼類 3 種尚未完成。已驗證與未涵蓋項目的總表，待完整情境驗證後補上。
 
 ## 專案介紹
 
@@ -353,9 +353,9 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 ### Debug 異常 API
 
-已實作 `GET`／`POST`／`DELETE /debug/faults` 與 `POST /debug/reset`；**設定異常目前只會登記，不會真的觸發**。`POST /debug/faults/consume` 與 6 種異常的實際行為是已定案的約定，尚未實作。
+已實作 `GET`／`POST`／`DELETE /debug/faults`、`POST /debug/reset`，以及 `response_lost_after_commit`、`upload_interrupted`、`upload_expired` 的實際觸發。`POST /debug/faults/consume` 尚未實作；**`vendor_*` 3 種異常目前只會登記，不會真的觸發**，其行為是已定案的約定。
 
-驗證程度：自動測試涵蓋上述端點；在 Docker 實測確認 reset、互斥、並存和部分輸入驗證。`DEBUG_API_ENABLED=false` 在目前版本未於 Docker 重跑，開關讀環境變數的判斷也沒有自動測試；同名覆蓋和其餘輸入驗證只有自動測試，沒有 Docker 實測。
+驗證程度：自動測試涵蓋上述端點和 3 種已會觸發的異常；在 Docker 實測確認 reset、互斥、並存、部分輸入驗證和這 3 種異常的觸發。`DEBUG_API_ENABLED=false` 已於 Docker 重跑（`/debug/reset`、`/debug/faults` 回 `404`，訂單與額度不變），開關讀環境變數的判斷沒有自動測試；同名覆蓋和其餘輸入驗證只有自動測試，沒有 Docker 實測。
 
 僅存在於模擬環境，不檢查 App 版本；不做 console 網站。
 
@@ -388,12 +388,12 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 `vendor-sim` 取得異常：收到新工作時對 `POST /debug/faults/consume` 呼叫一次，重送的同一 `job_id` 不再呼叫。查詢失敗就當沒有異常、正常回呼，並記 log。異常綁定下一個被接受的工作。
 
-可設定的異常名稱（6 種）與約定行為（尚未觸發）：
+可設定的異常名稱（6 種）與行為（`vendor_*` 3 種是約定，尚未觸發）：
 
 | 名稱 | 行為 |
 |---|---|
 | `response_lost_after_commit` | 交易提交後中斷連線，不送回應；`target` 為 `create` 或 `submit` |
-| `upload_interrupted` | `params.after_bytes`（預設 1024），讀到該位元組數後中斷連線；小於 3 時實際讀到 3 bytes 才中斷（要先檢查是不是 JPEG）；固定長度內容要超過這個值才中斷，長度相等會成功且不消耗異常（chunked 尾端分開抵達未驗證）；暫存檔丟棄、訂單狀態不變。App 看到的是網路錯誤，不是 `408`（`408 UPLOAD_INTERRUPTED` 仍是真實的讀取失敗規則） |
+| `upload_interrupted` | `params.after_bytes`（預設 1024），內容超過這個值才中斷連線，長度相等會成功且不消耗異常；小於 3 時以 3 計算（要先檢查是不是 JPEG）；以上只保證固定長度內容，chunked 長度相等也可能中斷；暫存檔丟棄、訂單狀態不變。App 看到的是網路錯誤，不是 `408`（`408 UPLOAD_INTERRUPTED` 仍是真實的讀取失敗規則） |
 | `upload_expired` | 作用在下一次上傳或送出請求所指的訂單，把該訂單的上傳期限（`upload_expires_at`）設為現在，走真實的 `410` 和釋放流程。訂單已不是 `AWAITING_UPLOAD`／`UPLOADED` 時不消耗這次異常。內容檢查仍先於逾期判斷，所以內容不合法時回 `400`／`413`，不是 `410` |
 | `vendor_failed` | `params.reason` 預設空值（記為 `VENDOR_FAILED`），可設 `CONTENT_REJECTED` |
 | `vendor_duplicate_callback` | `params.count` 預設 3、`params.status` 預設 `SUCCEEDED`；前 count-1 次用同一個 `event_id`，最後一次用新的 `event_id`，預設值會走到兩條去重路徑 |
