@@ -545,4 +545,56 @@ class ViewModelTest {
         assertEquals(1, clips.calls)
         assertEquals(clipList, vm.clips.value)
     }
+
+    @Test
+    fun myCameos_submittedListFailure_keepsUnfinished() = runTest {
+        val pending = FakePendingRepo()
+        pending.rows += draftRow
+        val vm = myCameosVm(
+            pending = pending,
+            quota = quotaOk(),
+            listCameos = { failure },
+        )
+        advanceUntilIdle()
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(listOf("k1"), vm.unfinished.value.map { it.pending.clientRequestId })
+        assertEquals(PagePhase.Error, vm.state.value.phase)
+    }
+
+    @Test
+    fun myCameos_unfinishedLoaded_falseUntilQueryCompletes() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val base = FakePendingRepo()
+        val pending = object : PendingCameoRepository by base {
+            override suspend fun list(): List<PendingCameo> {
+                gate.await()
+                return base.list()
+            }
+        }
+        val vm = myCameosVm(pending = pending, quota = quotaOk())
+        assertFalse(vm.unfinishedLoaded.value)
+        vm.onResume()
+        advanceUntilIdle()
+        assertFalse(vm.unfinishedLoaded.value) // 查詢卡住
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(vm.unfinishedLoaded.value)
+    }
+
+    @Test
+    fun myCameos_remove_whenQuotaZero_stillDeletesDraftAndRefreshes() = runTest {
+        val pending = FakePendingRepo()
+        pending.rows += draftRow
+        val quota = FakeQuota()
+        repeat(2) { quota.queue.addLast { DomainResult.Success(quotaOf(0)) } }
+        val vm = myCameosVm(pending = pending, quota = quota)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(1, vm.unfinished.value.size)
+        vm.remove(vm.unfinished.value[0])
+        advanceUntilIdle()
+        assertTrue(pending.rows.isEmpty())
+        assertTrue(vm.unfinished.value.isEmpty())
+    }
 }

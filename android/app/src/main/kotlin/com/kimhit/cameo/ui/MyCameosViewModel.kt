@@ -36,6 +36,9 @@ class MyCameosViewModel @Inject constructor(
     private val _unfinished = MutableStateFlow<List<UnfinishedCameo>>(emptyList())
     val unfinished: StateFlow<List<UnfinishedCameo>> = _unfinished
 
+    private val _unfinishedLoaded = MutableStateFlow(false)
+    val unfinishedLoaded: StateFlow<Boolean> = _unfinishedLoaded
+
     private val _clips = MutableStateFlow<List<Clip>>(emptyList())
     val clips: StateFlow<List<Clip>> = _clips
 
@@ -60,7 +63,10 @@ class MyCameosViewModel @Inject constructor(
 
     private fun refreshUnfinished() {
         unfinishedJob?.cancel()
-        unfinishedJob = viewModelScope.launch { _unfinished.value = getUnfinished() }
+        unfinishedJob = viewModelScope.launch {
+            _unfinished.value = getUnfinished()
+            _unfinishedLoaded.value = true
+        }
     }
 
     /** 片段名稱只用來顯示待處理列；失敗保持空清單、不顯示錯誤，下次回前景再查。 */

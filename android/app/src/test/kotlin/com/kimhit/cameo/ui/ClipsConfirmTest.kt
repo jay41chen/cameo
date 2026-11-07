@@ -10,10 +10,8 @@ import com.kimhit.cameo.domain.model.PendingStep
 import com.kimhit.cameo.domain.model.UnfinishedCameo
 import com.kimhit.cameo.domain.repository.PendingCameoRepository
 import com.kimhit.cameo.domain.usecase.ConfirmCameoUseCase
-import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
 import com.kimhit.cameo.domain.usecase.GetQuotaUseCase
-import com.kimhit.cameo.domain.usecase.GetUnfinishedCameosUseCase
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -50,8 +48,6 @@ class ClipsQuotaTest {
     @After
     fun tearDown() = Dispatchers.resetMain()
 
-    private val pending = FakePendingRepo()
-    private val cameos = FakeCameoRepo()
     private val quota = FakeQuota()
 
     private fun vm() = ClipsViewModel(
@@ -62,11 +58,6 @@ class ClipsQuotaTest {
     private fun quotaReturns(vararg r: DomainResult<com.kimhit.cameo.domain.model.Quota>) {
         r.forEach { v -> quota.queue.addLast { v } }
     }
-
-    private val expiredRow = UnfinishedCameo(
-        PendingCameo("k1", "c1", "u1", PendingStep.UPLOAD, null),
-        testOrder(CameoStatus.EXPIRED),
-    )
 
     @Test
     fun tryStart_blocksOnlyWhenRemainingIsZero_andSetsHint() = runTest {
@@ -210,7 +201,7 @@ class MyCameosDraftTest {
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class ClipsUnfinishedTest {
+class MyCameosUnfinishedTest {
     @Before
     fun setUp() = Dispatchers.setMain(StandardTestDispatcher())
 

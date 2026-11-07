@@ -103,7 +103,7 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
         ) { entry ->
             val clipId = checkNotNull(entry.arguments?.getString("clipId"))
             val request = entry.arguments?.getString("request")
-            // 離開相機頁，確認頁／進度頁返回會回清單
+            // 離開相機頁，確認頁／進度頁返回會回到進入流程的頁面
             FlowScaffold {
                 CameraScreen(
                     onUsePhoto = {
@@ -411,6 +411,8 @@ private fun LazyListScope.pagedFooter(state: PagedUiState<*>, loadMore: () -> Un
     }
 }
 
+private const val PENDING_HEADER_KEY = "pending_header"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MyCameosScreen(
@@ -424,21 +426,27 @@ fun MyCameosScreen(
     val throttle = rememberNavClickThrottle()
     val state by viewModel.state.collectAsState()
     val unfinished by viewModel.unfinished.collectAsState()
+    val unfinishedLoaded by viewModel.unfinishedLoaded.collectAsState()
     val clips by viewModel.clips.collectAsState()
     val hint by viewModel.blockedHint.collectAsState()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val showBackToTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
     val firstId = state.items.firstOrNull()?.id
-    var previousFirstId by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(firstId) {
+    val listTop = ListTop(
+        topKey = if (unfinished.isNotEmpty()) PENDING_HEADER_KEY else firstId,
+        firstId = firstId,
+        pendingCount = unfinished.size,
+    )
+    var previousTop by remember { mutableStateOf<ListTop?>(null) }
+    LaunchedEffect(listTop) {
         val shouldScroll = shouldScrollToTop(
-            previousFirstId,
-            firstId,
+            previousTop,
+            listTop,
             listState.layoutInfo.visibleItemsInfo.map { it.key },
         )
-        // 先更新再捲動：animateScrollToItem 可能因 firstId 再變而被取消
-        previousFirstId = firstId
+        // 先更新再捲動：animateScrollToItem 可能因 listTop 再變而被取消
+        previousTop = listTop
         if (shouldScroll) listState.animateScrollToItem(0)
     }
     OnResume(viewModel::onResume)
@@ -456,67 +464,80 @@ fun MyCameosScreen(
         },
     ) { padding ->
         Box(Modifier.padding(padding)) {
-            when (state.phase) {
-                PagePhase.Loading -> LoadingBox()
-                PagePhase.Error -> ErrorBox(state.errorMessage, viewModel::loadFirstPage, Modifier.fillMaxSize())
-                else -> Column(Modifier.fillMaxSize()) {
-                    // 刷新失敗的提示固定在列表外，不論捲到哪都看得到
-                    if (state.refreshFailed) {
-                        if (state.refreshing) {
-                            Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) { CircularProgressIndicator() }
-                        } else {
-                            ErrorBox(state.errorMessage, viewModel::refresh, Modifier.fillMaxWidth())
+            Column(Modifier.fillMaxSize()) {
+                // 刷新失敗的提示固定在列表外，不論捲到哪都看得到
+                if (state.refreshFailed) {
+                    if (state.refreshing) {
+                        Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) { CircularProgressIndicator() }
+                    } else {
+                        ErrorBox(state.errorMessage, viewModel::refresh, Modifier.fillMaxWidth())
+                    }
+                }
+                Box(Modifier.weight(1f)) {
+                    LazyColumn(
+                        Modifier.fillMaxSize(),
+                        state = listState,
+                        contentPadding = PaddingValues(bottom = 80.dp),
+                    ) {
+                        if (unfinished.isNotEmpty()) {
+                            item(key = PENDING_HEADER_KEY) {
+                                Text(
+                                    "待處理",
+                                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            }
+                            items(unfinished, key = { it.pending.clientRequestId }) { row ->
+                                UnfinishedRow(
+                                    row = row,
+                                    clips = clips,
+                                    onContinue = { throttle.guarded { onContinue(row.pending) } },
+                                    onRestart = {
+                                        throttle.guarded {
+                                            if (viewModel.restart(row)) onStartCamera(row.pending.clipId)
+                                        }
+                                    },
+                                    onRemove = { viewModel.remove(row) },
+                                )
+                            }
+                        }
+                        when (
+                            submittedSection(
+                                state.phase,
+                                state.items.isNotEmpty(),
+                                unfinishedLoaded,
+                                unfinished.isNotEmpty(),
+                            )
+                        ) {
+                            SubmittedSection.Loading -> item {
+                                Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
+                                    CircularProgressIndicator()
+                                }
+                            }
+                            SubmittedSection.Error -> item {
+                                ErrorBox(state.errorMessage, viewModel::loadFirstPage, Modifier.fillMaxWidth())
+                            }
+                            SubmittedSection.AllEmpty -> item { Text("還沒有客串", Modifier.padding(16.dp)) }
+                            SubmittedSection.Content -> {
+                                if (unfinished.isNotEmpty() && state.items.isNotEmpty()) {
+                                    item {
+                                        Text(
+                                            "已送出",
+                                            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                            style = MaterialTheme.typography.titleMedium,
+                                        )
+                                    }
+                                }
+                                items(state.items, key = { it.id }) { MyCameoRow(it) }
+                                pagedFooter(state, viewModel::loadMore)
+                            }
                         }
                     }
-                    Box(Modifier.weight(1f)) {
-                        LazyColumn(
-                            Modifier.fillMaxSize(),
-                            state = listState,
-                            contentPadding = PaddingValues(bottom = 80.dp),
-                        ) {
-                            if (unfinished.isNotEmpty()) {
-                                item {
-                                    Text(
-                                        "待處理",
-                                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                        style = MaterialTheme.typography.titleMedium,
-                                    )
-                                }
-                                items(unfinished, key = { it.pending.clientRequestId }) { row ->
-                                    UnfinishedRow(
-                                        row = row,
-                                        clips = clips,
-                                        onContinue = { throttle.guarded { onContinue(row.pending) } },
-                                        onRestart = {
-                                            throttle.guarded {
-                                                if (viewModel.restart(row)) onStartCamera(row.pending.clipId)
-                                            }
-                                        },
-                                        onRemove = { viewModel.remove(row) },
-                                    )
-                                }
-                            }
-                            if (state.items.isEmpty()) {
-                                item { Text("還沒有客串", Modifier.padding(16.dp)) }
-                            }
-                            if (unfinished.isNotEmpty() && state.items.isNotEmpty()) {
-                                item {
-                                    Text(
-                                        "已送出",
-                                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                        style = MaterialTheme.typography.titleMedium,
-                                    )
-                                }
-                            }
-                            items(state.items, key = { it.id }) { MyCameoRow(it) }
-                            pagedFooter(state, viewModel::loadMore)
-                        }
-                        if (showBackToTop) {
-                            Button(
-                                onClick = { scope.launch { listState.scrollToItem(0) } },
-                                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
-                            ) { Text("回到頂端") }
-                        }
+                    if (showBackToTop) {
+                        Button(
+                            onClick = { scope.launch { listState.scrollToItem(0) } },
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+                        ) { Text("回到頂端") }
                     }
                 }
             }
