@@ -1,7 +1,9 @@
 package http
 
 import (
+	"io"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -195,5 +197,110 @@ func TestFaultConcurrentDifferentVendorKindsLeaveOne(t *testing.T) {
 		if len(l) != 1 {
 			t.Fatalf("round %d: list = %+v, want exactly one vendor fault", round, l)
 		}
+	}
+}
+
+func TestFaultPeekDoesNotConsumeAndReturnsCopy(t *testing.T) {
+	var r faultRegistry
+	r.add(faultEntry{Name: "upload_interrupted", Times: 1, Params: map[string]any{"after_bytes": 5}})
+	for i := 0; i < 3; i++ {
+		p, ok := r.peek("upload_interrupted")
+		if !ok || p["after_bytes"] != 5 {
+			t.Fatalf("peek %d = %v %v", i, p, ok)
+		}
+		p["after_bytes"] = 99 // 改拷貝不影響登記
+	}
+	if got := r.list(); len(got) != 1 || got[0].Times != 1 || got[0].Params["after_bytes"] != 5 {
+		t.Fatalf("list = %v", got)
+	}
+	if _, ok := r.peek("upload_expired"); ok {
+		t.Fatal("peek of unregistered name should be false")
+	}
+}
+
+func readAll(t *testing.T, ir *interruptingReader) (string, error) {
+	t.Helper()
+	var out []byte
+	buf := make([]byte, 4)
+	for {
+		n, err := ir.Read(buf)
+		out = append(out, buf[:n]...)
+		if err != nil {
+			return string(out), err
+		}
+	}
+}
+
+// 注意：內容長度剛好等於限制時，strings.Reader 先回 (n, nil) 再回 (0, EOF)，會觸發中斷；
+// 真實 server 的固定長度 body 在最後一次 Read 同時回 EOF，不會中斷，以整合測試為準。
+func TestInterruptingReaderCutsAfterBytesAndConsumesOnce(t *testing.T) {
+	var r faultRegistry
+	r.add(entry("upload_interrupted", nil, 1))
+	ir := &interruptingReader{r: strings.NewReader("0123456789"), remaining: 6, faults: &r}
+	got, err := readAll(t, ir)
+	if got != "012345" || err != errUploadInterrupted || !ir.tripped {
+		t.Fatalf("got %q err %v tripped %v", got, err, ir.tripped)
+	}
+	if len(r.list()) != 0 {
+		t.Fatalf("not consumed: %v", r.list())
+	}
+}
+
+func TestInterruptingReaderShortContentDoesNotConsume(t *testing.T) {
+	var r faultRegistry
+	r.add(entry("upload_interrupted", nil, 1))
+	ir := &interruptingReader{r: strings.NewReader("0123"), remaining: 6, faults: &r}
+	got, err := readAll(t, ir)
+	if got != "0123" || err != io.EOF || ir.tripped {
+		t.Fatalf("got %q err %v tripped %v", got, err, ir.tripped)
+	}
+	if got := r.list(); len(got) != 1 || got[0].Times != 1 {
+		t.Fatalf("consumed: %v", got)
+	}
+}
+
+func TestInterruptingReaderFallsBackWhenFaultCleared(t *testing.T) {
+	var r faultRegistry // 途中被清掉：take 失敗，改回正常讀取
+	ir := &interruptingReader{r: strings.NewReader("0123456789"), remaining: 6, faults: &r}
+	got, err := readAll(t, ir)
+	if got != "0123456789" || err != io.EOF || ir.tripped {
+		t.Fatalf("got %q err %v tripped %v", got, err, ir.tripped)
+	}
+}
+
+// eofWithDataReader 讀完最後的資料時同時回 (n, io.EOF)，之後再讀回 (0, io.EOF)。
+type eofWithDataReader struct{ data []byte }
+
+func (e *eofWithDataReader) Read(p []byte) (int, error) {
+	if len(e.data) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, e.data)
+	e.data = e.data[n:]
+	if len(e.data) == 0 {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func TestInterruptingReaderRemembersEOFAndDoesNotConsume(t *testing.T) {
+	var r faultRegistry
+	r.add(entry("upload_interrupted", nil, 1))
+	ir := &interruptingReader{r: &eofWithDataReader{data: []byte("abc")}, remaining: 3, faults: &r}
+	buf := make([]byte, 3)
+	n, err := ir.Read(buf)
+	if n != 3 || err != io.EOF {
+		t.Fatalf("first read = %d %v, want 3 EOF", n, err)
+	}
+	for i := 0; i < 2; i++ {
+		if n, err := ir.Read(buf); n != 0 || err != io.EOF {
+			t.Fatalf("read after EOF = %d %v, want 0 EOF", n, err)
+		}
+	}
+	if ir.tripped {
+		t.Fatal("tripped after EOF")
+	}
+	if got := r.list(); len(got) != 1 || got[0].Times != 1 {
+		t.Fatalf("consumed: %v", got)
 	}
 }

@@ -103,6 +103,12 @@ func (d *fakeDB) ExpireCameo(_ context.Context, id string, now time.Time) (bool,
 	c.Status, c.PointsState = domain.StatusExpired, domain.PointsReleased
 	return true, nil
 }
+func (d *fakeDB) SetUploadExpiresAt(_ context.Context, id string, at time.Time) error {
+	if d.cameo.ID == id {
+		d.cameo.UploadExpiresAt = at
+	}
+	return nil
+}
 func (d *fakeDB) MarkUploaded(_ context.Context, _ string, _ time.Time) error {
 	d.cameo.Status = domain.StatusUploaded
 	return nil

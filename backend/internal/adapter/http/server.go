@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
+	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -57,6 +58,9 @@ func Handler(svc *usecase.Service, opts ...Option) http.Handler {
 	s := &server{svc: svc}
 	for _, o := range opts {
 		o(s)
+	}
+	if s.debug {
+		svc.SetUploadExpiryFault(func() bool { _, ok := s.faults.take(faultUploadExpired, ""); return ok })
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
@@ -348,6 +352,7 @@ func (s *server) createCameo(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, r, err)
 		return
 	}
+	s.loseResponseIfArmed("create")
 	status := http.StatusOK
 	if res.Created {
 		status = http.StatusCreated
@@ -474,8 +479,17 @@ func (s *server) sharedVideo(w http.ResponseWriter, r *http.Request) {
 
 // putSelfie 只看內容（前 3 bytes 是否為 JPEG），不看 Content-Type。
 func (s *server) putSelfie(w http.ResponseWriter, r *http.Request) {
-	body := http.MaxBytesReader(w, r.Body, s.svc.MaxSelfieBytes())
+	var body io.Reader = http.MaxBytesReader(w, r.Body, s.svc.MaxSelfieBytes())
+	var cut *interruptingReader
+	if s.debug {
+		if cut = s.wrapUploadFault(body); cut != nil {
+			body = cut
+		}
+	}
 	c, err := s.svc.UploadSelfie(r.Context(), r.PathValue("id"), body)
+	if cut != nil && cut.tripped {
+		panic(http.ErrAbortHandler) // upload_interrupted：不寫回應；暫存檔已由 UploadSelfie 丟棄
+	}
 	var tooLarge *http.MaxBytesError
 	var readErr *usecase.BodyReadError
 	switch {
@@ -513,6 +527,7 @@ func (s *server) submitCameo(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, r, err)
 		return
 	}
+	s.loseResponseIfArmed("submit")
 	writeJSON(w, http.StatusOK, s.toCameoResponse(c))
 }
 

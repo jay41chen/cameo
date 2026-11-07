@@ -106,6 +106,11 @@ func (t *txStore) ExpireCameo(ctx context.Context, id string, now time.Time) (bo
 	return tag.RowsAffected() == 1, err
 }
 
+func (t *txStore) SetUploadExpiresAt(ctx context.Context, id string, at time.Time) error {
+	_, err := t.db.Exec(ctx, `UPDATE cameos SET upload_expires_at = $1 WHERE user_id = $2 AND id = $3`, at, userID, id)
+	return err
+}
+
 func (t *txStore) MarkUploaded(ctx context.Context, id string, now time.Time) error {
 	_, err := t.db.Exec(ctx, `UPDATE cameos SET status = 'UPLOADED', updated_at = $1 WHERE user_id = $2 AND id = $3`, now, userID, id)
 	return err

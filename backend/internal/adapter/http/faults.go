@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,7 +13,8 @@ import (
 	"unicode/utf8"
 )
 
-// 可登記的異常名稱。8.1 只負責登記，不會真的觸發。
+// 可登記的異常名稱。API 這側的三種（response_lost_after_commit、upload_interrupted、upload_expired）已會觸發（8.2）；
+// vendor_* 仍只登記（8.3）。
 const (
 	faultResponseLost             = "response_lost_after_commit"
 	faultUploadInterrupted        = "upload_interrupted"
@@ -104,6 +106,18 @@ func (r *faultRegistry) take(name, target string) (map[string]any, bool) {
 			r.entries = append(r.entries[:i], r.entries[i+1:]...)
 		}
 		return params, true
+	}
+	return nil, false
+}
+
+// peek 回傳 name 的 params 深拷貝，不扣次數也不看 target；沒有登記回 false。
+func (r *faultRegistry) peek(name string) (map[string]any, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.entries {
+		if e.Name == name {
+			return cloneEntry(e).Params, true
+		}
 	}
 	return nil, false
 }
@@ -343,4 +357,69 @@ func (s *server) debugReset(w http.ResponseWriter, r *http.Request) {
 	}
 	s.faults.clear()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// loseResponseIfArmed 在交易已提交、回應還沒寫之前呼叫：target 相符且有登記就扣 1 次，並中斷連線不送回應。
+// 只有成功路徑呼叫；失敗的請求不消耗。
+func (s *server) loseResponseIfArmed(target string) {
+	if _, ok := s.faults.take(faultResponseLost, target); ok {
+		panic(http.ErrAbortHandler)
+	}
+}
+
+// errUploadInterrupted 是 upload_interrupted 注入的讀取錯誤（不是 io.EOF）。
+var errUploadInterrupted = errors.New("debug fault: upload interrupted")
+
+// interruptingReader 讓上傳在送出 remaining bytes 後的下一次 Read 才中斷。
+// 到那一刻才呼叫 take 扣次數；take 失敗（途中被清掉）就改回正常讀取。
+// 內容不足 remaining 時讀到 EOF 即結束，不消耗。
+type interruptingReader struct {
+	r         io.Reader
+	remaining int64
+	faults    *faultRegistry
+	tripped   bool
+	passThru  bool
+	eof       bool // 底層已回過 io.EOF；之後直接回 EOF，不再 take
+}
+
+func (i *interruptingReader) Read(p []byte) (int, error) {
+	if i.eof {
+		return 0, io.EOF
+	}
+	if i.passThru {
+		return i.r.Read(p)
+	}
+	if i.remaining <= 0 {
+		if _, ok := i.faults.take(faultUploadInterrupted, ""); ok {
+			i.tripped = true
+			return 0, errUploadInterrupted
+		}
+		i.passThru = true
+		return i.r.Read(p)
+	}
+	if int64(len(p)) > i.remaining {
+		p = p[:i.remaining]
+	}
+	n, err := i.r.Read(p)
+	i.remaining -= int64(n)
+	if err == io.EOF {
+		i.eof = true
+	}
+	return n, err
+}
+
+// minInterruptBytes 是實際中斷點的下限：UploadSelfie 的 JPEG 內容檢查要先讀前 3 bytes，
+// 太早中斷會讓不合法內容得到連線中斷而不是 400 INVALID_SELFIE，且異常被消耗。
+// 登記時仍接受任何正整數，GET /debug/faults 回傳原設定值。
+const minInterruptBytes = 3
+
+// wrapUploadFault 有登記 upload_interrupted 時包上 interruptingReader；沒登記回 nil。
+func (s *server) wrapUploadFault(body io.Reader) *interruptingReader {
+	params, ok := s.faults.peek(faultUploadInterrupted)
+	if !ok {
+		return nil
+	}
+	after, _ := params["after_bytes"].(int)
+	after = max(after, minInterruptBytes)
+	return &interruptingReader{r: body, remaining: int64(after), faults: &s.faults}
 }

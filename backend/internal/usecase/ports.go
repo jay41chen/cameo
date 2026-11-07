@@ -73,6 +73,8 @@ type Tx interface {
 	// ExpireCameo 若該訂單為 AWAITING_UPLOAD／UPLOADED 且已逾期，轉為 EXPIRED／RELEASED 並回傳 true。
 	// 逾期判斷與 ExpireDue 是同一個規則（upload_expires_at <= now）。
 	ExpireCameo(ctx context.Context, id string, now time.Time) (expired bool, err error)
+	// SetUploadExpiresAt 把訂單的 upload_expires_at 設為 at（debug 異常用）。
+	SetUploadExpiresAt(ctx context.Context, id string, at time.Time) error
 	// MarkUploaded 把訂單設為 UPLOADED 並更新 updated_at。
 	MarkUploaded(ctx context.Context, id string, now time.Time) error
 	// DebitAccount 從餘額扣除 amount。

@@ -109,6 +109,9 @@ func (s *Service) UploadSelfie(ctx context.Context, id string, body io.Reader) (
 		default:
 			return domain.ErrInvalidState
 		}
+		if err := s.applyUploadExpiryFault(ctx, tx, id, now); err != nil {
+			return err
+		}
 		// 逾期要讓釋放真的 commit，所以這裡回 nil，交易外再回 410。
 		gone, err := tx.ExpireCameo(ctx, id, now)
 		if err != nil {
@@ -173,6 +176,9 @@ func (s *Service) SubmitCameo(ctx context.Context, id string) (domain.Cameo, err
 		default: // QUEUED、GENERATING、SUCCEEDED、FAILED：冪等，不重複扣款。
 			res = c
 			return nil
+		}
+		if err := s.applyUploadExpiryFault(ctx, tx, id, now); err != nil {
+			return err
 		}
 		gone, err := tx.ExpireCameo(ctx, id, now)
 		if err != nil {

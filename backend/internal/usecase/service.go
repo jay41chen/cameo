@@ -43,6 +43,9 @@ type Service struct {
 	cfg    Config
 	files  FileStore
 	vendor VendorClient
+	// uploadExpiryFault 是 debug 用的 hook：回傳 true 表示這次請求要讓訂單逾期。usecase 不知道異常登記，
+	// 只在組裝時由 adapter 注入；nil 表示沒有。
+	uploadExpiryFault func() bool
 }
 
 func NewService(q Queries, tx TxRunner, clock Clock, cfg Config, files FileStore) *Service {
@@ -65,6 +68,19 @@ func NewService(q Queries, tx TxRunner, clock Clock, cfg Config, files FileStore
 func (s *Service) WithVendor(v VendorClient) *Service {
 	s.vendor = v
 	return s
+}
+
+// SetUploadExpiryFault 設定 debug 用的逾期 hook，只在組裝時呼叫（比照 WithVendor）。
+// hook 只在上傳或送出的訂單狀態允許時才會被呼叫；回傳 true 就把該訂單的 upload_expires_at 設為現在，
+// 之後走真實的逾期釋放流程。
+func (s *Service) SetUploadExpiryFault(fn func() bool) { s.uploadExpiryFault = fn }
+
+// applyUploadExpiryFault 在交易內、狀態確認可上傳之後、ExpireCameo 之前呼叫。
+func (s *Service) applyUploadExpiryFault(ctx context.Context, tx Tx, id string, now time.Time) error {
+	if s.uploadExpiryFault == nil || !s.uploadExpiryFault() {
+		return nil
+	}
+	return tx.SetUploadExpiresAt(ctx, id, now)
 }
 
 // MaxSelfieBytes 是上傳自拍的大小上限。
