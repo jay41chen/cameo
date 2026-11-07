@@ -63,16 +63,19 @@ internal const val GENERIC_ERROR = "發生錯誤，請稍後再試"
 internal const val EXPIRED_TITLE = "已過期"
 internal const val EXPIRED_MESSAGE = "上傳期限已過，點數沒有扣款，請重新客串。"
 
+/** 每頁各用一個節流：只擋同一頁的連點，前一頁的點擊不會吃掉這一頁的點擊。 */
+@Composable
+private fun rememberNavClickThrottle(): ClickThrottle =
+    remember { ClickThrottle(NAV_CLICK_INTERVAL_MS, SystemClock::elapsedRealtime) }
+
 @Composable
 fun CameoRoot(openMyCameosRequest: Int = 0) {
     // 單一導覽堆疊：首頁是我的客串，選片段、點數與流程頁都從首頁進入。
     val rootNav = rememberNavController()
-    val throttle = remember { ClickThrottle(NAV_CLICK_INTERVAL_MS, SystemClock::elapsedRealtime) }
     NavHost(rootNav, startDestination = ROUTE_MY_CAMEOS) {
         composable(ROUTE_MY_CAMEOS) {
             MyCameosScreen(
                 refreshRequest = openMyCameosRequest,
-                throttle = throttle,
                 onStartClick = { rootNav.navigateSingleTop(ROUTE_CLIPS) },
                 onOpenPoints = { rootNav.navigateSingleTop(ROUTE_POINTS) },
             )
@@ -80,7 +83,6 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
         composable(ROUTE_CLIPS) {
             FlowScaffold {
                 ClipsScreen(
-                    throttle = throttle,
                     onStartCamera = { rootNav.navigateSingleTop(cameraRoute(it)) },
                     onContinue = { rootNav.navigateSingleTop(continueRoute(it)) },
                 )
@@ -205,11 +207,11 @@ internal fun ErrorBox(message: String?, onRetry: () -> Unit, modifier: Modifier 
 
 @Composable
 fun ClipsScreen(
-    throttle: ClickThrottle,
     onStartCamera: (String) -> Unit,
     onContinue: (PendingCameo) -> Unit,
     viewModel: ClipsViewModel = hiltViewModel(),
 ) {
+    val throttle = rememberNavClickThrottle()
     val state by viewModel.state.collectAsState()
     val quota by viewModel.quota.collectAsState()
     val unfinished by viewModel.unfinished.collectAsState()
@@ -429,11 +431,11 @@ private fun LazyListScope.pagedFooter(state: PagedUiState<*>, loadMore: () -> Un
 @Composable
 fun MyCameosScreen(
     refreshRequest: Int = 0,
-    throttle: ClickThrottle,
     onStartClick: () -> Unit,
     onOpenPoints: () -> Unit,
     viewModel: MyCameosViewModel = hiltViewModel(),
 ) {
+    val throttle = rememberNavClickThrottle()
     val state by viewModel.state.collectAsState()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
