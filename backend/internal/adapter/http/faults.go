@@ -12,6 +12,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"cameo/backend/internal/domain"
 	"cameo/backend/internal/usecase"
 )
 
@@ -222,6 +223,9 @@ func vendorFailedParams(raw map[string]json.RawMessage) (map[string]any, error) 
 			return nil, invalidFault("reason 必須是字串或 null")
 		}
 		if r != nil {
+			if !domain.ValidText(*r) {
+				return nil, invalidFault("reason 含不合法字元")
+			}
 			reason = *r
 		}
 	}

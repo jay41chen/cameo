@@ -150,6 +150,10 @@ func (s *sim) consumeFault(jobID string) *fault {
 	return nil
 }
 
+// defaultDuplicateCount 是 vendor_duplicate_callback 缺 count 或不合法時的次數；
+// 與 API 的 defaultDuplicateCount 及規格預設一致（3）。不 import API 套件，故在此重複定義。
+const defaultDuplicateCount = 3
+
 const (
 	faultFailed     = "vendor_failed"
 	faultDuplicate  = "vendor_duplicate_callback"
@@ -170,7 +174,7 @@ func (s *sim) dispatch(jobID string, f *fault) {
 		}
 		s.send(callbackBody{EventID: randomID(), JobID: jobID, Status: "FAILED", Reason: reason})
 	case faultDuplicate:
-		count := 1
+		count := defaultDuplicateCount
 		if n, ok := f.Params["count"].(float64); ok && n >= 1 {
 			count = int(n)
 		}

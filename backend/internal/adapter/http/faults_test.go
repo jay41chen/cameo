@@ -115,6 +115,7 @@ func TestDebugAddFaultRejections(t *testing.T) {
 		{"after_bytes 0", `{"name":"upload_interrupted","params":{"after_bytes":0}}`, "INVALID_FAULT"},
 		{"after_bytes fraction", `{"name":"upload_interrupted","params":{"after_bytes":1.5}}`, "INVALID_FAULT"},
 		{"reason wrong type", `{"name":"vendor_failed","params":{"reason":5}}`, "INVALID_FAULT"},
+		{"reason contains NUL", `{"name":"vendor_failed","params":{"reason":"a\u0000b"}}`, "INVALID_FAULT"},
 		{"times false", `{"name":"response_lost_after_commit","target":"create","times":false}`, "INVALID_FAULT"},
 		{"status null", `{"name":"vendor_duplicate_callback","params":{"status":null}}`, "INVALID_FAULT"},
 		{"count 0", `{"name":"vendor_duplicate_callback","params":{"count":0}}`, "INVALID_FAULT"},
@@ -141,6 +142,16 @@ func TestDebugAddFaultRejections(t *testing.T) {
 		}
 		if a := activeOf(t, h); len(a) != 0 {
 			t.Errorf("%s: registered %v", c.name, a)
+		}
+	}
+}
+
+func TestDebugVendorFailedReasonAccepted(t *testing.T) {
+	for _, reason := range []string{`""`, `"CONTENT_REJECTED"`, `"其他原因"`, `null`} {
+		h := debugHandler(apihttp.WithDebugAPI())
+		rec, _ := hit(h, http.MethodPost, "/debug/faults", `{"name":"vendor_failed","params":{"reason":`+reason+`}}`, true)
+		if rec.Code != 200 || len(activeOf(t, h)) != 1 {
+			t.Errorf("reason %s: %d %s", reason, rec.Code, rec.Body.String())
 		}
 	}
 }

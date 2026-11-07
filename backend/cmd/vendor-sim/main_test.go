@@ -414,6 +414,23 @@ func TestDuplicateCallbackEventIDsByCount(t *testing.T) {
 	}
 }
 
+// params 沒有 count：預設 3 次，前 2 次同 event_id、第 3 次不同。
+func TestDuplicateCallbackDefaultCountIsThree(t *testing.T) {
+	f := newFakeAPI(t, faultJSON("vendor_duplicate_callback", `{}`))
+	runOne(t, f, "job-1")
+	got := f.callbacks()
+	if len(got) != 3 {
+		t.Fatalf("callbacks = %d, want 3", len(got))
+	}
+	var ids []string
+	for _, r := range got {
+		ids = append(ids, decode(t, r)["event_id"].(string))
+	}
+	if ids[0] != ids[1] || ids[2] == ids[0] {
+		t.Fatalf("event_ids = %v, want first 2 equal and third different", ids)
+	}
+}
+
 // consume 卡住超過 consumeTimeout：postJob 仍在有限時間內回 202，且照常送一次 SUCCEEDED。
 func TestConsumeTimeoutStillAcceptsAndSucceeds(t *testing.T) {
 	block := make(chan struct{})
@@ -423,6 +440,7 @@ func TestConsumeTimeoutStillAcceptsAndSucceeds(t *testing.T) {
 			select {
 			case <-block:
 			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
 			}
 			return
 		}
