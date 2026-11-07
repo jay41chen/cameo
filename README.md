@@ -393,7 +393,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 | 名稱 | 行為 |
 |---|---|
 | `response_lost_after_commit` | 交易提交後中斷連線，不送回應；`target` 為 `create` 或 `submit` |
-| `upload_interrupted` | `params.after_bytes`（預設 1024），讀到該位元組數後中斷連線；暫存檔丟棄、訂單狀態不變。App 看到的是網路錯誤，不是 `408`（`408 UPLOAD_INTERRUPTED` 仍是真實的讀取失敗規則） |
+| `upload_interrupted` | `params.after_bytes`（預設 1024），讀到該位元組數後中斷連線；小於 3 時實際讀到 3 bytes 才中斷（要先檢查是不是 JPEG）；固定長度內容要超過這個值才中斷，長度相等會成功且不消耗異常（chunked 尾端分開抵達未驗證）；暫存檔丟棄、訂單狀態不變。App 看到的是網路錯誤，不是 `408`（`408 UPLOAD_INTERRUPTED` 仍是真實的讀取失敗規則） |
 | `upload_expired` | 作用在下一次上傳或送出請求所指的訂單，把該訂單的上傳期限（`upload_expires_at`）設為現在，走真實的 `410` 和釋放流程。訂單已不是 `AWAITING_UPLOAD`／`UPLOADED` 時不消耗這次異常。內容檢查仍先於逾期判斷，所以內容不合法時回 `400`／`413`，不是 `410` |
 | `vendor_failed` | `params.reason` 預設空值（記為 `VENDOR_FAILED`），可設 `CONTENT_REJECTED` |
 | `vendor_duplicate_callback` | `params.count` 預設 3、`params.status` 預設 `SUCCEEDED`；前 count-1 次用同一個 `event_id`，最後一次用新的 `event_id`，預設值會走到兩條去重路徑 |
