@@ -51,4 +51,11 @@ class HomeSectionsTest {
             submittedSection(PagePhase.Idle, hasSubmitted = false, unfinishedLoaded = false, hasUnfinished = false),
         )
     }
+
+    @Test
+    fun `pointsLabel 未取得顯示 - 點，0 與一般值照數字`() {
+        assertEquals("- 點", pointsLabel(null))
+        assertEquals("0 點", pointsLabel(0))
+        assertEquals("90 點", pointsLabel(90))
+    }
 }

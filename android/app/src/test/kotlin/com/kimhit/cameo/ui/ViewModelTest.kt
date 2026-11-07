@@ -52,6 +52,15 @@ private class FakePoints(
     }
 }
 
+/** 首頁點數用的可腳本化 fake：佇列有東西就照佇列；沒有就回固定成功值（不像 [FakePoints] 空了會丟例外）。 */
+internal class ScriptedPoints(
+    private val fallback: DomainResult<Points> = DomainResult.Success(Points(100, 0)),
+) : PointsRepository {
+    val queue = ArrayDeque<suspend () -> DomainResult<Points>>()
+    override suspend fun getPoints(): DomainResult<Points> = queue.removeFirstOrNull()?.invoke() ?: fallback
+    override suspend fun getLedger(cursor: String?): DomainResult<LedgerPage> = error("not used")
+}
+
 private fun entry(id: String) =
     LedgerEntry(id, LedgerType.CHARGE, 10, null, "雨夜重逢", "2026-11-07T10:01:00+08:00")
 
@@ -79,6 +88,7 @@ internal fun myCameosVm(
     quota: FakeQuota = FakeQuota(),
     clips: ClipRepository = FakeClips(ArrayDeque(listOf(DomainResult.Success(listOf(Clip("c1", "雨夜重逢", 10)))))),
     listCameos: suspend (String?) -> DomainResult<CameoPage> = { DomainResult.Success(Page(emptyList(), null)) },
+    points: PointsRepository = ScriptedPoints(),
 ): MyCameosViewModel {
     val repo = object : CameoRepository by cameos {
         override suspend fun listCameos(cursor: String?): DomainResult<CameoPage> = listCameos(cursor)
@@ -86,6 +96,7 @@ internal fun myCameosVm(
     return MyCameosViewModel(
         GetCameoPageUseCase(repo),
         GetQuotaUseCase(quota),
+        GetPointsUseCase(points),
         GetClipsUseCase(clips),
         GetUnfinishedCameosUseCase(pending, cameos),
         DeletePendingCameoUseCase(pending),
@@ -578,6 +589,107 @@ class ViewModelTest {
         advanceUntilIdle()
         assertFalse(vm.unfinishedLoaded.value) // 查詢卡住
         gate.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(vm.unfinishedLoaded.value)
+    }
+
+    // ---- MyCameosViewModel：可用點數 ----
+
+    private fun scriptedPoint(available: Int, held: Int = 0): suspend () -> DomainResult<Points> =
+        { DomainResult.Success(Points(available, held)) }
+
+    @Test
+    fun myCameos_available_isAvailableNotHeld() = runTest {
+        val points = ScriptedPoints()
+        points.queue.addLast(scriptedPoint(90, 10))
+        val vm = myCameosVm(quota = quotaOk(), points = points)
+        assertNull(vm.available.value)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(90, vm.available.value)
+    }
+
+    @Test
+    fun myCameos_available_firstFailureStaysNull_nextResumeLoads() = runTest {
+        val points = ScriptedPoints()
+        points.queue.addLast { failure }
+        points.queue.addLast(scriptedPoint(70))
+        val vm = myCameosVm(quota = quotaOk(), points = points)
+        vm.onResume()
+        advanceUntilIdle()
+        assertNull(vm.available.value)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(70, vm.available.value)
+    }
+
+    @Test
+    fun myCameos_available_failureKeepsOldValue() = runTest {
+        val points = ScriptedPoints()
+        points.queue.addLast(scriptedPoint(90))
+        points.queue.addLast { failure }
+        val vm = myCameosVm(quota = quotaOk(), points = points)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(90, vm.available.value)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(90, vm.available.value)
+    }
+
+    @Test
+    fun myCameos_available_onResumeUpdatesToNewValue() = runTest {
+        val points = ScriptedPoints()
+        points.queue.addLast(scriptedPoint(90))
+        points.queue.addLast(scriptedPoint(60))
+        val vm = myCameosVm(quota = quotaOk(), points = points)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(90, vm.available.value)
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(60, vm.available.value)
+    }
+
+    @Test
+    fun myCameos_available_olderResponseDoesNotOverwriteNewer() = runTest {
+        val first = CompletableDeferred<DomainResult<Points>>()
+        val points = ScriptedPoints()
+        points.queue.addLast { first.await() }
+        points.queue.addLast(scriptedPoint(60))
+        val vm = myCameosVm(quota = quotaOk(), points = points)
+        vm.onResume() // 第一次查詢卡住
+        advanceUntilIdle()
+        vm.onResume() // 第二次較新，先完成
+        advanceUntilIdle()
+        assertEquals(60, vm.available.value)
+        first.complete(DomainResult.Success(Points(10, 0))) // 較舊的才回來
+        advanceUntilIdle()
+        assertEquals(60, vm.available.value)
+    }
+
+    @Test
+    fun myCameos_unfinishedLoaded_notSetWhenCancelledByNewerQuery() = runTest {
+        val gate1 = CompletableDeferred<Unit>()
+        val gate2 = CompletableDeferred<Unit>()
+        val gates = ArrayDeque(listOf(gate1, gate2))
+        val base = FakePendingRepo()
+        val pending = object : PendingCameoRepository by base {
+            override suspend fun list(): List<PendingCameo> {
+                gates.removeFirst().await()
+                return base.list()
+            }
+        }
+        val vm = myCameosVm(pending = pending, quota = quotaOk())
+        vm.onResume() // 第一次待處理查詢卡住
+        advanceUntilIdle()
+        vm.onResume() // 取消第一次，第二次也卡住
+        advanceUntilIdle()
+        assertFalse(vm.unfinishedLoaded.value)
+        gate1.complete(Unit) // 被取消的第一次放行
+        advanceUntilIdle()
+        assertFalse(vm.unfinishedLoaded.value)
+        gate2.complete(Unit)
         advanceUntilIdle()
         assertTrue(vm.unfinishedLoaded.value)
     }

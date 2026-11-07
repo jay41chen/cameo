@@ -13,6 +13,10 @@ internal data class ListTop(val topKey: Any?, val firstId: String?, val pendingC
  * 上一個頂端是否可見，在一般情況下量測前後答案相同（在畫面上的會被錨定而仍可見，
  * 不在畫面上的前後都不可見）。例外：兩次查詢之間新增超過一頁（目前 20 筆）時，
  * 上一個第一筆不在新資料內，此時可能不捲。[待確認]
+ *
+ * 時序：`animateScrollToItem(0)` 要在這次資料更新排版之後才有效；若在排版前執行，
+ * 舊排版裡 index 0 可見、距離 0，會變成空動作，之後錨定把列表留在原項目。
+ * 目前依賴 effect 在排版後才跑。[待確認]
  */
 internal fun shouldScrollToTop(previous: ListTop?, current: ListTop, visibleKeys: Collection<Any?>): Boolean {
     if (previous == null || previous.topKey == null || previous.topKey !in visibleKeys) return false

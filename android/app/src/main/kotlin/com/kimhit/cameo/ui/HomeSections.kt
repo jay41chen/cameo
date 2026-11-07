@@ -14,3 +14,6 @@ internal fun submittedSection(
     !hasSubmitted && unfinishedLoaded && !hasUnfinished -> SubmittedSection.AllEmpty
     else -> SubmittedSection.Content
 }
+
+/** 首頁右上的點數文字。還沒取得或第一次就失敗時不區分，都顯示 `- 點`。 */
+internal fun pointsLabel(available: Int?): String = if (available == null) "- 點" else "$available 點"

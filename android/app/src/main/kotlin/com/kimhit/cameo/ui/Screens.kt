@@ -412,6 +412,7 @@ private fun LazyListScope.pagedFooter(state: PagedUiState<*>, loadMore: () -> Un
 }
 
 private const val PENDING_HEADER_KEY = "pending_header"
+private const val SUBMITTED_HEADER_KEY = "submitted_header"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -429,6 +430,7 @@ fun MyCameosScreen(
     val unfinishedLoaded by viewModel.unfinishedLoaded.collectAsState()
     val clips by viewModel.clips.collectAsState()
     val hint by viewModel.blockedHint.collectAsState()
+    val available by viewModel.available.collectAsState()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val showBackToTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
@@ -456,7 +458,7 @@ fun MyCameosScreen(
         topBar = {
             TopAppBar(
                 title = { Text("我的客串") },
-                actions = { TextButton(onClick = { throttle.guarded { onOpenPoints() } }) { Text("點數") } },
+                actions = { TextButton(onClick = { throttle.guarded { onOpenPoints() } }) { Text(pointsLabel(available)) } },
             )
         },
         floatingActionButton = {
@@ -520,7 +522,7 @@ fun MyCameosScreen(
                             SubmittedSection.AllEmpty -> item { Text("還沒有客串", Modifier.padding(16.dp)) }
                             SubmittedSection.Content -> {
                                 if (unfinished.isNotEmpty() && state.items.isNotEmpty()) {
-                                    item {
+                                    item(key = SUBMITTED_HEADER_KEY) {
                                         Text(
                                             "已送出",
                                             Modifier.padding(horizontal = 16.dp, vertical = 8.dp),

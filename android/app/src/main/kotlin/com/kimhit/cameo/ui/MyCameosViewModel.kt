@@ -10,6 +10,7 @@ import com.kimhit.cameo.domain.model.UnfinishedCameo
 import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
 import com.kimhit.cameo.domain.usecase.GetCameoPageUseCase
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
+import com.kimhit.cameo.domain.usecase.GetPointsUseCase
 import com.kimhit.cameo.domain.usecase.GetQuotaUseCase
 import com.kimhit.cameo.domain.usecase.GetUnfinishedCameosUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -23,6 +24,7 @@ import kotlinx.coroutines.launch
 class MyCameosViewModel @Inject constructor(
     getCameoPage: GetCameoPageUseCase,
     getQuota: GetQuotaUseCase,
+    private val getPoints: GetPointsUseCase,
     private val getClips: GetClipsUseCase,
     private val getUnfinished: GetUnfinishedCameosUseCase,
     private val deletePending: DeletePendingCameoUseCase,
@@ -42,6 +44,12 @@ class MyCameosViewModel @Inject constructor(
     private val _clips = MutableStateFlow<List<Clip>>(emptyList())
     val clips: StateFlow<List<Clip>> = _clips
 
+    private val _available = MutableStateFlow<Int?>(null)
+
+    /** 首頁右上的可用點數；還沒取得時為 null，取得失敗保留舊值。 */
+    val available: StateFlow<Int?> = _available
+
+    private var pointsJob: Job? = null
     private var unfinishedJob: Job? = null
     private var clipsJob: Job? = null
 
@@ -53,12 +61,21 @@ class MyCameosViewModel @Inject constructor(
     fun refresh() = list.refresh()
     fun loadMore() = list.loadMore()
 
-    /** 畫面回到前景時呼叫：刷新列表、待處理區、額度，片段名稱還沒有時補查。 */
+    /** 畫面回到前景時呼叫：刷新列表、待處理區、額度、點數，片段名稱還沒有時補查。 */
     fun onResume() {
         refresh()
         refreshUnfinished()
         gate.refresh()
         loadClipsIfEmpty()
+        refreshPoints()
+    }
+
+    private fun refreshPoints() {
+        pointsJob?.cancel()
+        pointsJob = viewModelScope.launch {
+            val r = getPoints()
+            if (r is DomainResult.Success) _available.value = r.value.available
+        }
     }
 
     private fun refreshUnfinished() {
