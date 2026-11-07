@@ -32,9 +32,6 @@ sealed interface ConfirmUiState {
     data object PhotoMissing : ConfirmUiState
 }
 
-/** 確認頁在建單前要做的通知相關動作；[NONE] 表示沒有。 */
-enum class ConfirmPrompt { NONE, REQUEST_PERMISSION, NEED_SETTINGS }
-
 @HiltViewModel
 class ConfirmViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
@@ -52,9 +49,6 @@ class ConfirmViewModel @Inject constructor(
     private val _state = MutableStateFlow<ConfirmUiState>(ConfirmUiState.Loading)
     val state: StateFlow<ConfirmUiState> = _state
 
-    private val _prompt = MutableStateFlow(ConfirmPrompt.NONE)
-    val prompt: StateFlow<ConfirmPrompt> = _prompt
-
     init {
         load()
     }
@@ -70,39 +64,6 @@ class ConfirmViewModel @Inject constructor(
                 is DomainResult.Failure -> ConfirmUiState.LoadError(r.error.message)
             }
         }
-    }
-
-    /** 按「確認支付」：通知檢查通過才建單，否則只改 [prompt]、不呼叫建單。 */
-    fun onConfirmClick(gate: NotificationGate) {
-        val current = _state.value as? ConfirmUiState.Ready ?: return
-        if (current.submitting) return
-        when (gate) {
-            NotificationGate.PROCEED -> confirm()
-            NotificationGate.REQUEST_PERMISSION -> _prompt.value = ConfirmPrompt.REQUEST_PERMISSION
-            NotificationGate.NEED_SETTINGS -> _prompt.value = ConfirmPrompt.NEED_SETTINGS
-        }
-    }
-
-    /** 畫面已送出權限請求。 */
-    fun onPermissionRequestLaunched() {
-        if (_prompt.value == ConfirmPrompt.REQUEST_PERMISSION) _prompt.value = ConfirmPrompt.NONE
-    }
-
-    /**
-     * 權限對話框結果：拒絕停在確認頁並顯示前往設定的提示。
-     * 同意時用重新取得的 [gate]（權限可能有了、但頻道仍被關）再走 [onConfirmClick]；
-     * 不會再要求一次權限，所以 [NotificationGate.REQUEST_PERMISSION] 視同 [NotificationGate.NEED_SETTINGS]。
-     */
-    fun onPermissionResult(granted: Boolean, gate: NotificationGate) {
-        if (!granted) {
-            _prompt.value = ConfirmPrompt.NEED_SETTINGS
-            return
-        }
-        onConfirmClick(if (gate == NotificationGate.REQUEST_PERMISSION) NotificationGate.NEED_SETTINGS else gate)
-    }
-
-    fun dismissPrompt() {
-        _prompt.value = ConfirmPrompt.NONE
     }
 
     fun confirm() {

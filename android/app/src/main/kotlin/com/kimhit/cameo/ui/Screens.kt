@@ -2,7 +2,6 @@ package com.kimhit.cameo.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +45,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import android.os.SystemClock
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.clickable
 import androidx.lifecycle.Lifecycle
@@ -468,17 +468,13 @@ fun MyCameosScreen(
     }
     val context = LocalContext.current
     val startPrompt by viewModel.startPrompt.collectAsState()
-    val notificationStore = remember(context) { SharedPrefsAskedStore(context) }
     fun startPermission() = currentStartPermission(context)
     // afterDenial：同意後用 false，下一項權限才會請求；拒絕後用 true，才能分辨系統還能不能問
-    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        // 收到結果後才寫旗標（確認頁到 H7b 前仍讀這個旗標）
-        val ok = onPermissionResult(granted, notificationStore)
-        viewModel.onPermissionResult(ok, currentStartPermission(context, afterDenial = !ok))
-    }
-    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    val onPermissionResult = { granted: Boolean ->
         viewModel.onPermissionResult(granted, currentStartPermission(context, afterDenial = !granted))
     }
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission(), onPermissionResult)
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission(), onPermissionResult)
     LaunchedEffect(startPrompt) {
         when (startPrompt) {
             StartPrompt.REQUEST_NOTIFICATION -> {

@@ -81,10 +81,6 @@ private class CountingClips(val results: ArrayDeque<DomainResult<List<Clip>>>) :
     }
 }
 
-/**
- * MyCameosViewModel 的測試組裝。init 會呼叫 listCameos，而 FakeCameoRepo.listCameos 會丟錯，
- * 所以只覆寫 listCameos，其餘委派給同一個 [cameos] 實例。
- */
 /** 收集 [MyCameosViewModel.startNavigation]（同 refreshErrors 測試的寫法）。 */
 @OptIn(ExperimentalCoroutinesApi::class)
 internal fun TestScope.collectStartNavigation(vm: MyCameosViewModel): MutableList<StartNavigation> {
@@ -93,6 +89,10 @@ internal fun TestScope.collectStartNavigation(vm: MyCameosViewModel): MutableLis
     return events
 }
 
+/**
+ * MyCameosViewModel 的測試組裝。init 會呼叫 listCameos，而 FakeCameoRepo.listCameos 會丟錯，
+ * 所以只覆寫 listCameos，其餘委派給同一個 [cameos] 實例。
+ */
 internal fun myCameosVm(
     pending: PendingCameoRepository = FakePendingRepo(),
     cameos: FakeCameoRepo = FakeCameoRepo(),

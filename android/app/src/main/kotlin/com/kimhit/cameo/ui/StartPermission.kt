@@ -36,7 +36,7 @@ internal fun currentStartPermission(context: Context, afterDenial: Boolean = fal
         ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.CAMERA)
     } == true
     return decideStartPermission(
-        notification = currentNotificationGate(context, askedBefore = afterDenial),
+        notification = currentNotificationGate(context, afterDenial = afterDenial),
         cameraGranted = hasCameraPermission(context),
         afterDenial = afterDenial,
         cameraRationale = rationale,

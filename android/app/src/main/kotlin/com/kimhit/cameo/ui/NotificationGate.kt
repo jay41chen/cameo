@@ -12,73 +12,47 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import com.kimhit.cameo.tracking.isDoneChannelBlocked
 
-/** 確認支付前的通知檢查結果。 */
+/** 開始客串入口用的通知檢查結果。 */
 enum class NotificationGate {
-    /** 通知可用：照常建單。 */
+    /** 通知可用：照常繼續。 */
     PROCEED,
 
-    /** 通知不可用，且系統還能顯示權限對話框：請求 `POST_NOTIFICATIONS`。 */
+    /** 通知不可用：先向系統請求 `POST_NOTIFICATIONS`（系統不一定會顯示對話框）。 */
     REQUEST_PERMISSION,
 
-    /** 通知不可用，且系統不會再顯示對話框（或 API 33 以下）：顯示 App 自己的提示，前往設定。 */
+    /** 請求沒用或系統確定不能再問：顯示 App 自己的提示，前往設定。 */
     NEED_SETTINGS,
 }
 
 internal const val POST_NOTIFICATIONS_MIN_SDK = 33
 
 /**
- * 純函式。[askedBefore] 是「權限對話框已有過結果」的旗標；
- * 系統還能顯示對話框 = 沒請求過，或 [shouldShowRationale] 為 true。
+ * 純函式。[afterDenial]：按下時為 false，一律先請求；剛收到拒絕時為 true，
+ * 只有 [shouldShowRationale] 為 true 才算系統還能問。
  * [enabled] 是 App 層級通知開關；[channelBlocked] 是「生成結果」頻道被關。
  */
 fun decideNotificationGate(
     enabled: Boolean,
     sdkInt: Int,
-    askedBefore: Boolean,
+    afterDenial: Boolean,
     shouldShowRationale: Boolean,
     channelBlocked: Boolean = false,
 ): NotificationGate = when {
     // 權限有、但「生成結果」頻道被關：再要權限沒用，直接請使用者去設定
     enabled && channelBlocked -> NotificationGate.NEED_SETTINGS
     enabled -> NotificationGate.PROCEED
-    sdkInt >= POST_NOTIFICATIONS_MIN_SDK && (!askedBefore || shouldShowRationale) -> NotificationGate.REQUEST_PERMISSION
+    sdkInt >= POST_NOTIFICATIONS_MIN_SDK && (!afterDenial || shouldShowRationale) -> NotificationGate.REQUEST_PERMISSION
     else -> NotificationGate.NEED_SETTINGS
 }
 
-/** 「已請求過通知權限」旗標；只在收到權限結果之後寫入。 */
-interface PermissionAskedStore {
-    fun asked(): Boolean
-    fun markAsked()
-}
-
-/** 權限對話框回來的結果：先寫旗標（此時才寫，不在 launch 前寫），回傳是否可以繼續建單。 */
-fun onPermissionResult(granted: Boolean, store: PermissionAskedStore): Boolean {
-    store.markAsked()
-    return granted
-}
-
-private const val PREFS = "cameo_tracking"
-private const val ASKED_KEY = "notification_permission_asked"
-
-internal class SharedPrefsAskedStore(context: Context) : PermissionAskedStore {
-    private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-    override fun asked(): Boolean = prefs.getBoolean(ASKED_KEY, false)
-    override fun markAsked() {
-        prefs.edit().putBoolean(ASKED_KEY, true).apply()
-    }
-}
-
-internal fun currentNotificationGate(context: Context, store: PermissionAskedStore): NotificationGate =
-    currentNotificationGate(context, askedBefore = store.asked())
-
-internal fun currentNotificationGate(context: Context, askedBefore: Boolean): NotificationGate {
+internal fun currentNotificationGate(context: Context, afterDenial: Boolean): NotificationGate {
     val enabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
     val channelBlocked = isDoneChannelBlocked(context)
     val rationale = Build.VERSION.SDK_INT >= POST_NOTIFICATIONS_MIN_SDK &&
         context.findActivity()?.let {
             ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.POST_NOTIFICATIONS)
         } == true
-    return decideNotificationGate(enabled, Build.VERSION.SDK_INT, askedBefore, rationale, channelBlocked)
+    return decideNotificationGate(enabled, Build.VERSION.SDK_INT, afterDenial, rationale, channelBlocked)
 }
 
 internal fun openNotificationSettings(context: Context) {
