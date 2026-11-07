@@ -554,4 +554,105 @@ class PagedListTest {
         advanceUntilIdle()
         assertTrue(calls.isEmpty())
     }
+
+    @Test
+    fun updateItem_replacesInPlaceKeepingOrderAndCursor() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        val before = l.state.value
+        l.updateItem("b:2")
+        assertEquals(listOf("a:1", "b:2", "c:1", "d:1"), l.state.value.items)
+        assertEquals(before.copy(items = listOf("a:1", "b:2", "c:1", "d:1")), l.state.value)
+        assertEquals("c2", l.state.value.nextCursor)
+        assertEquals(PagePhase.Idle, l.state.value.phase)
+    }
+
+    @Test
+    fun updateItem_unknownIdLeavesStateUnchanged() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        val before = l.state.value
+        l.updateItem("zzz:1")
+        assertEquals(before, l.state.value)
+    }
+
+    @Test
+    fun updateItem_withoutIdOfLeavesStateUnchanged() = runTest {
+        val g = Gates()
+        val l = loaded(g)
+        val before = l.state.value
+        l.updateItem("a")
+        assertEquals(before, l.state.value)
+    }
+
+    @Test
+    fun updateItem_afterLoadMoreFailure_keepsPhaseErrorAndCursor() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        g.next().complete(fail("載入更多壞了"))
+        l.loadMore()
+        advanceUntilIdle()
+        val before = l.state.value
+        assertEquals(PagePhase.LoadMoreError, before.phase)
+        assertEquals("載入更多壞了", before.errorMessage)
+        assertEquals("c2", before.nextCursor)
+        l.updateItem("b:2")
+        val after = l.state.value
+        assertEquals(PagePhase.LoadMoreError, after.phase)
+        assertEquals("載入更多壞了", after.errorMessage)
+        assertEquals("c2", after.nextCursor)
+        assertEquals(listOf("a:1", "b:2", "c:1", "d:1"), after.items)
+        assertEquals(before.copy(items = listOf("a:1", "b:2", "c:1", "d:1")), after)
+    }
+
+    @Test
+    fun updateItem_afterRefreshFailure_keepsRefreshFailedAndError() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        g.next().complete(fail("刷新壞了"))
+        l.refresh()
+        advanceUntilIdle()
+        val before = l.state.value
+        assertTrue(before.refreshFailed)
+        assertEquals("刷新壞了", before.errorMessage)
+        l.updateItem("c:2")
+        val after = l.state.value
+        assertTrue(after.refreshFailed)
+        assertEquals("刷新壞了", after.errorMessage)
+        assertEquals(PagePhase.Idle, after.phase)
+        assertEquals(listOf("a:1", "b:1", "c:2", "d:1"), after.items)
+        assertEquals(before.copy(items = listOf("a:1", "b:1", "c:2", "d:1")), after)
+    }
+
+    @Test
+    fun updateItem_doesNotCancelLoadMore() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        val gate = g.next()
+        l.loadMore()
+        advanceUntilIdle()
+        assertEquals(PagePhase.LoadingMore, l.state.value.phase)
+        l.updateItem("a:9")
+        assertEquals(PagePhase.LoadingMore, l.state.value.phase)
+        gate.complete(ok("e:1", next = null))
+        advanceUntilIdle()
+        assertEquals(PagePhase.Idle, l.state.value.phase)
+        assertEquals(listOf("a:9", "b:1", "c:1", "d:1", "e:1"), l.state.value.items)
+    }
+
+    @Test
+    fun updateItem_doesNotCancelRefresh() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        val gate = g.next()
+        l.refresh()
+        advanceUntilIdle()
+        assertTrue(l.state.value.refreshing)
+        l.updateItem("c:9")
+        assertTrue(l.state.value.refreshing)
+        gate.complete(ok("z:1", "a:1", "b:1", next = "c1"))
+        advanceUntilIdle()
+        assertFalse(l.state.value.refreshing)
+        assertEquals(listOf("z:1", "a:1", "b:1", "c:9", "d:1"), l.state.value.items)
+    }
 }

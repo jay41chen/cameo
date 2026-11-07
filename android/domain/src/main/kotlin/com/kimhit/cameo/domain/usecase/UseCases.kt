@@ -37,6 +37,11 @@ class GetCameoPageUseCase(private val repository: CameoRepository) {
         repository.listCameos(cursor)
 }
 
+/** 查單一訂單的最新狀態。 */
+class GetCameoUseCase(private val repository: CameoRepository) {
+    suspend operator fun invoke(cameoId: String): DomainResult<CameoOrder> = repository.getCameo(cameoId)
+}
+
 class GetQuotaUseCase(private val repository: QuotaRepository) {
     suspend operator fun invoke(): DomainResult<Quota> = repository.getQuota()
 }

@@ -124,6 +124,18 @@ class PagedList<T>(
         }
     }
 
+    /**
+     * 就地替換 id 相同的項目（單筆輪詢用）：順序、游標、階段、錯誤欄位都不變，也不取消進行中的動作。
+     * 沒傳 [idOf] 或 id 不在列表中時不做事。
+     */
+    fun updateItem(item: T) {
+        val id = idOf ?: return
+        val target = id(item)
+        val current = _state.value
+        if (current.items.none { id(it) == target }) return
+        _state.value = current.copy(items = current.items.map { if (id(it) == target) item else it })
+    }
+
     private fun mergeFirstPage(items: List<T>, nextCursor: String?, page: Page<T>): Pair<List<T>, String?> {
         val id = idOf ?: return page.items to page.nextCursor
         val existingIds = items.mapTo(HashSet(), id)

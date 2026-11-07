@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.clickable
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavController
@@ -507,6 +509,15 @@ fun MyCameosScreen(
                 duration = SnackbarDuration.Short,
             )
             if (result == SnackbarResult.ActionPerformed) viewModel.refresh()
+        }
+    }
+    // 只有畫面在 RESUMED 才輪詢：進背景、離開首頁就取消，回來重新開始
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, viewModel, listState) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            viewModel.pollVisible(
+                snapshotFlow { listState.layoutInfo.visibleItemsInfo.mapTo(HashSet<Any>()) { it.key } },
+            )
         }
     }
     OnResume(viewModel::onResume)

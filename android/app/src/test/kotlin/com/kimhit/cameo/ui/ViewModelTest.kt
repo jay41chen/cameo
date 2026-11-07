@@ -17,7 +17,9 @@ import com.kimhit.cameo.domain.repository.CameoRepository
 import com.kimhit.cameo.domain.repository.ClipRepository
 import com.kimhit.cameo.domain.repository.PendingCameoRepository
 import com.kimhit.cameo.domain.repository.PointsRepository
+import com.kimhit.cameo.domain.model.CameoOrder
 import com.kimhit.cameo.domain.usecase.GetCameoPageUseCase
+import com.kimhit.cameo.domain.usecase.GetCameoUseCase
 import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
 import com.kimhit.cameo.domain.usecase.GetLedgerPageUseCase
@@ -100,9 +102,12 @@ internal fun myCameosVm(
     clips: ClipRepository = FakeClips(ArrayDeque(listOf(DomainResult.Success(listOf(Clip("c1", "雨夜重逢", 10)))))),
     listCameos: suspend (String?) -> DomainResult<CameoPage> = { DomainResult.Success(Page(emptyList(), null)) },
     points: PointsRepository = ScriptedPoints(),
+    getCameo: (suspend (String) -> DomainResult<CameoOrder>)? = null,
 ): MyCameosViewModel {
     val repo = object : CameoRepository by cameos {
         override suspend fun listCameos(cursor: String?): DomainResult<CameoPage> = listCameos(cursor)
+        override suspend fun getCameo(id: String): DomainResult<CameoOrder> =
+            if (getCameo != null) getCameo(id) else cameos.getCameo(id)
     }
     return MyCameosViewModel(
         GetCameoPageUseCase(repo),
@@ -111,6 +116,7 @@ internal fun myCameosVm(
         GetClipsUseCase(clips),
         GetUnfinishedCameosUseCase(pending, cameos),
         DeletePendingCameoUseCase(pending),
+        GetCameoUseCase(repo),
     )
 }
 

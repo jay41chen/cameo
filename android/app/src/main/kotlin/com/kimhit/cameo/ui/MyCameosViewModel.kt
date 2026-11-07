@@ -9,7 +9,10 @@ import com.kimhit.cameo.domain.model.PendingCameo
 import com.kimhit.cameo.domain.model.Quota
 import com.kimhit.cameo.domain.model.UnfinishedCameo
 import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
+import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.usecase.GetCameoPageUseCase
+import com.kimhit.cameo.domain.usecase.GetCameoUseCase
+import com.kimhit.cameo.tracking.needsTracking
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
 import com.kimhit.cameo.domain.usecase.GetPointsUseCase
 import com.kimhit.cameo.domain.usecase.GetQuotaUseCase
@@ -18,11 +21,22 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+
+private const val POLL_DEBOUNCE_MS = 300L
+private const val POLL_INTERVAL_MS = 3_000L
+
+/** 輪詢目標：可視（key 在 [visibleKeys]）且還在排隊或生成中的訂單 id。 */
+internal fun pollTargets(items: List<Cameo>, visibleKeys: Set<Any>): List<String> =
+    items.filter { it.id in visibleKeys && needsTracking(it.status) }.map { it.id }
 
 /** 首頁按下後等權限檢查通過才執行的動作。 */
 sealed interface StartAction {
@@ -55,6 +69,7 @@ class MyCameosViewModel @Inject constructor(
     private val getClips: GetClipsUseCase,
     private val getUnfinished: GetUnfinishedCameosUseCase,
     private val deletePending: DeletePendingCameoUseCase,
+    private val getCameo: GetCameoUseCase,
 ) : ViewModel() {
     private val _refreshErrors = Channel<String?>(Channel.CONFLATED)
 
@@ -110,6 +125,36 @@ class MyCameosViewModel @Inject constructor(
         gate.refresh()
         loadClipsIfEmpty()
         refreshPoints()
+    }
+
+    /**
+     * 可視輪詢迴圈，由畫面的 repeatOnLifecycle 啟動與取消：畫面離開 RESUMED 就停止，回來重新開始。
+     * 可視範圍改變後停 0.3 秒才查（捲動中會一直重新等），之後每 3 秒查一次。每輪重新算目標，沒有目標就不發請求。
+     */
+    suspend fun pollVisible(visibleKeys: Flow<Set<Any>>) {
+        visibleKeys.distinctUntilChanged().collectLatest { keys ->
+            delay(POLL_DEBOUNCE_MS)
+            while (true) {
+                pollOnce(keys)
+                delay(POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    /** 同一輪的目標併發查詢；一筆卡住不影響其他筆更新，但這輪結束前不開始下一個間隔。 */
+    private suspend fun pollOnce(keys: Set<Any>) {
+        val targets = pollTargets(state.value.items, keys)
+        if (targets.isEmpty()) return
+        coroutineScope { targets.forEach { id -> launch { pollOne(id) } } }
+    }
+
+    /** 失敗不顯示錯誤、不寫狀態，下一輪再查；變成 FAILED 時立刻刷新點數。 */
+    private suspend fun pollOne(id: String) {
+        val r = getCameo(id)
+        if (r !is DomainResult.Success) return
+        val before = state.value.items.firstOrNull { it.id == id }?.status
+        list.updateItem(r.value.cameo)
+        if (before != CameoStatus.FAILED && r.value.cameo.status == CameoStatus.FAILED) refreshPoints()
     }
 
     private fun refreshPoints() {
