@@ -31,8 +31,8 @@ class ProgressActionsTest {
     }
 
     @Test
-    fun expired_onlyBackHome() {
-        assertEquals(listOf(ProgressAction.BackHome), progressActions(ProgressUiState.Expired("t", "m")))
+    fun expired_onlyRestartFromHome() {
+        assertEquals(listOf(ProgressAction.RestartFromHome), progressActions(ProgressUiState.Expired("t", "m")))
     }
 
     @Test

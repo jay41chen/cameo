@@ -18,6 +18,7 @@ internal const val UPLOADING_TEXT = "上傳中…"
 internal const val SUBMITTING_TEXT = "送出中…"
 internal const val NEED_PHOTO_TEXT = "照片無法使用，請重新拍照"
 internal const val BACK_HOME_TEXT = "回我的客串"
+internal const val RESTART_FROM_HOME_TEXT = "回首頁重新客串"
 
 @Composable
 fun CameoProgressScreen(
@@ -90,6 +91,7 @@ private fun ProgressActions(
             ProgressAction.Retry -> Button(onClick = dropUnlessResumed { onRetry() }) { Text("重試") }
             ProgressAction.Retake -> Button(onClick = onRetake) { Text("重新拍照") }
             ProgressAction.BackHome -> Button(onClick = onBack) { Text(BACK_HOME_TEXT) }
+            ProgressAction.RestartFromHome -> Button(onClick = onBack) { Text(RESTART_FROM_HOME_TEXT) }
         }
     }
 }

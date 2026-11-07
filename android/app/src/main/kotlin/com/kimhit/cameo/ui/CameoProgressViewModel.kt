@@ -27,13 +27,13 @@ sealed interface ProgressUiState {
 }
 
 /** 進度頁的按鈕。 */
-internal enum class ProgressAction { Retry, Retake, BackHome }
+internal enum class ProgressAction { Retry, Retake, BackHome, RestartFromHome }
 
 internal fun progressActions(state: ProgressUiState): List<ProgressAction> = when (state) {
     is ProgressUiState.Failed ->
         if (state.retryable) listOf(ProgressAction.Retry, ProgressAction.BackHome) else listOf(ProgressAction.BackHome)
     is ProgressUiState.NeedPhoto -> listOf(ProgressAction.Retake, ProgressAction.BackHome)
-    is ProgressUiState.Expired -> listOf(ProgressAction.BackHome)
+    is ProgressUiState.Expired -> listOf(ProgressAction.RestartFromHome)
     is ProgressUiState.Working, is ProgressUiState.Done, is ProgressUiState.NotCreated, ProgressUiState.Gone -> emptyList()
 }
 

@@ -20,6 +20,7 @@ import androidx.lifecycle.compose.dropUnlessResumed
 fun ConfirmScreen(
     onBack: () -> Unit,
     onRetake: () -> Unit,
+    onBackHome: () -> Unit,
     onCreated: (String) -> Unit,
     viewModel: ConfirmViewModel = hiltViewModel(),
 ) {
@@ -52,8 +53,8 @@ fun ConfirmScreen(
         is ConfirmUiState.Expired -> Body {
             Text(s.title?.takeIf { it.isNotBlank() } ?: EXPIRED_TITLE, style = MaterialTheme.typography.titleLarge)
             Text(s.message?.takeIf { it.isNotBlank() } ?: EXPIRED_MESSAGE)
-            // 逾期的草稿與照片已刪除，重新客串要重新拍照
-            Button(onClick = onRetake) { Text("重新客串") }
+            // 草稿已刪除，回首頁後從 FAB 重新開始
+            Button(onClick = onBackHome) { Text(RESTART_FROM_HOME_TEXT) }
         }
     }
 }

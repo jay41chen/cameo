@@ -63,7 +63,7 @@ internal fun isChannelBlocked(importance: Int?): Boolean = importance == Notific
 internal fun isDoneChannelBlocked(context: Context): Boolean =
     isChannelBlocked(NotificationManagerCompat.from(context).getNotificationChannelCompat(DONE_CHANNEL)?.importance)
 
-/** 完成通知是否真的送得出去：App 通知開著，且「生成結果」頻道沒被關。確認頁 gate、回前景補發、前景服務共用。 */
+/** 完成通知是否真的送得出去：App 通知開著，且「生成結果」頻道沒被關。回前景補發、前景服務共用。 */
 internal fun areCompletionNotificationsUsable(context: Context): Boolean =
     NotificationManagerCompat.from(context).areNotificationsEnabled() && !isDoneChannelBlocked(context)
 

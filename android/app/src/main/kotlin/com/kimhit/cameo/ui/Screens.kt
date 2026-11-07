@@ -137,6 +137,7 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
                 ConfirmScreen(
                     onBack = { rootNav.navigateUp() },
                     onRetake = { rootNav.navigateSingleTop(cameraRoute(clipId), ROUTE_CONFIRM) },
+                    onBackHome = { rootNav.popBackStack(ROUTE_MY_CAMEOS, inclusive = false) },
                     onCreated = { rootNav.navigateToProgress(cameoRoute(it)) },
                 )
             }
