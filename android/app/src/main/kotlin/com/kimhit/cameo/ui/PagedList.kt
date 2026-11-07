@@ -32,6 +32,7 @@ data class PagedUiState<T>(
  */
 class PagedList<T>(
     private val scope: CoroutineScope,
+    private val idOf: ((T) -> String)? = null,
     private val fetch: suspend (String?) -> DomainResult<Page<T>>,
 ) {
     private val _state = MutableStateFlow(PagedUiState<T>())
@@ -60,8 +61,9 @@ class PagedList<T>(
 
     /**
      * 回到畫面時靜默刷新第一頁。只在 [PagePhase.Idle] 執行；查詢期間只設 [PagedUiState.refreshing]，
-     * items 與 phase 不變。成功就取代 items 與 nextCursor；失敗保留 items 與 phase，設
-     * [PagedUiState.refreshFailed]。兩種結果都清掉 refreshing。
+     * items 與 phase 不變。成功時：有傳 [idOf] 且第一頁與現有列表有重疊，就地更新既有項目、
+     * 新項目放最前、保留已載入項目與游標；沒有重疊（含空頁）或沒傳 [idOf] 時整份取代（含游標）。
+     * 失敗保留 items 與 phase，設 [PagedUiState.refreshFailed]。兩種結果都清掉 refreshing。
      */
     fun refresh() {
         if (_state.value.phase != PagePhase.Idle) return
@@ -71,13 +73,16 @@ class PagedList<T>(
             val r = fetch(null)
             val latest = _state.value
             _state.value = when (r) {
-                is DomainResult.Success -> latest.copy(
-                    items = r.value.items,
-                    nextCursor = r.value.nextCursor,
-                    errorMessage = null,
-                    refreshFailed = false,
-                    refreshing = false,
-                )
+                is DomainResult.Success -> {
+                    val (items, cursor) = mergeFirstPage(latest.items, latest.nextCursor, r.value)
+                    latest.copy(
+                        items = items,
+                        nextCursor = cursor,
+                        errorMessage = null,
+                        refreshFailed = false,
+                        refreshing = false,
+                    )
+                }
                 is DomainResult.Failure -> latest.copy(
                     refreshFailed = true,
                     refreshing = false,
@@ -114,5 +119,14 @@ class PagedList<T>(
                 )
             }
         }
+    }
+
+    private fun mergeFirstPage(items: List<T>, nextCursor: String?, page: Page<T>): Pair<List<T>, String?> {
+        val id = idOf ?: return page.items to page.nextCursor
+        val existingIds = items.mapTo(HashSet(), id)
+        if (page.items.none { id(it) in existingIds }) return page.items to page.nextCursor
+        val incoming = page.items.associateBy(id)
+        val newOnes = page.items.filter { id(it) !in existingIds }
+        return (newOnes + items.map { incoming[id(it)] ?: it }) to nextCursor
     }
 }

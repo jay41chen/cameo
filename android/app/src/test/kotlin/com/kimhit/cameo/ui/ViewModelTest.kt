@@ -1,5 +1,8 @@
 package com.kimhit.cameo.ui
 
+import com.kimhit.cameo.domain.model.Cameo
+import com.kimhit.cameo.domain.model.CameoPage
+import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.Clip
 import com.kimhit.cameo.domain.model.DomainError
 import com.kimhit.cameo.domain.model.DomainResult
@@ -7,7 +10,10 @@ import com.kimhit.cameo.domain.model.LedgerEntry
 import com.kimhit.cameo.domain.model.LedgerPage
 import com.kimhit.cameo.domain.model.LedgerType
 import com.kimhit.cameo.domain.model.Points
+import com.kimhit.cameo.domain.model.Page
+import com.kimhit.cameo.domain.repository.CameoRepository
 import com.kimhit.cameo.domain.repository.PointsRepository
+import com.kimhit.cameo.domain.usecase.GetCameoPageUseCase
 import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
 import com.kimhit.cameo.domain.usecase.GetLedgerPageUseCase
@@ -374,5 +380,35 @@ class ViewModelTest {
         advanceUntilIdle()
         assertEquals(PagePhase.Idle, vm.ledger.value.phase)
         assertEquals(listOf("l1", "l2"), vm.ledger.value.items.map { it.id })
+    }
+
+    // ---- MyCameosViewModel.refresh ----
+
+    private fun cameo(id: String, status: CameoStatus = CameoStatus.SUCCEEDED) =
+        Cameo(id, Clip("c1", "雨夜重逢", 10), status, "標題", "說明")
+
+    @Test
+    fun myCameos_refreshMergesById_keepsLoadedItemsAndCursor() = runTest {
+        val pages = ArrayDeque(
+            listOf<DomainResult<CameoPage>>(
+                DomainResult.Success(Page(listOf(cameo("u1", CameoStatus.GENERATING), cameo("u2")), "cur1")),
+                DomainResult.Success(Page(listOf(cameo("u3")), "cur2")),
+                DomainResult.Success(Page(listOf(cameo("u0"), cameo("u1")), "other")),
+            ),
+        )
+        val repo = object : CameoRepository by FakeCameoRepo() {
+            override suspend fun listCameos(cursor: String?): DomainResult<CameoPage> = pages.removeFirst()
+        }
+        val vm = MyCameosViewModel(GetCameoPageUseCase(repo))
+        advanceUntilIdle()
+        vm.loadMore()
+        advanceUntilIdle()
+        vm.refresh()
+        advanceUntilIdle()
+        val s = vm.state.value
+        assertEquals(listOf("u0", "u1", "u2", "u3"), s.items.map { it.id })
+        assertEquals(CameoStatus.SUCCEEDED, s.items.first { it.id == "u1" }.status)
+        assertEquals("cur2", s.nextCursor)
+        assertEquals(PagePhase.Idle, s.phase)
     }
 }

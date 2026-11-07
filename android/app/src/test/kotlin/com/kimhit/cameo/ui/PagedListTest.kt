@@ -47,6 +47,23 @@ class PagedListTest {
         return l
     }
 
+    private fun TestScope.mergeList(g: Gates) =
+        PagedList<String>(CoroutineScope(StandardTestDispatcher(testScheduler)), idOf = { it.substringBefore(":") }) { g.fetch(it) }
+
+    /** 合併模式：第一頁 a:1、b:1（游標 c1），再 loadMore 取得 c:1、d:1（游標 c2）。 */
+    private fun TestScope.mergeLoaded(g: Gates, firstCursor: String? = "c1"): PagedList<String> {
+        val l = mergeList(g)
+        g.next().complete(ok("a:1", "b:1", next = firstCursor))
+        l.loadFirstPage()
+        advanceUntilIdle()
+        if (firstCursor != null) {
+            g.next().complete(ok("c:1", "d:1", next = "c2"))
+            l.loadMore()
+            advanceUntilIdle()
+        }
+        return l
+    }
+
     @Test
     fun loadFirstPage_successThenFailureResetsState() = runTest {
         val g = Gates()
@@ -356,5 +373,110 @@ class PagedListTest {
         l.loadMore()
         advanceUntilIdle()
         assertEquals(listOf<String?>(null), g.cursors)
+    }
+
+    @Test
+    fun merge_overlap_newFirst_existingUpdatedInPlace_laterPagesAndCursorKept() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        g.next().complete(ok("n:1", "b:2", next = "other"))
+        l.refresh()
+        advanceUntilIdle()
+        val s = l.state.value
+        assertEquals(listOf("n:1", "a:1", "b:2", "c:1", "d:1"), s.items)
+        assertEquals("c2", s.nextCursor)
+        assertFalse(s.refreshing)
+        assertFalse(s.refreshFailed)
+    }
+
+    @Test
+    fun merge_multipleNewKeepFirstPageOrder() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        g.next().complete(ok("n2:1", "n1:1", "a:2", next = "x"))
+        l.refresh()
+        advanceUntilIdle()
+        assertEquals(listOf("n2:1", "n1:1", "a:2", "b:1", "c:1", "d:1"), l.state.value.items)
+    }
+
+    @Test
+    fun merge_allExistingKeepsOrderAndCount() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        g.next().complete(ok("b:2", "a:2", next = "x"))
+        l.refresh()
+        advanceUntilIdle()
+        assertEquals(listOf("a:2", "b:2", "c:1", "d:1"), l.state.value.items)
+    }
+
+    @Test
+    fun merge_noOverlap_replacesAllIncludingCursor() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        g.next().complete(ok("x:1", "y:1", next = "cx"))
+        l.refresh()
+        advanceUntilIdle()
+        assertEquals(listOf("x:1", "y:1"), l.state.value.items)
+        assertEquals("cx", l.state.value.nextCursor)
+    }
+
+    @Test
+    fun merge_emptyPage_clearsListAndTakesEmptyPageCursor() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        g.next().complete(ok())
+        l.refresh()
+        advanceUntilIdle()
+        assertEquals(emptyList<String>(), l.state.value.items)
+        assertNull(l.state.value.nextCursor)
+    }
+
+    @Test
+    fun merge_nullCursorStaysNullAfterOverlapRefresh() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g, firstCursor = null)
+        assertNull(l.state.value.nextCursor)
+        g.next().complete(ok("n:1", "a:2", next = "surprise"))
+        l.refresh()
+        advanceUntilIdle()
+        assertEquals(listOf("n:1", "a:2", "b:1"), l.state.value.items)
+        assertNull(l.state.value.nextCursor)
+    }
+
+    @Test
+    fun merge_loadMoreAfterRefreshUsesPreservedCursor() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        g.next().complete(ok("n:1", "a:2", next = "other"))
+        l.refresh()
+        advanceUntilIdle()
+        g.next().complete(ok("e:1"))
+        l.loadMore()
+        advanceUntilIdle()
+        assertEquals(listOf<String?>(null, "c1", null, "c2"), g.cursors)
+    }
+
+    @Test
+    fun merge_refreshFailureKeepsListAndCursor() = runTest {
+        val g = Gates()
+        val l = mergeLoaded(g)
+        g.next().complete(fail("更新失敗"))
+        l.refresh()
+        advanceUntilIdle()
+        val s = l.state.value
+        assertEquals(listOf("a:1", "b:1", "c:1", "d:1"), s.items)
+        assertEquals("c2", s.nextCursor)
+        assertTrue(s.refreshFailed)
+    }
+
+    @Test
+    fun noIdOf_overlapStillReplacesAllIncludingCursor() = runTest {
+        val g = Gates()
+        val l = loaded(g)
+        g.next().complete(ok("a", "n", next = "c9"))
+        l.refresh()
+        advanceUntilIdle()
+        assertEquals(listOf("a", "n"), l.state.value.items)
+        assertEquals("c9", l.state.value.nextCursor)
     }
 }

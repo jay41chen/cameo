@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 class MyCameosViewModel @Inject constructor(
     getCameoPage: GetCameoPageUseCase,
 ) : ViewModel() {
-    private val list = PagedList<Cameo>(viewModelScope) { getCameoPage(it) }
+    private val list = PagedList<Cameo>(viewModelScope, idOf = { it.id }) { getCameoPage(it) }
     val state: StateFlow<PagedUiState<Cameo>> = list.state
 
     init {
