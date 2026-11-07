@@ -17,14 +17,13 @@ import com.kimhit.cameo.tracking.startTrackingIfNeeded
 internal const val UPLOADING_TEXT = "上傳中…"
 internal const val SUBMITTING_TEXT = "送出中…"
 internal const val NEED_PHOTO_TEXT = "照片無法使用，請重新拍照"
-internal const val GONE_TEXT = "這筆客串已結束"
+internal const val BACK_HOME_TEXT = "回我的客串"
 
 @Composable
 fun CameoProgressScreen(
     onBack: () -> Unit,
-    onSubmitted: () -> Unit,
+    onLeave: () -> Unit,
     onRetake: (clipId: String, clientRequestId: String) -> Unit,
-    onRestart: (clipId: String) -> Unit,
     onNotCreated: (clipId: String) -> Unit,
     viewModel: CameoProgressViewModel = hiltViewModel(),
 ) {
@@ -45,36 +44,52 @@ fun CameoProgressScreen(
             // 先啟動追蹤（同步呼叫）再回首頁
             LaunchedEffect(s.order.cameo.id) {
                 startTrackingIfNeeded(context, owner.lifecycle, s.order)
-                onSubmitted()
+                onLeave()
             }
             LoadingBox()
         }
         is ProgressUiState.Expired -> Body {
             Text(s.title?.takeIf { it.isNotBlank() } ?: EXPIRED_TITLE, style = MaterialTheme.typography.titleLarge)
             Text(s.message?.takeIf { it.isNotBlank() } ?: EXPIRED_MESSAGE)
-            Button(onClick = {
-                viewModel.restartExpired()
-                onRestart(s.clipId)
-            }) { Text("重新客串") }
-            Button(onClick = onBack) { Text("回片段清單") }
+            ProgressActions(s, onRetry = { viewModel.retry() }, onRetake = {}, onBack = onBack)
         }
         is ProgressUiState.NeedPhoto -> Body {
             Text(NEED_PHOTO_TEXT)
-            Button(onClick = { onRetake(s.clipId, s.clientRequestId) }) { Text("重新拍照") }
+            ProgressActions(
+                s,
+                onRetry = { viewModel.retry() },
+                onRetake = { onRetake(s.clipId, s.clientRequestId) },
+                onBack = onBack,
+            )
         }
         is ProgressUiState.Failed -> Body {
             Text(s.message ?: GENERIC_ERROR)
-            // 頁面離開中的點擊不啟動扣款流程；這不是完整的取消機制
-            if (s.retryable) Button(onClick = dropUnlessResumed { viewModel.retry() }) { Text("重試") }
-            Button(onClick = onBack) { Text("回片段清單") }
+            ProgressActions(s, onRetry = { viewModel.retry() }, onRetake = {}, onBack = onBack)
         }
         is ProgressUiState.NotCreated -> {
             LaunchedEffect(s.clipId) { onNotCreated(s.clipId) }
             LoadingBox()
         }
-        ProgressUiState.Gone -> Body {
-            Text(GONE_TEXT)
-            Button(onClick = onBack) { Text("回片段清單") }
+        ProgressUiState.Gone -> {
+            LaunchedEffect(Unit) { onLeave() }
+            LoadingBox()
+        }
+    }
+}
+
+@Composable
+private fun ProgressActions(
+    state: ProgressUiState,
+    onRetry: () -> Unit,
+    onRetake: () -> Unit,
+    onBack: () -> Unit,
+) {
+    progressActions(state).forEach { action ->
+        when (action) {
+            // 頁面離開中的點擊不啟動扣款流程；這不是完整的取消機制
+            ProgressAction.Retry -> Button(onClick = dropUnlessResumed { onRetry() }) { Text("重試") }
+            ProgressAction.Retake -> Button(onClick = onRetake) { Text("重新拍照") }
+            ProgressAction.BackHome -> Button(onClick = onBack) { Text(BACK_HOME_TEXT) }
         }
     }
 }

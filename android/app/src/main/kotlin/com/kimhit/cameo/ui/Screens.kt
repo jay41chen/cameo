@@ -103,7 +103,7 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
         ) { entry ->
             val clipId = checkNotNull(entry.arguments?.getString("clipId"))
             val request = entry.arguments?.getString("request")
-            // 離開相機頁，確認頁／進度頁返回會回到進入流程的頁面
+            // 離開相機頁：確認頁返回回到進入流程的頁面，進度頁返回回首頁
             FlowScaffold {
                 CameraScreen(
                     onUsePhoto = {
@@ -147,9 +147,8 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
             FlowScaffold {
                 CameoProgressScreen(
                     onBack = { rootNav.navigateUp() },
-                    onSubmitted = { rootNav.popBackStack(ROUTE_MY_CAMEOS, inclusive = false) },
+                    onLeave = { rootNav.popBackStack(ROUTE_MY_CAMEOS, inclusive = false) },
                     onRetake = { clipId, key -> rootNav.navigateSingleTop(cameraRoute(clipId, key), ROUTE_CAMEO) },
-                    onRestart = { clipId -> rootNav.navigateSingleTop(cameraRoute(clipId), ROUTE_CAMEO) },
                     onNotCreated = { clipId -> rootNav.navigateSingleTop(confirmRoute(clipId), ROUTE_CAMEO) },
                 )
             }
@@ -179,7 +178,6 @@ private fun NavController.navigateSingleTop(route: String, popUpToRoute: String?
 /** 建單後進進度頁：彈回首頁為止（首頁保留），選片段和確認頁移出堆疊，進度頁按返回回首頁。 */
 private fun NavController.navigateToProgress(route: String) {
     navigate(route) {
-        launchSingleTop = true
         popUpTo(ROUTE_MY_CAMEOS)
     }
 }

@@ -14,7 +14,6 @@ import com.kimhit.cameo.domain.repository.CameoRepository
 import com.kimhit.cameo.domain.usecase.AdvanceCameoUseCase
 import com.kimhit.cameo.domain.usecase.AttachCameoPhotoUseCase
 import com.kimhit.cameo.domain.usecase.CameoStep
-import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -84,7 +83,6 @@ class CameoProgressViewModelTest {
             handle,
             AdvanceCameoUseCase(gated, pending),
             AttachCameoPhotoUseCase(pending),
-            DeletePendingCameoUseCase(pending),
         )
 
     @Test
@@ -139,11 +137,11 @@ class CameoProgressViewModelTest {
         cameos.gets["u1"] = okOrder(CameoStatus.EXPIRED)
         val vm = vm()
         advanceUntilIdle()
-        assertEquals(ProgressUiState.Expired("c1", "k1", "標題", "說明"), vm.state.value)
+        assertEquals(ProgressUiState.Expired("標題", "說明"), vm.state.value)
     }
 
     @Test
-    fun nonTerminalAndOtherStatuses_becomeDone() = runTest {
+    fun submittedAndUnknownStatuses_becomeDone() = runTest {
         listOf(
             CameoStatus.QUEUED,
             CameoStatus.GENERATING,
@@ -206,7 +204,6 @@ class CameoProgressViewModelTest {
             SavedStateHandle(mapOf("clientRequestId" to "k1")),
             AdvanceCameoUseCase(c2, p2),
             AttachCameoPhotoUseCase(p2),
-            DeletePendingCameoUseCase(p2),
         )
         advanceUntilIdle()
         assertEquals(ProgressUiState.Failed(null, false), vm2.state.value)
@@ -271,13 +268,13 @@ class CameoProgressViewModelTest {
     }
 
     @Test
-    fun restartExpired_deletesDraft() = runTest {
+    fun expired_keepsDraftAndOnlyDeletesPhoto() = runTest {
         row()
         cameos.gets["u1"] = okOrder(CameoStatus.EXPIRED)
         val vm = vm()
         advanceUntilIdle()
-        vm.restartExpired()
-        advanceUntilIdle()
-        assertTrue(pending.rows.isEmpty())
+        assertTrue(vm.state.value is ProgressUiState.Expired)
+        assertEquals(1, pending.rows.size)
+        assertNull(pending.rows.single().photoPath)
     }
 }

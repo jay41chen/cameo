@@ -9,7 +9,6 @@ import com.kimhit.cameo.domain.usecase.AdvanceResult
 import com.kimhit.cameo.domain.usecase.AttachCameoPhotoUseCase
 import com.kimhit.cameo.domain.usecase.AttachResult
 import com.kimhit.cameo.domain.usecase.CameoStep
-import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -20,16 +19,22 @@ import kotlinx.coroutines.launch
 sealed interface ProgressUiState {
     data class Working(val step: CameoStep?) : ProgressUiState
     data class Done(val order: CameoOrder) : ProgressUiState
-    data class Expired(
-        val clipId: String,
-        val clientRequestId: String,
-        val title: String?,
-        val message: String?,
-    ) : ProgressUiState
+    data class Expired(val title: String?, val message: String?) : ProgressUiState
     data class NeedPhoto(val clipId: String, val clientRequestId: String) : ProgressUiState
     data class Failed(val message: String?, val retryable: Boolean) : ProgressUiState
     data class NotCreated(val clipId: String) : ProgressUiState
     data object Gone : ProgressUiState
+}
+
+/** 進度頁的按鈕。 */
+internal enum class ProgressAction { Retry, Retake, BackHome }
+
+internal fun progressActions(state: ProgressUiState): List<ProgressAction> = when (state) {
+    is ProgressUiState.Failed ->
+        if (state.retryable) listOf(ProgressAction.Retry, ProgressAction.BackHome) else listOf(ProgressAction.BackHome)
+    is ProgressUiState.NeedPhoto -> listOf(ProgressAction.Retake, ProgressAction.BackHome)
+    is ProgressUiState.Expired -> listOf(ProgressAction.BackHome)
+    is ProgressUiState.Working, is ProgressUiState.Done, is ProgressUiState.NotCreated, ProgressUiState.Gone -> emptyList()
 }
 
 /**
@@ -41,7 +46,6 @@ class CameoProgressViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
     private val advance: AdvanceCameoUseCase,
     private val attachPhoto: AttachCameoPhotoUseCase,
-    private val deletePending: DeletePendingCameoUseCase,
 ) : ViewModel() {
     private val clientRequestId: String = checkNotNull(savedStateHandle["clientRequestId"])
     private var photo: String? = savedStateHandle[PHOTO_KEY]
@@ -59,11 +63,6 @@ class CameoProgressViewModel @Inject constructor(
     fun retry() {
         if (job?.isActive == true) return
         start()
-    }
-
-    /** 逾期後重新客串：刪草稿（照片與列）；導航由畫面處理。 */
-    fun restartExpired() {
-        viewModelScope.launch { deletePending(clientRequestId) }
     }
 
     private fun start() {
@@ -88,8 +87,6 @@ class CameoProgressViewModel @Inject constructor(
             _state.value = when (val r = advance(clientRequestId) { _state.value = ProgressUiState.Working(it) }) {
                 is AdvanceResult.Done -> ProgressUiState.Done(r.order)
                 is AdvanceResult.Expired -> ProgressUiState.Expired(
-                    clipId = r.order.cameo.clip.id,
-                    clientRequestId = clientRequestId,
                     title = r.order.cameo.displayTitle,
                     message = r.order.cameo.displayMessage,
                 )
