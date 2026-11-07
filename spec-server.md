@@ -1,6 +1,6 @@
 # 客串短劇：後端規格
 
-> 從 `spec.md` 提煉，只含 server side；有衝突時以 `spec.md` 為準。`README.md` 與 `ARCHITECTURE.md` 仍寫 8 種異常和 WebSocket，第 8、9 輪才同步；不一致時以規格為準。App 行為只列會影響後端的部分。`[待確認]` 沿用原標記。
+> 從 `spec.md` 提煉，只含 server side；有衝突時以 `spec.md` 為準。`ARCHITECTURE.md` 仍寫 8 種異常和 WebSocket，`README.md` 仍寫 WebSocket，第 8、9 輪才同步；不一致時以規格為準。App 行為只列會影響後端的部分。`[待確認]` 沿用原標記。
 
 ## 1. 目標與範圍（§1、§2、§9）
 
@@ -54,7 +54,7 @@
 
 - `SUCCEEDED`、`FAILED`、`EXPIRED` 是終態，先到的為準；晚到或矛盾的回呼只記 log。
 - 逾時後才收到成功回呼：維持 `FAILED`，只記 log。
-- 上傳期限 1 小時，生成期限 30 分鐘。
+- 上傳期限 1 小時，生成期限程式預設 30 分鐘，compose 預設將改為 2 分鐘（尚未實作）。
 - `failure_reason` 的值：
   - `CONTENT_REJECTED`：退點，不退額度。
   - `VENDOR_FAILED`：廠商回報失敗且原因不是 `CONTENT_REJECTED`；退點也退額度。
@@ -93,7 +93,7 @@
 | `PUT`、`DELETE /v1/cameos/{id}/share`（README） | 建立與取消分享；`PUT` 成功一律 `200`，非 `SUCCEEDED` 回 `409 NOT_SHAREABLE`；`DELETE` 冪等回 `204`；訂單不存在回 `404 CAMEO_NOT_FOUND`（見下方「影片與分享約定」） | 已實作（7.2）。整合測試與 Docker 冒煙通過：非 `SUCCEEDED` 回 `409`、重複 `PUT` 同一網址、`DELETE` 冪等、取消後再分享發新 token |
 | `GET /s/{token}`（README） | 分享網頁，免登入；已取消或不存在回簡短 HTML 404（通用錯誤格式的例外） | 已實作（7.2）。有效回 `200 text/html`；已取消、不存在、含 NUL 回 HTML `404`；查詢錯誤回 HTML `500` |
 | `GET /s/{token}/video` | 分享頁播放，免登入，回固定範例影片；分享已取消或不存在維持 JSON `404` | 已實作（7.2）。Range `206`、HEAD、免登入；已取消或不存在回 JSON `404`；`sha256` 與範例影片相同 |
-| `GET`、`POST`、`DELETE /debug/faults`、`POST /debug/reset` | 異常觸發與重設 | 未實作 |
+| `GET`、`POST`、`DELETE /debug/faults`、`POST /debug/reset`、`POST /debug/faults/consume`（內部） | 異常觸發與重設；consume 供 vendor-sim 取得異常 | 未實作 |
 
 **影片與分享約定（已定案；約定 1、6 已實作，約定 8 僅 `video_available` 已實作，其餘分享相關尚未實作）：**
 
@@ -145,10 +145,17 @@
   - `vendor_duplicate_callback`
   - `vendor_no_callback`
 - **只寫文件：** `socket_event_lost`、`upgrade_required`、`server_error`、`slow_network`、`vendor_dispatch_error`、`vendor_out_of_order`、`unknown_status`。
-- **做法：**
-  - registry 放 adapter 層，情境檔放 `backend/faults/*.json`。
-  - `POST /debug/reset` 清空訂單與異常，重設點數與額度。
-  - 各異常的預期表現與參數待實作後補。
+- **做法（已定案、尚未實作）：**
+  - 生成期限：程式預設 `GENERATION_TTL` 維持 30 分鐘；`docker-compose.yml` 預設將改為 `2m`（尚未實作）；期限在送出時寫入訂單，改設定只影響新訂單；`VENDOR_DELAY_SEC` 接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時。
+  - registry 放 adapter 層。
+  - 開關：`/debug/*` 由 `DEBUG_API_ENABLED` 控制，程式預設關閉，未開啟回 `404`；`docker-compose.yml` 預設開啟；同時需要 Bearer token。
+  - `POST /debug/reset` 回 `204`：清空訂單、點數明細、廠商事件、自拍檔案和異常；餘額回到 seed 的值（不寫死）；片段保留；額度因訂單清空而恢復。重設後才到的廠商回呼照未知 `job_id` 處理（`404 CAMEO_NOT_FOUND`、事件不留），訂單不會復活。
+  - `GET`／`POST`／`DELETE /debug/faults`：`POST` body `{"name","target","times","params"}`，成功回 `200` 和目前清單；未知名稱 `400 UNKNOWN_FAULT`，其他參數錯誤 `400 INVALID_FAULT`；`times` 預設 1；`target` 只用於 `response_lost_after_commit`，必填，`create` 或 `submit`；同名覆蓋；`vendor_*` 異常同一時間只允許一種，已有另一種 `vendor_*` 時設定新的回 `400 INVALID_FAULT`，要換就先 `DELETE`，其他異常可並存；`params` 帶不認得的 key，或 `response_lost_after_commit` 以外的異常帶了 `target`，都回 `400 INVALID_FAULT`；`GET` 回 `{"active":[{"name","target","times","params"}],"available":["名稱"]}`（`times` 為剩餘次數，`available` 為名稱字串陣列），空時為 `{"active":[],"available":[]}`；`DELETE` 回 `204`；異常存記憶體，重啟清空。
+  - 情境檔 `backend/faults/*.json` 每種異常一個，只當 `curl -d @...` 的 body，後端不載入。
+  - `vendor_*` 異常的 `times`：每個被接受的工作扣 1，連續套用到接下來 N 個工作，和 `vendor_duplicate_callback` 的 `count` 無關。
+  - `POST /debug/faults/consume` 和其他 `/debug/*` 一樣受 `DEBUG_API_ENABLED` 與 Bearer token 保護，只給 vendor-sim 用。
+  - vendor-sim 收到新工作時呼叫一次內部端點 `POST /debug/faults/consume`，重送的同一 `job_id` 不再呼叫；查詢失敗當沒有異常、正常回呼並記 log；異常綁定下一個被接受的工作。
+  - 六種異常行為：`response_lost_after_commit` 交易提交後中斷連線、不送回應；`upload_interrupted` 的 `params.after_bytes`（預設 1024）讀到後中斷連線，暫存檔丟棄、狀態不變，App 看到網路錯誤而非 `408`；`upload_expired` 作用在下一次上傳或送出請求所指的訂單，把該訂單的上傳期限（`upload_expires_at`）設為現在，走真實的 `410` 與釋放，訂單已不是 `AWAITING_UPLOAD`／`UPLOADED` 時不消耗這次異常，內容檢查仍先於逾期判斷（內容不合法回 `400`／`413`，不是 `410`）；`vendor_failed` 的 `params.reason` 預設空值（記為 `VENDOR_FAILED`），可設 `CONTENT_REJECTED`；`vendor_duplicate_callback` 的 `params.count` 預設 3、`params.status` 預設 `SUCCEEDED`，前 count-1 次同一 `event_id`、最後一次新 `event_id`，預設值會走到兩條去重路徑；`vendor_no_callback` 不回呼，靠 `GENERATION_TTL` 逾時。
 
 ## 8. 架構與測試（§9、§11）
 

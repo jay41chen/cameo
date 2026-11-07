@@ -80,7 +80,7 @@ stateDiagram-v2
 
 - `SUCCEEDED`、`FAILED`、`EXPIRED` 為終態，先到的為準，晚到或矛盾的回呼只記 log。
 - 逾時後才收到成功回呼：維持 `FAILED`，只記 log；最終狀態不可變更。
-- 上傳期限 1 小時、生成期限 30 分鐘。理由：縮短點數被占用的時間；代價：離線太久要重新建單。
+- 上傳期限 1 小時、生成期限程式預設 30 分鐘，compose 預設將改為 2 分鐘（尚未實作）。理由：縮短點數被占用的時間；代價：離線太久要重新建單。
 - 分享狀態獨立於此狀態機，且只有 `SUCCEEDED` 能分享。
 
 顯示文字：
@@ -139,7 +139,7 @@ stateDiagram-v2
 
 只寫文件、不實作（7 種）：`socket_event_lost`、`upgrade_required`、`server_error`、`slow_network`、`vendor_dispatch_error`、`vendor_out_of_order`、`unknown_status`。
 
-registry 放 adapter 層，提供 debug API。異常用 JSON 情境檔（`backend/faults/*.json`）和 `GET/POST/DELETE /debug/faults` 觸發；另提供 `POST /debug/reset`（清空訂單與異常，重設點數與額度）；不做 console 網站。各異常的預期表現與參數：待實作後補。
+registry 放 adapter 層，提供 debug API。異常用 `GET/POST/DELETE /debug/faults` 觸發；`backend/faults/*.json` 每種異常一個檔案，只當 `curl -d @backend/faults/<name>.json` 的 body，後端不載入；另提供 `POST /debug/reset`（清空訂單與異常，重設點數與額度）；不做 console 網站。各異常的預期表現與參數已定案、尚未實作，細節見 README「Debug 異常 API」與 spec-server.md 第 7 節。
 
 ## 9. 技術基礎
 

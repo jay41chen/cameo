@@ -33,7 +33,8 @@ docker compose up --build
 | `EXPIRY_SWEEP_INTERVAL` | `30s` | 逾期掃描間隔 |
 | `SELFIE_DIR` | `/data/selfies` | 自拍存放目錄；`docker-compose.yml` 把 named volume `selfies` 掛在這裡，容器重啟後檔案仍在（容器以 `nobody` 執行，目錄在映像檔內已設為可寫） |
 | `MAX_SELFIE_BYTES` | `10485760` | 自拍檔案大小上限（bytes），超過回 `413 SELFIE_TOO_LARGE` |
-| `GENERATION_TTL` | `30m` | 生成期限：送出（轉 `QUEUED`）起算，涵蓋排隊與生成；到期（`<=` 現在）仍未完成的訂單轉 `FAILED`（原因 `TIMEOUT`）並退點 |
+| `GENERATION_TTL` | `30m`（compose 將設為 `2m`，尚未實作，目前 compose 仍為 `30m`） | 生成期限：送出（轉 `QUEUED`）起算，涵蓋排隊與生成；到期（`<=` 現在）仍未完成的訂單轉 `FAILED`（原因 `TIMEOUT`）並退點。期限在送出時寫入訂單，改設定只影響新訂單。`VENDOR_DELAY_SEC` 調到接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時 |
+| `DEBUG_API_ENABLED` | 關閉（compose 將預設開啟，尚未實作） | 控制 `/debug/*`（見「Debug 異常 API」）；未開啟時回 `404`。尚未實作 |
 | `DISPATCH_SWEEP_INTERVAL` | `2s` | 派工與生成逾時掃描間隔；每個週期先處理逾時、再派工（每次最多 20 筆，`created_at` 由舊到新） |
 | `VENDOR_URL` | `http://localhost:9000`（compose 設為 `http://vendor-sim:9000`） | 廠商的 base URL；派工是對 `{VENDOR_URL}/jobs` 的 `POST`，單次逾時 5 秒 |
 | `VENDOR_WEBHOOK_SECRET` | 無預設 | webhook 簽章密鑰。**空字串或未設定時 `api` 拒絕啟動**；程式碼內沒有預設密鑰。compose 以 `${VENDOR_WEBHOOK_SECRET:-cameo-sim-secret}` 同時傳給 `api` 與 `vendor-sim`（僅供模擬） |
@@ -49,7 +50,7 @@ docker compose up --build
 | `VENDOR_PUBLIC_URL` | `http://vendor-sim:9000` | 回呼 `video_url` 的 base（`{base}/videos/{job_id}.mp4`） |
 | `VENDOR_WEBHOOK_SECRET` | `cameo-sim-secret` | 與 `api` 相同；空字串時拒絕啟動 |
 
-`vendor-sim` 的行為：`POST /jobs`，body `{"job_id":"..."}`，回 `202`；同一 `job_id` 重送也回 `202`，不開第二個工作（去重只在記憶體，重啟後清空）；缺 `job_id` 回 `400`。等 `VENDOR_DELAY_SEC` 後送一次 `SUCCEEDED` 回呼（`event_id` 隨機，`X-Signature` 為對原始 body 的 HMAC-SHA256 hex）；回呼失敗只記 log、不重試，由 `GENERATION_TTL` 兜底。`vendor-sim` 不接收照片、不提供影片檔（`video_url` 指向的檔案不存在），也不會回報失敗。
+`vendor-sim` 的行為：`POST /jobs`，body `{"job_id":"..."}`，回 `202`；同一 `job_id` 重送也回 `202`，不開第二個工作（去重只在記憶體，重啟後清空）；缺 `job_id` 回 `400`。等 `VENDOR_DELAY_SEC` 後送一次 `SUCCEEDED` 回呼（`event_id` 隨機，`X-Signature` 為對原始 body 的 HMAC-SHA256 hex）；回呼失敗只記 log、不重試，由 `GENERATION_TTL` 兜底。`vendor-sim` 不接收照片、不提供影片檔（`video_url` 指向的檔案不存在），目前也不會回報失敗（異常 API 實作後，由 `vendor_*` 異常控制）。
 
 背景掃描（逾期釋放、派工、生成逾時）假設同一時間只有一個 `api` 實例，不做多實例協調。
 
@@ -100,11 +101,10 @@ cd android
 
 ## 待確認欄位
 
-以下契約細節尚未確認，不在每列重複標註（`/debug/faults` 端點本身已定案）：
+以下契約細節尚未確認，不在每列重複標註：
 
 - 訂單資料格式中 `video_available`、`share` 的結構已定案，約定見「影片與分享」段（`share` 目前後端固定回 `{"active":false,"url":null}`，分享端點尚未實作；`video_url` 只存資料庫、不出現在 API 回應）。
 - `X-App-Version` 與 `426` 尚未實作。
-- `POST /debug/faults` body 的 `target`、`times`、`params`。
 
 ## API 說明
 
@@ -341,14 +341,21 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 ### Debug 異常 API
 
-僅存在於模擬環境，不檢查 App 版本。異常用 JSON 情境檔（`backend/faults/*.json`）和 `GET/POST/DELETE /debug/faults` 觸發；不做 console 網站。
+**以下是已定案的約定，尚未實作**（目前程式沒有任何 `/debug/*` 端點）。
+
+僅存在於模擬環境，不檢查 App 版本；不做 console 網站。
+
+開關與驗證：`/debug/*` 由環境變數 `DEBUG_API_ENABLED` 控制，程式預設關閉，未開啟時回 `404`；`docker-compose.yml` 預設開啟（模擬環境）。開啟時仍需 Bearer token。
 
 | 方法與路徑 | 說明 |
 |---|---|
-| `GET /debug/faults` | 查看目前設定的異常 |
-| `POST /debug/faults` | 設定異常 |
-| `DELETE /debug/faults` | 清除異常 |
-| `POST /debug/reset` | 清空訂單與異常，重設點數與額度 |
+| `GET /debug/faults` | 查看目前設定的異常，回 `{"active":[],"available":[]}`；`active` 每筆為 `{name,target,times,params}`（`times` 是剩餘次數），`available` 是名稱字串陣列 |
+| `POST /debug/faults` | 設定異常，成功回 `200` 和目前清單（同 `GET`） |
+| `DELETE /debug/faults` | 全部清除，回 `204` |
+| `POST /debug/reset` | 重設環境，回 `204` |
+| `POST /debug/faults/consume` | 內部端點，只給 `vendor-sim` 取得異常；和其他 `/debug/*` 一樣受 `DEBUG_API_ENABLED` 與 Bearer token 保護 |
+
+`POST /debug/reset`：清空訂單、點數明細、廠商事件、自拍檔案和異常；餘額回到 seed 的值；片段保留；額度因訂單清空而恢復。重設後才到的廠商回呼，照未知 `job_id` 的處理（見上方 webhook 檢查順序：回 `404 CAMEO_NOT_FOUND`、事件不留），訂單不會復活。
 
 設定異常 body：
 
@@ -356,7 +363,28 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 {"name":"response_lost_after_commit","target":"create","times":1,"params":{}}
 ```
 
-可設定的異常名稱（8 種）：`response_lost_after_commit`、`upload_interrupted`、`upload_expired`、`vendor_failed`、`vendor_duplicate_callback`、`vendor_no_callback`、`socket_event_lost`、`upgrade_required`。各異常的參數：待實作後補。
+- 未知名稱回 `400 UNKNOWN_FAULT`；其他參數錯誤（`times` 小於 1、缺 `target` 等）回 `400 INVALID_FAULT`。
+- `times` 預設 1。`target` 只用於 `response_lost_after_commit`，必填，值為 `create` 或 `submit`。
+- `params` 帶不認得的 key，或 `response_lost_after_commit` 以外的異常帶了 `target`，都回 `400 INVALID_FAULT`。
+- 同名異常重複設定就覆蓋。同一時間只允許一種 `vendor_*` 異常：已有另一種 `vendor_*` 時，設定新的回 `400 INVALID_FAULT`，要換就先 `DELETE`。其他異常可並存。
+- `vendor_*` 異常的 `times`：每個被接受的工作扣 1，連續套用到接下來 N 個工作，和 `vendor_duplicate_callback` 的 `count` 無關。
+- 異常存在記憶體，API 重啟就清空。
+- 情境檔：`backend/faults/*.json` 每種異常一個檔案，只當 `curl -d @backend/faults/<name>.json` 的 body，後端不載入。
+
+`vendor-sim` 取得異常：收到新工作時對 `POST /debug/faults/consume` 呼叫一次，重送的同一 `job_id` 不再呼叫。查詢失敗就當沒有異常、正常回呼，並記 log。異常綁定下一個被接受的工作。
+
+可設定的異常名稱（6 種）與行為：
+
+| 名稱 | 行為 |
+|---|---|
+| `response_lost_after_commit` | 交易提交後中斷連線，不送回應；`target` 為 `create` 或 `submit` |
+| `upload_interrupted` | `params.after_bytes`（預設 1024），讀到該位元組數後中斷連線；暫存檔丟棄、訂單狀態不變。App 看到的是網路錯誤，不是 `408`（`408 UPLOAD_INTERRUPTED` 仍是真實的讀取失敗規則） |
+| `upload_expired` | 作用在下一次上傳或送出請求所指的訂單，把該訂單的上傳期限（`upload_expires_at`）設為現在，走真實的 `410` 和釋放流程。訂單已不是 `AWAITING_UPLOAD`／`UPLOADED` 時不消耗這次異常。內容檢查仍先於逾期判斷，所以內容不合法時回 `400`／`413`，不是 `410` |
+| `vendor_failed` | `params.reason` 預設空值（記為 `VENDOR_FAILED`），可設 `CONTENT_REJECTED` |
+| `vendor_duplicate_callback` | `params.count` 預設 3、`params.status` 預設 `SUCCEEDED`；前 count-1 次用同一個 `event_id`，最後一次用新的 `event_id`，預設值會走到兩條去重路徑 |
+| `vendor_no_callback` | 不回呼，靠 `GENERATION_TTL` 逾時 |
+
+`socket_event_lost`、`upgrade_required` 只寫在規格文件，不實作。
 
 ## 異常觸發方式
 
