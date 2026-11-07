@@ -21,6 +21,8 @@ import com.kimhit.cameo.domain.usecase.GetQuotaUseCase
 import com.kimhit.cameo.domain.usecase.GetUnfinishedCameosUseCase
 import com.kimhit.cameo.domain.usecase.ResumeTrackingUseCase
 import android.content.Context
+import com.kimhit.cameo.tracking.ServiceSubmissionKeepAlive
+import com.kimhit.cameo.tracking.SubmissionKeepAlive
 import com.kimhit.cameo.ui.CaptureFiles
 import com.kimhit.cameo.ui.CaptureFilesImpl
 import dagger.Module
@@ -39,6 +41,9 @@ object AppModule {
     @Provides
     fun provideCaptureFiles(@ApplicationContext context: Context): CaptureFiles =
         CaptureFilesImpl(File(context.cacheDir, "captures"))
+
+    @Provides
+    fun provideSubmissionKeepAlive(impl: ServiceSubmissionKeepAlive): SubmissionKeepAlive = impl
 
     @Provides
     fun provideGetClips(repository: ClipRepository) = GetClipsUseCase(repository)

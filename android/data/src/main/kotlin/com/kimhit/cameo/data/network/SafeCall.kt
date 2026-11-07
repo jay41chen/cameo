@@ -1,5 +1,6 @@
 package com.kimhit.cameo.data.network
 
+import android.util.Log
 import com.kimhit.cameo.domain.model.DomainError
 import com.kimhit.cameo.domain.model.DomainResult
 import kotlinx.coroutines.CancellationException
@@ -24,6 +25,7 @@ internal suspend fun <T, R> safeCall(
 } catch (e: CancellationException) {
     throw e
 } catch (e: Exception) {
+    Log.w("SafeCall", "request failed: ${e.javaClass.simpleName}")
     DomainResult.Failure(DomainError(message = null, retryable = true))
 }
 

@@ -243,6 +243,7 @@ class ConfirmViewModelTest {
 
     private val pending = FakePendingRepo()
     private val cameos = FakeCameoRepo()
+    private val keepAlive = FakeKeepAlive()
 
     private fun vm(
         clips: DomainResult<List<Clip>> = clipsOk(),
@@ -252,7 +253,92 @@ class ConfirmViewModelTest {
         SavedStateHandle(mapOf("clipId" to clipId, "photo" to photo)),
         GetClipsUseCase(FakeClips(ArrayDeque(listOf(clips, clips)))),
         ConfirmCameoUseCase(cameos, pending),
+        keepAlive,
     )
+
+    @Test
+    fun confirm_acquiresBeforeSubmit_andIsNotAcquiredOnLoad() = runTest {
+        cameos.creates.addLast(DomainResult.Success(testOrder()))
+        val vm = vm()
+        advanceUntilIdle()
+        assertTrue(keepAlive.events.isEmpty())
+        vm.confirm()
+        assertEquals(listOf("acquire:confirm:c1"), keepAlive.events) // 還沒執行請求就已取得
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun doubleTap_acquiresOnce() = runTest {
+        cameos.creates.addLast(DomainResult.Success(testOrder()))
+        val vm = vm()
+        advanceUntilIdle()
+        vm.confirm()
+        vm.confirm()
+        advanceUntilIdle()
+        assertEquals(1, keepAlive.events.count { it.startsWith("acquire") })
+    }
+
+    @Test
+    fun retryableFailure_releases_andRetryAcquiresAgain() = runTest {
+        cameos.creates.addLast(DomainResult.Failure(DomainError(null, true)))
+        cameos.creates.addLast(DomainResult.Success(testOrder()))
+        val vm = vm()
+        advanceUntilIdle()
+        vm.confirm()
+        advanceUntilIdle()
+        assertEquals(listOf("acquire:confirm:c1", "release:confirm:c1"), keepAlive.events)
+        vm.confirm()
+        advanceUntilIdle()
+        assertEquals(
+            listOf("acquire:confirm:c1", "release:confirm:c1", "acquire:confirm:c1"),
+            keepAlive.events,
+        )
+    }
+
+    @Test
+    fun nonRetryableFailure_releases() = runTest {
+        cameos.creates.addLast(DomainResult.Failure(DomainError("x", false, "DAILY_LIMIT_REACHED")))
+        val vm = vm()
+        advanceUntilIdle()
+        vm.confirm()
+        advanceUntilIdle()
+        assertEquals(listOf("acquire:confirm:c1", "release:confirm:c1"), keepAlive.events)
+    }
+
+    @Test
+    fun photoMissing_releases() = runTest {
+        pending.missingSources += "/cache/captures/a.jpg"
+        val vm = vm()
+        advanceUntilIdle()
+        vm.confirm()
+        advanceUntilIdle()
+        assertEquals(ConfirmUiState.PhotoMissing, vm.state.value)
+        assertEquals(listOf("acquire:confirm:c1", "release:confirm:c1"), keepAlive.events)
+    }
+
+    @Test
+    fun expired_releases() = runTest {
+        cameos.creates.addLast(DomainResult.Success(testOrder(CameoStatus.EXPIRED)))
+        val vm = vm()
+        advanceUntilIdle()
+        vm.confirm()
+        advanceUntilIdle()
+        assertTrue(vm.state.value is ConfirmUiState.Expired)
+        assertEquals(listOf("acquire:confirm:c1", "release:confirm:c1"), keepAlive.events)
+    }
+
+    @Test
+    fun created_doesNotRelease_untilOnCleared() = runTest {
+        cameos.creates.addLast(DomainResult.Success(testOrder()))
+        val vm = vm()
+        advanceUntilIdle()
+        vm.confirm()
+        advanceUntilIdle()
+        assertTrue(vm.state.value is ConfirmUiState.Created)
+        assertEquals(listOf("acquire:confirm:c1"), keepAlive.events)
+        clearViewModel(vm)
+        assertEquals(listOf("acquire:confirm:c1", "release:confirm:c1"), keepAlive.events)
+    }
 
     @Test
     fun loadsClipIntoReady() = runTest {
@@ -269,6 +355,7 @@ class ConfirmViewModelTest {
             SavedStateHandle(mapOf("clipId" to "c1", "photo" to "/cache/captures/a.jpg")),
             GetClipsUseCase(failing),
             ConfirmCameoUseCase(cameos, pending),
+            keepAlive,
         )
         advanceUntilIdle()
         assertEquals(ConfirmUiState.LoadError("x"), vm.state.value)
@@ -386,6 +473,7 @@ class ConfirmViewModelTest {
             handle,
             GetClipsUseCase(FakeClips(ArrayDeque(listOf(clipsOk())))),
             ConfirmCameoUseCase(cameos, pending),
+            keepAlive,
         )
         advanceUntilIdle()
         vm.confirm()

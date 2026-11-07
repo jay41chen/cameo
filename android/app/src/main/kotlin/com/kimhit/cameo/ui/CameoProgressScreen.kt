@@ -7,12 +7,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.dropUnlessResumed
 import com.kimhit.cameo.domain.usecase.CameoStep
-import com.kimhit.cameo.tracking.startTrackingIfNeeded
 
 internal const val UPLOADING_TEXT = "上傳中…"
 internal const val SUBMITTING_TEXT = "送出中…"
@@ -29,8 +26,6 @@ fun CameoProgressScreen(
     viewModel: CameoProgressViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    val context = LocalContext.current
-    val owner = LocalLifecycleOwner.current
     when (val s = state) {
         is ProgressUiState.Working -> when (s.step) {
             null -> LoadingBox()
@@ -42,11 +37,8 @@ fun CameoProgressScreen(
             }
         }
         is ProgressUiState.Done -> {
-            // 先啟動追蹤（同步呼叫）再回首頁
-            LaunchedEffect(s.order.cameo.id) {
-                startTrackingIfNeeded(context, owner.lifecycle, s.order)
-                onLeave()
-            }
+            // 追蹤已由 ViewModel 在進入 Done 之前轉交服務
+            LaunchedEffect(s.order.cameo.id) { onLeave() }
             LoadingBox()
         }
         is ProgressUiState.Expired -> Body {

@@ -9,6 +9,8 @@ import com.kimhit.cameo.domain.usecase.AdvanceResult
 import com.kimhit.cameo.domain.usecase.AttachCameoPhotoUseCase
 import com.kimhit.cameo.domain.usecase.AttachResult
 import com.kimhit.cameo.domain.usecase.CameoStep
+import com.kimhit.cameo.tracking.SubmissionKeepAlive
+import com.kimhit.cameo.tracking.needsTracking
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -46,6 +48,7 @@ class CameoProgressViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
     private val advance: AdvanceCameoUseCase,
     private val attachPhoto: AttachCameoPhotoUseCase,
+    private val keepAlive: SubmissionKeepAlive,
 ) : ViewModel() {
     private val clientRequestId: String = checkNotNull(savedStateHandle["clientRequestId"])
     private var photo: String? = savedStateHandle[PHOTO_KEY]
@@ -66,6 +69,7 @@ class CameoProgressViewModel @Inject constructor(
     }
 
     private fun start() {
+        keepAlive.acquire(clientRequestId)
         _state.value = ProgressUiState.Working(null)
         job = viewModelScope.launch {
             photo?.let { source ->
@@ -75,16 +79,24 @@ class CameoProgressViewModel @Inject constructor(
                         savedStateHandle[PHOTO_KEY] = null
                     }
                     is AttachResult.NeedPhoto -> {
+                        keepAlive.release(clientRequestId)
                         _state.value = ProgressUiState.NeedPhoto(a.clipId, clientRequestId)
                         return@launch
                     }
                     AttachResult.Gone -> {
+                        keepAlive.release(clientRequestId)
                         _state.value = ProgressUiState.Gone
                         return@launch
                     }
                 }
             }
-            _state.value = when (val r = advance(clientRequestId) { _state.value = ProgressUiState.Working(it) }) {
+            val result = advance(clientRequestId) { _state.value = ProgressUiState.Working(it) }
+            // 先轉交追蹤再釋放保持（兩者都要在狀態變成 Done 之前完成）；其餘結果直接釋放
+            if (result is AdvanceResult.Done && needsTracking(result.order.cameo.status)) {
+                keepAlive.track(result.order.cameo.id)
+            }
+            keepAlive.release(clientRequestId)
+            _state.value = when (val r = result) {
                 is AdvanceResult.Done -> ProgressUiState.Done(r.order)
                 is AdvanceResult.Expired -> ProgressUiState.Expired(
                     title = r.order.cameo.displayTitle,
@@ -96,6 +108,10 @@ class CameoProgressViewModel @Inject constructor(
                 is AdvanceResult.Failed -> ProgressUiState.Failed(r.error.message, r.error.retryable)
             }
         }
+    }
+
+    override fun onCleared() {
+        keepAlive.release(clientRequestId)
     }
 }
 

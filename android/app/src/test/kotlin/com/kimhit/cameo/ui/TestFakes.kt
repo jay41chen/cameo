@@ -1,5 +1,8 @@
 package com.kimhit.cameo.ui
 
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import com.kimhit.cameo.domain.model.Cameo
 import com.kimhit.cameo.domain.model.CameoOrder
 import com.kimhit.cameo.domain.model.CameoPage
@@ -13,6 +16,7 @@ import com.kimhit.cameo.domain.repository.CameoRepository
 import com.kimhit.cameo.domain.repository.ClipRepository
 import com.kimhit.cameo.domain.repository.PendingCameoRepository
 import com.kimhit.cameo.domain.repository.QuotaRepository
+import com.kimhit.cameo.tracking.SubmissionKeepAlive
 
 class FakeClips(val results: ArrayDeque<DomainResult<List<Clip>>>) : ClipRepository {
     override suspend fun getClips() = results.removeFirst()
@@ -146,3 +150,33 @@ fun testOrder(status: CameoStatus = CameoStatus.AWAITING_UPLOAD, id: String = "u
     CameoOrder(Cameo(id, Clip("c1", "雨夜重逢", 10), status, "等待上傳", "已占用 10 點，送出後才扣款"), null)
 
 fun quotaOf(remaining: Int) = Quota(remaining, "2026-11-08T00:00:00+08:00", "今日還可客串 $remaining 次")
+
+/** 記錄 acquire／track／release 的呼叫順序（"acquire:key"、"track:id"、"release:key"）；[onRelease] 供測試在釋放當下取樣。 */
+class FakeKeepAlive : SubmissionKeepAlive {
+    val events = mutableListOf<String>()
+    var onRelease: (String) -> Unit = {}
+
+    override fun acquire(key: String) {
+        events += "acquire:$key"
+    }
+
+    override fun release(key: String) {
+        events += "release:$key"
+        onRelease(key)
+    }
+
+    override fun track(cameoId: String) {
+        events += "track:$cameoId"
+    }
+}
+
+/** 透過 ViewModelStore 清除 ViewModel，觸發 protected 的 onCleared。 */
+fun <T : ViewModel> clearViewModel(vm: T) {
+    val store = ViewModelStore()
+    @Suppress("UNCHECKED_CAST")
+    val factory = object : ViewModelProvider.Factory {
+        override fun <V : ViewModel> create(modelClass: Class<V>): V = vm as V
+    }
+    ViewModelProvider.create(store, factory)[vm.javaClass]
+    store.clear()
+}

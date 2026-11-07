@@ -10,6 +10,7 @@ import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.usecase.ConfirmCameoUseCase
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
 import com.kimhit.cameo.domain.usecase.PHOTO_MISSING
+import com.kimhit.cameo.tracking.SubmissionKeepAlive
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,8 +38,10 @@ class ConfirmViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
     private val getClips: GetClipsUseCase,
     private val confirmCameo: ConfirmCameoUseCase,
+    private val keepAlive: SubmissionKeepAlive,
 ) : ViewModel() {
     private val clipId: String = checkNotNull(savedStateHandle["clipId"])
+    private val holdKey = "confirm:$clipId"
 
     /**
      * 相機暫存檔路徑。第一次確認（PHOTO_MISSING 以外的結果）之後檔案已被移走，
@@ -70,15 +73,20 @@ class ConfirmViewModel @Inject constructor(
         val current = _state.value as? ConfirmUiState.Ready ?: return
         if (current.submitting) return
         _state.value = current.copy(submitting = true, error = null)
+        keepAlive.acquire(holdKey)
         viewModelScope.launch {
             val result = confirmCameo(current.clip.id, photo)
+            // Created 不釋放：交給 onCleared，等進度頁取得自己的保持；其餘結果都釋放
+            val expired = (result as? DomainResult.Success)?.value?.order?.cameo?.status == CameoStatus.EXPIRED
+            val created = result is DomainResult.Success && !expired
+            if (!created) keepAlive.release(holdKey)
             if (!(result is DomainResult.Failure && result.error.code == PHOTO_MISSING)) {
                 photo = null
                 savedStateHandle[PHOTO_KEY] = null
             }
             _state.value = when (val r = result) {
                 is DomainResult.Success ->
-                    if (r.value.order.cameo.status == CameoStatus.EXPIRED) {
+                    if (expired) {
                         ConfirmUiState.Expired(
                             current.clip,
                             r.value.order.cameo.displayTitle,
@@ -97,6 +105,10 @@ class ConfirmViewModel @Inject constructor(
                     }
             }
         }
+    }
+
+    override fun onCleared() {
+        keepAlive.release(holdKey)
     }
 }
 
