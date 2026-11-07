@@ -93,6 +93,8 @@ type Tx interface {
 	CreditAccount(ctx context.Context, amount int) error
 	// InsertVendorEvent 記錄廠商事件；event_id 已存在（重複）回 inserted=false，不報錯。
 	InsertVendorEvent(ctx context.Context, e VendorEvent) (inserted bool, err error)
+	// ResetData 清空訂單、點數明細與廠商事件，並把餘額設回 seed_balance；片段保留。回傳被刪除的訂單 id。
+	ResetData(ctx context.Context) (cameoIDs []string, err error)
 }
 
 // FileStore 存放自拍檔案。暫存檔與正式檔在同一個檔案系統，Commit 是原子覆蓋。

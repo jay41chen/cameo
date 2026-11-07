@@ -161,3 +161,25 @@ func (t *txStore) InsertVendorEvent(ctx context.Context, e usecase.VendorEvent) 
 		VALUES ($1, $2, $3, $4, $5) ON CONFLICT (event_id) DO NOTHING`, e.EventID, e.JobID, e.Status, e.Reason, e.ReceivedAt)
 	return tag.RowsAffected() == 1, err
 }
+
+// ResetData 用 DELETE（不用 TRUNCATE，避免更強的鎖）。外鍵順序：明細引用訂單，先刪明細再刪訂單。
+func (t *txStore) ResetData(ctx context.Context) ([]string, error) {
+	if _, err := t.db.Exec(ctx, `DELETE FROM ledger_entries`); err != nil {
+		return nil, err
+	}
+	if _, err := t.db.Exec(ctx, `DELETE FROM vendor_events`); err != nil {
+		return nil, err
+	}
+	rows, err := t.db.Query(ctx, `DELETE FROM cameos WHERE user_id = $1 RETURNING id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, err
+	}
+	if _, err := t.db.Exec(ctx, `UPDATE points_account SET balance = seed_balance WHERE id = $1`, userID); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}

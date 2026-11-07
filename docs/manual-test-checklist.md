@@ -755,4 +755,37 @@ cd backend && TEST_DATABASE_URL='postgres://cameo:cameo@127.0.0.1:15442/cameo?ss
 | 舊連結 | `curl -i $URL`、`curl -i $URL/video` | 頁面 HTML 404、影片 JSON 404 `NOT_FOUND` |
 | 取消後再分享 | 再 `PUT` | 200，新網址與舊的不同；新頁面 200、舊頁面仍 404 |
 
-未驗證：用瀏覽器或 App 實際播放分享頁（沒有可用的瀏覽器工具）。
+瀏覽器播放驗證（操作者是 Agent，cameo-server 主 session，用 Claude in Chrome 擴充功能在桌面 Chrome 自動化驗證，**未經真人操作**）：
+- 環境：`docker compose -p cameo-server`，當時是 7.2 尚未 commit 的工作樹。
+- 用 JS 靜音後呼叫 `play()`：無錯誤；`duration` 15、640×360、`readyState` 4、`error` 為 null；約 2.5 秒後 `currentTime` 2.2853。
+- 用 JS 設定 `currentTime` 跳轉：之後 4.7522，`paused` false。不是真人拖進度條。
+- 取消分享：`DELETE` 回 204；重開連結（`/s/<token>`）顯示「找不到這個分享。」，頁面沒有 video 元素，影片 fetch 回 404。
+- 畫面字樣：從截圖讀到 `…IMHIT CAMEO WATERMAR…`、`…AMPLE - NOT FOR REUSE`，截圖未存檔。
+
+未驗證：
+- 瀏覽器 network 沒抓到請求，所以沒有 Range 的瀏覽器證據（Range 由 curl 與測試驗證）。
+- console 追蹤在頁面載入後才開始，不涵蓋載入階段。
+- 真人操作、App、模擬器。
+
+## 8.1 輪：`/debug/faults`、`POST /debug/reset`（Server）
+
+環境：`docker compose -p cameo-server up -d --build`（`DEBUG_API_ENABLED` 預設 true）；`T="Authorization: Bearer test-token"`，`B=http://localhost:8080`。此階段異常只登記，不會真的觸發。
+
+| 步驟 | 指令 | 結果 |
+|---|---|---|
+| reset 前（額度已用完的 volume） | `curl $B/v1/quota -H "$T"`、`curl $B/v1/points -H "$T"` | `remaining` 0；`available` 70 |
+| reset | `curl -X POST $B/debug/reset -H "$T"` | 204 |
+| reset 後 | 同上 | `remaining` 3；`available` 100、`held` 0 |
+| 建單 | `POST /v1/cameos`，`Idempotency-Key: smoke-1` | 201 |
+| 登記異常 | `curl -X POST $B/debug/faults -H "$T" -d @backend/faults/vendor-failed.json` | 200，`active` 一筆。第一次 Docker 輸出（`params.reason` 為 `CONTENT_REJECTED`）來自修改前的情境檔；檔案改為 `{"name":"vendor_failed","times":1}` 後重跑 Docker，`params.reason` 為 `null` |
+| 查看／清除 | `GET`、`DELETE /debug/faults` | 200 含該筆；204，之後 `active` 為 `[]` |
+| 沒 token | `curl $B/debug/faults` | 401 |
+| 關閉開關 | `DEBUG_API_ENABLED=false docker compose -p cameo-server up -d api`，`POST /debug/reset`、`GET /debug/faults` | 都是 404 `NOT_FOUND`；`GET /v1/points` 仍 `available` 90、`held` 10（資料沒被清） |
+
+登記規則（由測試驗證；rebase 後重跑 Docker 確認：另一種 `vendor_*` 回 `400 INVALID_FAULT`、`vendor_failed` 與 `upload_expired` 可並存；同名覆蓋 Docker 未跑）：
+- 同名異常重複設定是覆蓋：舊的移除、新的排到 `active` 最後；`response_lost_after_commit` 以名稱為鍵，不同 `target` 也算同名。不同名可並存。
+- 同時只允許一種 `vendor_*`（`vendor_failed`、`vendor_duplicate_callback`、`vendor_no_callback`）：已登記另一種時，再設定不同名的 `vendor_*` 回 `400 INVALID_FAULT`，清單不變；同名 `vendor_*` 仍是覆蓋；要換先 `DELETE`。`vendor_*` 可與 `upload_expired` 等其他異常並存。
+- 輸入驗證（由測試驗證；rebase 後重跑 Docker 確認尾端內容 `INVALID_REQUEST`、`times: 1.5` `INVALID_FAULT`、未知名稱 `UNKNOWN_FAULT`；其餘案例 Docker 未跑）：`POST /debug/faults` 的尾端內容、多個 JSON 值、超過 64 KB、非法 UTF-8、頂層非物件回 `400 INVALID_REQUEST`；`name`、`times`、`target` 型別錯誤回 `400 INVALID_FAULT`；字串但未知的名稱回 `UNKNOWN_FAULT`。驗證測試：`TestDebugAddFaultRejections`、`TestDebugAddFaultNullFields`。
+- 驗證測試：`TestFaultOnlyOneVendorKind`、`TestFaultConcurrentDifferentVendorKindsLeaveOne`、`TestDebugOnlyOneVendorFault`、`TestDebugSameNameOverwritesDifferentNamesCoexist`。
+
+未驗證：異常的實際觸發（8.2 以後）。

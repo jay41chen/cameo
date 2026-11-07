@@ -66,7 +66,11 @@ func run() error {
 	dispatchEvery := getenvDuration("DISPATCH_SWEEP_INTERVAL", 2*time.Second)
 	svc := usecase.NewService(postgres.NewQueries(pool), postgres.NewTxRunner(pool), usecase.SystemClock{}, cfg, files).
 		WithVendor(vendor.NewClient(getenv("VENDOR_URL", "http://localhost:9000")))
-	return app.Serve(ctx, svc, apihttp.Handler(svc, apihttp.WithVendorWebhook([]byte(webhookSecret)), apihttp.WithSampleVideo(assets.SampleVideo), apihttp.WithPublicBaseURL(getenv("PUBLIC_BASE_URL", "http://localhost:8080"))), addr, sweepEvery, dispatchEvery)
+	opts := []apihttp.Option{apihttp.WithVendorWebhook([]byte(webhookSecret)), apihttp.WithSampleVideo(assets.SampleVideo), apihttp.WithPublicBaseURL(getenv("PUBLIC_BASE_URL", "http://localhost:8080"))}
+	if os.Getenv("DEBUG_API_ENABLED") == "true" {
+		opts = append(opts, apihttp.WithDebugAPI())
+	}
+	return app.Serve(ctx, svc, apihttp.Handler(svc, opts...), addr, sweepEvery, dispatchEvery)
 }
 
 // connect 會重試一小段時間，避免資料庫剛啟動時失敗。

@@ -26,6 +26,7 @@ type fakeDB struct {
 	events  map[string]bool // vendor_events 的 event_id
 	// failOn 讓指定的寫入操作回錯，用來驗證交易整個回滾。
 	failOn string
+	seed   int // ResetData 設回的餘額
 }
 
 // events 依序記錄交易 commit 與檔案操作，用來驗證「rename 在交易內、刪檔在 commit 之後」。
@@ -154,6 +155,19 @@ func (d *fakeDB) InsertVendorEvent(_ context.Context, e usecase.VendorEvent) (bo
 	}
 	d.events[e.EventID] = true
 	return true, nil
+}
+
+func (d *fakeDB) ResetData(context.Context) ([]string, error) {
+	d.locks = append(d.locks, "reset")
+	if d.failOn == "ResetData" {
+		return nil, errors.New("injected ResetData failure")
+	}
+	var ids []string
+	if d.exists {
+		ids = []string{d.cameo.ID}
+	}
+	d.exists, d.ledger, d.events, d.balance = false, nil, nil, d.seed
+	return ids, nil
 }
 
 type fakeFiles struct {

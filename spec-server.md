@@ -93,7 +93,7 @@
 | `PUT`、`DELETE /v1/cameos/{id}/share`（README） | 建立與取消分享；`PUT` 成功一律 `200`，非 `SUCCEEDED` 回 `409 NOT_SHAREABLE`；`DELETE` 冪等回 `204`；訂單不存在回 `404 CAMEO_NOT_FOUND`（見下方「影片與分享約定」） | 已實作（7.2）。整合測試與 Docker 冒煙通過：非 `SUCCEEDED` 回 `409`、重複 `PUT` 同一網址、`DELETE` 冪等、取消後再分享發新 token |
 | `GET /s/{token}`（README） | 分享網頁，免登入；已取消或不存在回簡短 HTML 404（通用錯誤格式的例外） | 已實作（7.2）。有效回 `200 text/html`；已取消、不存在、含 NUL 回 HTML `404`；查詢錯誤回 HTML `500` |
 | `GET /s/{token}/video` | 分享頁播放，免登入，回固定範例影片；分享已取消或不存在維持 JSON `404` | 已實作（7.2）。Range `206`、HEAD、免登入；已取消或不存在回 JSON `404`；`sha256` 與範例影片相同 |
-| `GET`、`POST`、`DELETE /debug/faults`、`POST /debug/reset`、`POST /debug/faults/consume`（內部） | 異常觸發與重設；consume 供 vendor-sim 取得異常 | 未實作 |
+| `GET`、`POST`、`DELETE /debug/faults`、`POST /debug/reset`、`POST /debug/faults/consume`（內部） | 異常觸發與重設；consume 供 vendor-sim 取得異常 | 部分實作（8.1；`POST /debug/faults/consume` 尚未實作，排 8.3）：`DEBUG_API_ENABLED=true` 才註冊（其他值回一般 `404`），需 Bearer token；`GET`／`POST`／`DELETE /debug/faults` 只登記，異常尚未真的觸發；同名重複設定為覆蓋（新的排到最後），同時只允許一種 `vendor_*`（另一種回 `400 INVALID_FAULT`，要換先 `DELETE`）；`POST /debug/reset` 清空訂單、明細、廠商事件、自拍與異常，餘額回 `seed_balance`（migration `0007`）。輸入驗證：尾端內容、多個 JSON 值、超過 64 KB、非法 UTF-8、頂層非物件回 `400 INVALID_REQUEST`，`name`／`times`／`target` 型別錯誤回 `400 INVALID_FAULT`，字串但未知的名稱回 `UNKNOWN_FAULT`。實測：rebase 後整合測試（真實 Postgres）與單元測試 186 個 PASS、0 失敗；Docker 確認 reset 後 `remaining` 3、`available` 100，互斥回 `400 INVALID_FAULT`，`vendor_failed` 與 `upload_expired` 可並存，尾端內容 `INVALID_REQUEST`、`times: 1.5` `INVALID_FAULT`、未知名稱 `UNKNOWN_FAULT`，沒 token `401`，consume `404`。較早的 Docker 冒煙：額度已用完的 volume reset 後 `remaining` 0→3、`available` 70→100，`DEBUG_API_ENABLED=false` 時 `/debug/reset` 回 `404` 且資料不變（修正後未重跑此項） |
 
 **影片與分享約定（已定案；約定都已實作；App 的入口尚未實作）：**
 

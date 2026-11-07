@@ -67,3 +67,37 @@ func TestSharedVideoAvailableRejectsInvalidText(t *testing.T) {
 		}
 	}
 }
+
+func TestResetAllLocksAccountFirstAndDeletesSelfiesAfterCommit(t *testing.T) {
+	e := newEnv(domain.StatusSucceeded)
+	e.db.seed = 55
+	e.files.files["c-1"] = []byte("x")
+	if err := e.svc.ResetAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.db.locks) != 2 || e.db.locks[0] != "account" || e.db.locks[1] != "reset" {
+		t.Fatalf("locks = %v, want [account reset]", e.db.locks)
+	}
+	if e.db.balance != 55 || e.db.exists {
+		t.Fatalf("db = %+v", e.db)
+	}
+	commit, del := e.ev.index("tx-commit"), e.ev.index("file-delete")
+	if commit < 0 || del < commit || len(e.files.deleted) != 1 || e.files.deleted[0] != "c-1" {
+		t.Fatalf("events = %v deleted = %v", e.ev.list, e.files.deleted)
+	}
+}
+
+func TestResetAllFailureKeepsSelfies(t *testing.T) {
+	e := newEnv(domain.StatusSucceeded)
+	e.files.files["c-1"] = []byte("x")
+	e.db.failOn = "ResetData"
+	if err := e.svc.ResetAll(context.Background()); err == nil {
+		t.Fatal("want error")
+	}
+	if len(e.files.deleted) != 0 || e.ev.index("file-delete") >= 0 || e.ev.index("tx-rollback") < 0 {
+		t.Fatalf("events = %v deleted = %v", e.ev.list, e.files.deleted)
+	}
+	if !e.db.exists {
+		t.Fatal("db state changed")
+	}
+}

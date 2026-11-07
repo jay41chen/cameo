@@ -46,6 +46,11 @@ func WithPublicBaseURL(base string) Option {
 	return func(s *server) { s.publicBaseURL = strings.TrimRight(base, "/") }
 }
 
+// WithDebugAPI 註冊 /debug/*（異常登記與重設）；不傳時這些路徑回一般 404。
+func WithDebugAPI() Option {
+	return func(s *server) { s.debug = true }
+}
+
 // Handler 組出所有路由。檢查順序：先比對路由（404、405），再驗 token（401）。
 // 廠商 webhook 不用 token，改以簽章驗證。
 func Handler(svc *usecase.Service, opts ...Option) http.Handler {
@@ -73,6 +78,10 @@ func Handler(svc *usecase.Service, opts ...Option) http.Handler {
 		// 分享頁與分享影片免登入，以 token 為憑。
 		handlePublic(mux, "/s/{token}", map[string]http.HandlerFunc{http.MethodGet: s.sharePage})
 		handlePublic(mux, "/s/{token}/video", map[string]http.HandlerFunc{http.MethodGet: s.sharedVideo})
+	}
+	if s.debug {
+		handleMethods(mux, "/debug/faults", map[string]http.HandlerFunc{http.MethodGet: s.debugListFaults, http.MethodPost: s.debugAddFault, http.MethodDelete: s.debugClearFaults})
+		handleMethods(mux, "/debug/reset", map[string]http.HandlerFunc{http.MethodPost: s.debugReset})
 	}
 	if len(s.webhookSecret) > 0 {
 		mux.HandleFunc("POST /webhooks/vendor", s.vendorWebhook)
@@ -134,6 +143,8 @@ type server struct {
 	webhookSecret []byte
 	sampleVideo   []byte
 	publicBaseURL string
+	debug         bool
+	faults        faultRegistry
 }
 
 func (s *server) clips(w http.ResponseWriter, r *http.Request) {

@@ -32,6 +32,8 @@ services:
       GENERATION_TTL: ${GENERATION_TTL:-30m}
       DISPATCH_SWEEP_INTERVAL: ${DISPATCH_SWEEP_INTERVAL:-2s}
       VENDOR_URL: http://vendor-sim:9000
+      # 模擬環境才開：/debug/*（異常登記與重設）。設成 true 以外的值就回 404。
+      DEBUG_API_ENABLED: ${DEBUG_API_ENABLED:-true}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       # 僅供模擬：api 與 vendor-sim 共用的 webhook 簽章密鑰，不是正式密鑰。
       VENDOR_WEBHOOK_SECRET: ${VENDOR_WEBHOOK_SECRET:-cameo-sim-secret}

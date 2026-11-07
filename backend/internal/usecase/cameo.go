@@ -202,3 +202,22 @@ func (s *Service) deleteSelfies(ids ...string) {
 		}
 	}
 }
+
+// ResetAll 清空訂單、點數明細與廠商事件，餘額回到 seed_balance（供 POST /debug/reset）。
+// 交易內先 LockAccount；commit 後才刪自拍檔，刪除失敗只記 log。
+func (s *Service) ResetAll(ctx context.Context) error {
+	var ids []string
+	err := s.tx.Run(ctx, func(tx Tx) error {
+		if _, err := tx.LockAccount(ctx); err != nil {
+			return err
+		}
+		var err error
+		ids, err = tx.ResetData(ctx)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	s.deleteSelfies(ids...)
+	return nil
+}
