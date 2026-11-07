@@ -11,20 +11,21 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"cameo/backend/internal/usecase"
 )
 
-// 可登記的異常名稱。API 這側的三種（response_lost_after_commit、upload_interrupted、upload_expired）已會觸發（8.2）；
-// vendor_* 仍只登記（8.3）。
+// 可登記的異常名稱。API 這側的三種（response_lost_after_commit、upload_interrupted、upload_expired）由 API 自己觸發（8.2）；
+// vendor_* 由 vendor-sim 收到新工作時呼叫 POST /debug/faults/consume 取走並觸發（8.3）。
 const (
-	faultResponseLost             = "response_lost_after_commit"
-	faultUploadInterrupted        = "upload_interrupted"
-	faultUploadExpired            = "upload_expired"
-	faultVendorFailed             = "vendor_failed"
-	faultVendorDuplicateCB        = "vendor_duplicate_callback"
-	faultVendorNoCallback         = "vendor_no_callback"
-	defaultAfterBytes             = 1024
-	defaultDuplicateCount         = 3
-	statusSucceeded, statusFailed = "SUCCEEDED", "FAILED"
+	faultResponseLost      = "response_lost_after_commit"
+	faultUploadInterrupted = "upload_interrupted"
+	faultUploadExpired     = "upload_expired"
+	faultVendorFailed      = "vendor_failed"
+	faultVendorDuplicateCB = "vendor_duplicate_callback"
+	faultVendorNoCallback  = "vendor_no_callback"
+	defaultAfterBytes      = 1024
+	defaultDuplicateCount  = 3
 )
 
 // faultEntry 是一筆已登記的異常。Target 為 nil 表示沒有 target。
@@ -49,9 +50,6 @@ func cloneEntry(e faultEntry) faultEntry {
 	}
 	c.Params = make(map[string]any, len(e.Params))
 	for k, v := range e.Params {
-		if s, ok := v.(*string); ok && s != nil { // 不共用指標
-			v = *s
-		}
 		c.Params[k] = v
 	}
 	return c
@@ -217,10 +215,14 @@ func vendorFailedParams(raw map[string]json.RawMessage) (map[string]any, error) 
 	if err := rejectUnknown(raw, "reason"); err != nil {
 		return nil, err
 	}
-	var reason *string
+	var reason any // 空值存 nil，有值存 string
 	if v, ok := raw["reason"]; ok {
-		if err := json.Unmarshal(v, &reason); err != nil {
+		var r *string
+		if err := json.Unmarshal(v, &r); err != nil {
 			return nil, invalidFault("reason 必須是字串或 null")
+		}
+		if r != nil {
+			reason = *r
 		}
 	}
 	return map[string]any{"reason": reason}, nil
@@ -234,9 +236,12 @@ func duplicateCallbackParams(raw map[string]json.RawMessage) (map[string]any, er
 	if err != nil {
 		return nil, err
 	}
-	status := statusSucceeded
+	status := usecase.VendorSucceeded
 	if v, ok := raw["status"]; ok {
-		if err := json.Unmarshal(v, &status); err != nil || (status != statusSucceeded && status != statusFailed) {
+		if bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+			return nil, invalidFault("status 只能是 SUCCEEDED 或 FAILED")
+		}
+		if err := json.Unmarshal(v, &status); err != nil || (status != usecase.VendorSucceeded && status != usecase.VendorFailed) {
 			return nil, invalidFault("status 只能是 SUCCEEDED 或 FAILED")
 		}
 	}
@@ -342,6 +347,18 @@ func (s *server) debugAddFault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.faultsBody())
+}
+
+// debugConsumeFault 給 vendor-sim 用：依序嘗試三種 vendor_*（同時只會登記一種），取到就扣 1 次並回傳；
+// 沒有回 {"fault":null}。不讀 body，不動非 vendor 的異常。
+func (s *server) debugConsumeFault(w http.ResponseWriter, _ *http.Request) {
+	for _, name := range []string{faultVendorFailed, faultVendorDuplicateCB, faultVendorNoCallback} {
+		if params, ok := s.faults.take(name, ""); ok {
+			writeJSON(w, http.StatusOK, map[string]any{"fault": map[string]any{"name": name, "params": params}})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"fault": nil})
 }
 
 func (s *server) debugClearFaults(w http.ResponseWriter, _ *http.Request) {

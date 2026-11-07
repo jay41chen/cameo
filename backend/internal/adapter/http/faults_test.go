@@ -115,6 +115,8 @@ func TestDebugAddFaultRejections(t *testing.T) {
 		{"after_bytes 0", `{"name":"upload_interrupted","params":{"after_bytes":0}}`, "INVALID_FAULT"},
 		{"after_bytes fraction", `{"name":"upload_interrupted","params":{"after_bytes":1.5}}`, "INVALID_FAULT"},
 		{"reason wrong type", `{"name":"vendor_failed","params":{"reason":5}}`, "INVALID_FAULT"},
+		{"times false", `{"name":"response_lost_after_commit","target":"create","times":false}`, "INVALID_FAULT"},
+		{"status null", `{"name":"vendor_duplicate_callback","params":{"status":null}}`, "INVALID_FAULT"},
 		{"count 0", `{"name":"vendor_duplicate_callback","params":{"count":0}}`, "INVALID_FAULT"},
 		{"status invalid", `{"name":"vendor_duplicate_callback","params":{"status":"QUEUED"}}`, "INVALID_FAULT"},
 		{"invalid json", `{`, "INVALID_REQUEST"},
@@ -190,7 +192,7 @@ func TestDebugDeleteFaults(t *testing.T) {
 
 func TestDebugRoutesAbsentWithoutOption(t *testing.T) {
 	h := debugHandler()
-	for _, r := range [][2]string{{"GET", "/debug/faults"}, {"POST", "/debug/faults"}, {"DELETE", "/debug/faults"}, {"POST", "/debug/reset"}} {
+	for _, r := range [][2]string{{"GET", "/debug/faults"}, {"POST", "/debug/faults"}, {"DELETE", "/debug/faults"}, {"POST", "/debug/reset"}, {"POST", "/debug/faults/consume"}} {
 		for _, auth := range []bool{true, false} {
 			rec, body := hit(h, r[0], r[1], `{"name":"upload_expired"}`, auth)
 			assertError(t, rec, body, 404, "NOT_FOUND")
@@ -200,7 +202,7 @@ func TestDebugRoutesAbsentWithoutOption(t *testing.T) {
 
 func TestDebugRoutesNeedTokenAndMethods(t *testing.T) {
 	h := debugHandler(apihttp.WithDebugAPI())
-	for _, r := range [][2]string{{"GET", "/debug/faults"}, {"POST", "/debug/faults"}, {"DELETE", "/debug/faults"}, {"POST", "/debug/reset"}} {
+	for _, r := range [][2]string{{"GET", "/debug/faults"}, {"POST", "/debug/faults"}, {"DELETE", "/debug/faults"}, {"POST", "/debug/reset"}, {"POST", "/debug/faults/consume"}} {
 		rec, body := hit(h, r[0], r[1], `{"name":"upload_expired"}`, false)
 		assertError(t, rec, body, 401, "UNAUTHORIZED")
 	}
@@ -211,6 +213,8 @@ func TestDebugRoutesNeedTokenAndMethods(t *testing.T) {
 	for _, c := range []struct{ method, path, allow string }{
 		{"PUT", "/debug/faults", "DELETE, GET, HEAD, POST"},
 		{"PATCH", "/debug/faults", "DELETE, GET, HEAD, POST"},
+		{"GET", "/debug/faults/consume", "POST"},
+		{"PUT", "/debug/faults/consume", "POST"},
 		{"GET", "/debug/reset", "POST"},
 		{"DELETE", "/debug/reset", "POST"},
 	} {
@@ -284,5 +288,97 @@ func TestDebugOnlyOneVendorFault(t *testing.T) {
 	hit(h, http.MethodDelete, "/debug/faults", "", true)
 	if rec, _ := post(`{"name":"vendor_duplicate_callback"}`); rec.Code != 200 {
 		t.Fatalf("after DELETE = %d", rec.Code)
+	}
+}
+
+func consume(t *testing.T, h http.Handler) map[string]any {
+	t.Helper()
+	rec, body := hit(h, http.MethodPost, "/debug/faults/consume", "", true)
+	if rec.Code != 200 {
+		t.Fatalf("consume = %d %s", rec.Code, rec.Body.String())
+	}
+	return body
+}
+
+func register(t *testing.T, h http.Handler, body string) {
+	t.Helper()
+	if rec, _ := hit(h, http.MethodPost, "/debug/faults", body, true); rec.Code != 200 {
+		t.Fatalf("POST %s = %d %s", body, rec.Code, rec.Body.String())
+	}
+}
+
+func TestConsumeWithoutFaultIsNull(t *testing.T) {
+	h := debugHandler(apihttp.WithDebugAPI())
+	if got := consume(t, h); !reflect.DeepEqual(got, map[string]any{"fault": nil}) {
+		t.Fatalf("consume = %v", got)
+	}
+}
+
+func TestConsumeReturnsNameAndParams(t *testing.T) {
+	for _, c := range []struct {
+		body   string
+		name   string
+		params map[string]any
+	}{
+		{`{"name":"vendor_no_callback"}`, "vendor_no_callback", map[string]any{}},
+		{`{"name":"vendor_failed"}`, "vendor_failed", map[string]any{"reason": nil}},
+		{`{"name":"vendor_failed","params":{"reason":"CONTENT_REJECTED"}}`, "vendor_failed", map[string]any{"reason": "CONTENT_REJECTED"}},
+		{`{"name":"vendor_duplicate_callback"}`, "vendor_duplicate_callback", map[string]any{"count": 3.0, "status": "SUCCEEDED"}},
+		{`{"name":"vendor_duplicate_callback","params":{"count":2,"status":"FAILED"}}`, "vendor_duplicate_callback", map[string]any{"count": 2.0, "status": "FAILED"}},
+	} {
+		h := debugHandler(apihttp.WithDebugAPI())
+		register(t, h, c.body)
+		want := map[string]any{"fault": map[string]any{"name": c.name, "params": c.params}}
+		if got := consume(t, h); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: consume = %v, want %v", c.body, got, want)
+		}
+	}
+}
+
+func TestConsumeDecrementsTimes(t *testing.T) {
+	h := debugHandler(apihttp.WithDebugAPI())
+	register(t, h, `{"name":"vendor_failed","times":2}`)
+	if got := consume(t, h)["fault"]; got == nil {
+		t.Fatal("first consume is null")
+	}
+	if a := activeOf(t, h); len(a) != 1 || a[0].(map[string]any)["times"] != 1.0 {
+		t.Fatalf("active after first = %v", a)
+	}
+	if got := consume(t, h)["fault"]; got == nil {
+		t.Fatal("second consume is null")
+	}
+	if got := consume(t, h)["fault"]; got != nil {
+		t.Fatalf("third consume = %v, want null", got)
+	}
+	if a := activeOf(t, h); len(a) != 0 {
+		t.Fatalf("active = %v", a)
+	}
+}
+
+func TestConsumeLeavesNonVendorFaults(t *testing.T) {
+	h := debugHandler(apihttp.WithDebugAPI())
+	register(t, h, `{"name":"upload_expired"}`)
+	register(t, h, `{"name":"response_lost_after_commit","target":"create"}`)
+	if got := consume(t, h)["fault"]; got != nil {
+		t.Fatalf("consume = %v, want null", got)
+	}
+	if a := activeOf(t, h); len(a) != 2 || a[0].(map[string]any)["times"] != 1.0 || a[1].(map[string]any)["times"] != 1.0 {
+		t.Fatalf("active = %v", a)
+	}
+	register(t, h, `{"name":"vendor_no_callback"}`)
+	if got := consume(t, h)["fault"].(map[string]any)["name"]; got != "vendor_no_callback" {
+		t.Fatalf("consume = %v", got)
+	}
+	if a := activeOf(t, h); len(a) != 2 {
+		t.Fatalf("active = %v", a)
+	}
+}
+
+func TestConsumeIgnoresBody(t *testing.T) {
+	h := debugHandler(apihttp.WithDebugAPI())
+	register(t, h, `{"name":"vendor_no_callback"}`)
+	rec, body := hit(h, http.MethodPost, "/debug/faults/consume", `not json`, true)
+	if rec.Code != 200 || body["fault"] == nil {
+		t.Fatalf("consume = %d %s", rec.Code, rec.Body.String())
 	}
 }

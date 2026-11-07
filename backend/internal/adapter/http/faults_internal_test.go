@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"io"
 	"reflect"
 	"strings"
@@ -302,5 +303,20 @@ func TestInterruptingReaderRemembersEOFAndDoesNotConsume(t *testing.T) {
 	}
 	if got := r.list(); len(got) != 1 || got[0].Times != 1 {
 		t.Fatalf("consumed: %v", got)
+	}
+}
+
+func TestVendorFailedReasonStoredAsPlainValues(t *testing.T) {
+	p, err := vendorFailedParams(map[string]json.RawMessage{"reason": json.RawMessage(`null`)})
+	if err != nil || p["reason"] != nil {
+		t.Fatalf("null reason = %#v, %v (want untyped nil)", p["reason"], err)
+	}
+	p, err = vendorFailedParams(map[string]json.RawMessage{})
+	if err != nil || p["reason"] != nil {
+		t.Fatalf("omitted reason = %#v, %v", p["reason"], err)
+	}
+	p, err = vendorFailedParams(map[string]json.RawMessage{"reason": json.RawMessage(`"CONTENT_REJECTED"`)})
+	if err != nil || p["reason"] != "CONTENT_REJECTED" {
+		t.Fatalf("reason = %#v, %v (want string)", p["reason"], err)
 	}
 }

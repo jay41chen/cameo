@@ -29,7 +29,7 @@ services:
       EXPIRY_SWEEP_INTERVAL: ${EXPIRY_SWEEP_INTERVAL:-30s}
       SELFIE_DIR: /data/selfies
       MAX_SELFIE_BYTES: ${MAX_SELFIE_BYTES:-10485760}
-      GENERATION_TTL: ${GENERATION_TTL:-30m}
+      GENERATION_TTL: ${GENERATION_TTL:-2m}
       DISPATCH_SWEEP_INTERVAL: ${DISPATCH_SWEEP_INTERVAL:-2s}
       VENDOR_URL: http://vendor-sim:9000
       # 模擬環境才開：/debug/*（異常登記與重設）。設成 true 以外的值就回 404。
@@ -42,7 +42,8 @@ services:
     ports:
       - "${API_PORT:-8080}:8080"
 
-  # 模擬廠商：收工作後等 VENDOR_DELAY_SEC 秒，對 api 送一次成功回呼。不對外發布 port。
+  # 模擬廠商：收工作後向 api 取一次 /debug/faults/consume 的異常（取不到就當沒有），等 VENDOR_DELAY_SEC 秒後回呼：
+  # 預設送一次成功回呼；有登記 vendor_* 異常時改送失敗、重複回呼或不回呼。不對外發布 port。
   vendor-sim:
     build: ./backend
     entrypoint: ["vendor-sim"]
@@ -50,6 +51,7 @@ services:
       VENDOR_DELAY_SEC: ${VENDOR_DELAY_SEC:-20}
       VENDOR_CALLBACK_URL: http://api:8080/webhooks/vendor
       VENDOR_PUBLIC_URL: http://vendor-sim:9000
+      VENDOR_FAULTS_URL: http://api:8080/debug/faults/consume
       # 僅供模擬，與 api 的 VENDOR_WEBHOOK_SECRET 必須相同。
       VENDOR_WEBHOOK_SECRET: ${VENDOR_WEBHOOK_SECRET:-cameo-sim-secret}
 

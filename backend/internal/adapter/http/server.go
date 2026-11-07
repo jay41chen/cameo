@@ -85,6 +85,7 @@ func Handler(svc *usecase.Service, opts ...Option) http.Handler {
 	}
 	if s.debug {
 		handleMethods(mux, "/debug/faults", map[string]http.HandlerFunc{http.MethodGet: s.debugListFaults, http.MethodPost: s.debugAddFault, http.MethodDelete: s.debugClearFaults})
+		handleMethods(mux, "/debug/faults/consume", map[string]http.HandlerFunc{http.MethodPost: s.debugConsumeFault})
 		handleMethods(mux, "/debug/reset", map[string]http.HandlerFunc{http.MethodPost: s.debugReset})
 	}
 	if len(s.webhookSecret) > 0 {
