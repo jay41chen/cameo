@@ -1,6 +1,6 @@
 # 客串短劇：後端規格
 
-> 從 `spec.md` 提煉，只含 server side；有衝突時以 `spec.md` 為準。`ARCHITECTURE.md` 仍寫 8 種異常和 WebSocket，`README.md` 仍寫 WebSocket，第 8、9 輪才同步；不一致時以規格為準。App 行為只列會影響後端的部分。`[待確認]` 沿用原標記。
+> 從 `spec.md` 提煉，只含 server side；有衝突時以 `spec.md` 為準。`ARCHITECTURE.md`、`README.md` 仍寫 WebSocket，第 8、9 輪才同步；不一致時以規格為準。App 行為只列會影響後端的部分。`[待確認]` 沿用原標記。
 
 ## 1. 目標與範圍（§1、§2、§9）
 
