@@ -102,7 +102,7 @@
 3. `DELETE /v1/cameos/{id}/share`：未分享或非 `SUCCEEDED` 的訂單也回 `204`（冪等）；訂單不存在回 `404 CAMEO_NOT_FOUND`。
 4. `GET /s/{token}`：已取消或不存在時回簡短 HTML 404、查詢錯誤時回簡短 HTML 500（都是 README 通用錯誤格式的例外）。`GET /s/{token}/video`：已取消或不存在時維持 JSON 404。兩者免登入。`GET`／`HEAD /s/{token}` 與 `/s/{token}/video` 的回應都帶 `Cache-Control: no-store`、`X-Robots-Tag: noindex`、`Referrer-Policy: no-referrer`；例外：`405` 與 `/s/{token}/` 這類未註冊路徑的通用 JSON `404` 不帶，`/s/{token}/video` 的 `416` 不帶 `Cache-Control`，body 是標準庫純文字。
 5. token 以 Go 標準庫 `crypto/rand.Text()` 產生，存在 `cameos.share_token`，`NULL` 代表未分享。
-6. 範例影片：`backend/assets/sample.mp4`（約 558 KB、H.264、無音軌），實測 15 秒、640×360；畫面上有 `…IMHIT CAMEO WATERMAR…`、`…AMPLE - NOT FOR REUSE` 字樣（兩端被裁切，照原樣記錄），分享頁會顯示這些字；先沿用，測試發現問題再換。來源與授權未確認。換影片的做法：換掉 `backend/assets/sample.mp4`，並更新測試裡的 sha256 和長度；舊檔仍會留在 git 歷史。
+6. 範例影片：`backend/assets/sample.mp4`（265429 bytes、H.264 Main、yuv420p、無音軌、faststart），15 秒、640×360、30 fps；畫面是程式產生的動態漸層和 `Cameo sample video` 字樣，沒有第三方素材。產生指令見 commit `9f5cbeb`。換影片的做法：換掉這個檔案，並更新測試裡的 sha256 和長度；`gradients` 沒有固定 seed，重新產生也會得到不同檔案，同樣要更新測試。舊檔仍會留在 git 歷史。
 7. 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。
 8. 第 7 輪起，訂單資料的 `video_available` 在 `SUCCEEDED` 時為 true；`share` 反映實際分享狀態（`{"active":true,"url":"..."}`／`{"active":false,"url":null}`）。App 的播放和分享入口依這兩個欄位判斷。
 

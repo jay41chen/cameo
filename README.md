@@ -315,7 +315,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 - 驗證：Agent 以 Claude in Chrome 在桌面 Chrome 自動化驗證 `<video>` 可載入、播放與跳轉（JS 操作、靜音），取消分享後舊連結失效（頁面顯示「找不到這個分享。」、影片回 `404`）。未經真人操作，也未在 App 或模擬器驗證。Range 由自動測試與 curl 驗證，沒有瀏覽器紀錄。資料庫真的斷線時的 HTML `500` 也尚未驗證（目前只用已取消的 context 模擬）。
 - token 以 Go 標準庫 `crypto/rand.Text()` 產生，存在 `cameos.share_token`，`NULL` 代表未分享。
 - 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，把它設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。
-- 範例影片：`backend/assets/sample.mp4`（約 558 KB、H.264、無音軌），所有 `SUCCEEDED` 訂單共用。實測長度 15 秒、解析度 640×360；畫面上有浮水印字樣與 `…AMPLE - NOT FOR REUSE`（兩端被裁切，照原樣記錄），分享頁會顯示這些字。來源與授權未確認。
+- 範例影片：`backend/assets/sample.mp4`（約 265 KB、H.264、無音軌），所有 `SUCCEEDED` 訂單共用。長度 15 秒、解析度 640×360；畫面是程式產生的動態漸層和 `Cameo sample video` 字樣，沒有第三方素材。
 - 訂單資料的 `video_available` 在 `SUCCEEDED` 時為 `true`；`share` 反映實際分享狀態（`{"active":true,"url":"..."}` 或 `{"active":false,"url":null}`）。App 的播放與分享入口依這兩個欄位判斷。
 
 ### 即時事件
