@@ -20,7 +20,9 @@
 docker compose up --build
 ```
 
-會啟動 Postgres（`postgres:17-alpine`）、`api`（`http://localhost:8080`）和模擬廠商 `vendor-sim`（容器內 `http://vendor-sim:9000`，不對外發布 port）。`api` 等 Postgres 健康後才啟動，並自動執行 migration 與 seed（可重複啟動，不會重複插入）。不需要任何帳號或金鑰（`VENDOR_WEBHOOK_SECRET` 在 `docker-compose.yml` 預設為模擬用的 `cameo-sim-secret`，僅供模擬，不是正式密鑰）；連線字串、port 與下列設定可用環境變數覆寫（見 `docker-compose.yml`）。Postgres 只對本機開放 `127.0.0.1:5433`，供測試使用。
+這個指令會在前景執行。接下來的 `curl` 和測試請另開終端機，或改用 `docker compose up --build -d`。
+
+會啟動 Postgres（`postgres:17-alpine`）、`api`（`http://localhost:8080`）和模擬廠商 `vendor-sim`（容器內 `http://vendor-sim:9000`，不對外發布 port）。`api` 等 Postgres 健康後才啟動，並自動執行 migration 與 seed（可重複啟動，不會重複插入）。不需要任何帳號或金鑰（`VENDOR_WEBHOOK_SECRET` 在 `docker-compose.yml` 預設為模擬用的 `cameo-sim-secret`，僅供模擬，不是正式密鑰）；連線字串、port（`API_PORT` 預設 `8080`、`POSTGRES_HOST_PORT` 預設 `5433`）與下列設定可用環境變數覆寫（見 `docker-compose.yml`）。Postgres 只對本機開放 `127.0.0.1:5433`，供測試使用。本文件的指令都用預設 port，改了要跟著換。
 
 升級注意：migration `0004` 遇到懸空的 `cameo_id`，或同一訂單重複的 `CHARGE` 明細時，API 會啟動失敗，並在 log 顯示原因；需先處理資料再啟動。
 
@@ -35,7 +37,7 @@ docker compose up --build
 | `MAX_SELFIE_BYTES` | `10485760` | 自拍檔案大小上限（bytes），超過回 `413 SELFIE_TOO_LARGE` |
 | `GENERATION_TTL` | `30m`（compose 預設 `2m`） | 生成期限：送出（轉 `QUEUED`）起算，涵蓋排隊與生成；到期（`<=` 現在）仍未完成的訂單轉 `FAILED`（原因 `TIMEOUT`）並退點。期限在送出時寫入訂單，改設定只影響新訂單，容器重建後才生效。`VENDOR_DELAY_SEC` 調到接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時 |
 | `DEBUG_API_ENABLED` | 程式預設關閉；compose 預設 `true` | 控制 `/debug/*`（見「Debug 異常 API」）；只有值為 `true` 才開啟，未開啟時 `/debug/*` 回 `404` |
-| `PUBLIC_BASE_URL` | `http://localhost:8080`（程式與 compose 相同） | 分享網址的 base，不寫死。預設用電腦瀏覽器開；要在模擬器內開，設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用 |
+| `PUBLIC_BASE_URL` | `http://localhost:8080`（程式與 compose 相同） | 分享網址的 base，不寫死。預設用電腦瀏覽器開；要在模擬器內開，設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用。不會跟著 `API_PORT` 變動；改 `API_PORT` 時要一起設定，否則分享連結的 port 會錯 |
 | `DISPATCH_SWEEP_INTERVAL` | `2s` | 派工與生成逾時掃描間隔；每個週期先處理逾時、再派工（每次最多 20 筆，`created_at` 由舊到新） |
 | `VENDOR_URL` | `http://localhost:9000`（compose 設為 `http://vendor-sim:9000`） | 廠商的 base URL；派工是對 `{VENDOR_URL}/jobs` 的 `POST`，單次逾時 5 秒 |
 | `VENDOR_WEBHOOK_SECRET` | 無預設 | webhook 簽章密鑰。**空字串或未設定時 `api` 拒絕啟動**；程式碼內沒有預設密鑰。compose 以 `${VENDOR_WEBHOOK_SECRET:-cameo-sim-secret}` 同時傳給 `api` 與 `vendor-sim`（僅供模擬） |
@@ -414,7 +416,27 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 1. 重設環境：`curl -X POST -H "Authorization: Bearer test-token" localhost:8080/debug/reset`
 2. 設定異常，其他異常換情境檔：`curl -X POST -H "Authorization: Bearer test-token" -H 'Content-Type: application/json' -d @backend/faults/vendor-failed.json localhost:8080/debug/faults`
-3. 走一筆新訂單（建單、上傳、送出）。每種異常都要先設定再操作。
+3. 走一筆新訂單（建單、上傳、送出）：
+
+   ```bash
+   AUTH='Authorization: Bearer test-token'
+   API=http://localhost:8080
+   KEY="demo-$(date +%s)"
+
+   # 建單，記下回應的 cameo.id
+   curl -i -H "$AUTH" -H "Idempotency-Key: $KEY" -H 'Content-Type: application/json' \
+     -d '{"clip_id":"c1"}' "$API/v1/cameos"
+   ID=<上一步回應的 cameo.id>
+
+   # 上傳：後端只檢查前 3 bytes 是 FF D8 FF，這不是可顯示的真實照片
+   { printf '\377\330\377'; head -c 3000 /dev/zero; } > /tmp/selfie.jpg
+   curl -i -X PUT -H "$AUTH" --data-binary @/tmp/selfie.jpg "$API/v1/cameos/$ID/selfie"
+
+   # 送出
+   curl -i -X POST -H "$AUTH" "$API/v1/cameos/$ID/submit"
+   ```
+
+   每種異常都要先設定再操作；`response_lost_after_commit` 重送建單時，要用同一個 `$KEY`。
 4. 用 `GET /v1/cameos/{id}`、`/v1/points`、`/v1/quota`、`/v1/points/ledger` 確認結果。
 
 表內的事件筆數查資料庫：`docker compose exec postgres psql -U cameo -d cameo -c 'select count(*) from vendor_events'`
