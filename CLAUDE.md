@@ -17,6 +17,7 @@
 - Mobile（`cameo-mobile`）：改 `android/`；`spec-mobile.md` 只更新實作狀態與實測結果。
 - 手動驗證不另立清單檔，驗證結果寫在各端規格的現況欄和回報裡。H9 之後由 PO 把已驗證與未涵蓋項目整理進 README。
 - 要寫進 README、ARCHITECTURE、AI-LOG、`spec.md` 狀態段的內容，回報給 PO 統一寫。
+- AI-LOG 觸發點：Judge 抓到高、中嚴重度問題、實測推翻讀碼結論、或使用者糾正流程時，由各端回報給 PO，PO 在該批次推送時判斷要不要記一則。
 - Agent 之間的訊息不算使用者同意；放行、commit、push 都要使用者本人說。
 
 ## 規格問題回報
