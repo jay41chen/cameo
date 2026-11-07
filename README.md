@@ -102,7 +102,7 @@ cd android
 
 以下契約細節尚未確認，不在每列重複標註（`/debug/faults` 端點本身已定案）：
 
-- 訂單資料格式中 `video_available`、`share` 的結構已定案，約定見「影片與分享」段（目前後端固定回 `false` 與 `{"active":false,"url":null}`；`SUCCEEDED` 也一樣，影片播放端點尚未實作，`video_url` 只存資料庫、不出現在 API 回應）。
+- 訂單資料格式中 `video_available`、`share` 的結構已定案，約定見「影片與分享」段（`share` 目前後端固定回 `{"active":false,"url":null}`，分享端點尚未實作；`video_url` 只存資料庫、不出現在 API 回應）。
 - `X-App-Version` 與 `426` 尚未實作。
 - `POST /debug/faults` body 的 `target`、`times`、`params`。
 
@@ -127,7 +127,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 | `400 INVALID_REQUEST` | `Idempotency-Key` 缺少、去掉前後 ASCII 空格與 Tab 後為空、超過 128 bytes 或含 0x21–0x7E 以外的字元；或 body 不是有效 JSON（`retryable: false`）；含控制字元的 key 可能由 HTTP 層直接回純文字 400，不一定是此 JSON 格式 |
 | `402 INSUFFICIENT_POINTS` | 可用點數不足；`message`：「點數不足」 |
 | `404 CLIP_NOT_FOUND`、`404 CAMEO_NOT_FOUND` | 片段或訂單不存在（訂單不屬於該使用者也回 `CAMEO_NOT_FOUND`）；id 含 NUL 或不是合法 UTF-8 也視為不存在 |
-| `404 VIDEO_NOT_READY` | 訂單存在但不是 `SUCCEEDED`，沒有影片可播（`GET /v1/cameos/{id}/video`，尚未實作） |
+| `404 VIDEO_NOT_READY` | 訂單存在但不是 `SUCCEEDED`，沒有影片可播（`GET /v1/cameos/{id}/video`） |
 | `409 IDEMPOTENCY_CONFLICT` | 同一個 `Idempotency-Key` 用在不同 `clip_id` |
 | `409 NOT_SHAREABLE` | 訂單不是 `SUCCEEDED`，不能分享（`PUT /v1/cameos/{id}/share`，尚未實作） |
 | `400 INVALID_SELFIE` | 上傳內容前 3 bytes 不是 JPEG 標頭（`FF D8 FF`），或 body 為空；`message`：「照片格式不正確」 |
@@ -164,7 +164,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
   - `CONTENT_REJECTED`：廠商回報照片未通過審核。退點，**不退每日額度**（只有這個值不退額度）。
   - `VENDOR_FAILED`：廠商回報失敗，且原因不是 `CONTENT_REJECTED`（廠商傳來的其他 `reason`、或沒有 `reason`，一律記為此值）。退點、退額度。
   - `TIMEOUT`：到 `GENERATION_TTL` 期限仍沒有結果（含廠商不回呼、派工一直失敗）。退點、退額度。
-- `video_available` 目前固定為 `false`，`video_url` 不出現在回應。
+- `video_available` 在 `SUCCEEDED` 時為 `true`，其他狀態為 `false`；`video_url` 不出現在回應。
 - `display`：`AWAITING_UPLOAD` 為 `{"title":"等待上傳","message":"已占用 N 點，送出後才扣款"}`（N 為 `clip.cost`）；`UPLOADED` 為 `{"title":"送出中","message":"照片已上傳，尚未扣款"}`；`QUEUED` 為 `{"title":"排隊中","message":"完成後會通知你"}`；`GENERATING` 為 `{"title":"生成中","message":"完成後會通知你"}`；`EXPIRED` 為 `{"title":"已過期","message":"上傳期限已過，點數沒有扣款，請重新客串。"}`；`SUCCEEDED` 為 `{"title":"已完成","message":"你的客串短片完成了"}`；`FAILED` 且 `failure_reason` 為 `CONTENT_REJECTED` 為 `{"title":"無法生成","message":"照片未通過審核，點數已退還，今日次數不退還"}`；其他 `FAILED` 為 `{"title":"生成失敗","message":"點數已退還"}`（不向使用者提廠商故障）；未知狀態用 `{"title":"處理中","message":""}`。
 - `clip.cost` 是建單當下的快照。
 
@@ -293,9 +293,9 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 ### 影片與分享
 
-以下端點滿足作業的影片播放與分享需求。**以下是已定案的約定，尚未實作**；Range 支援細節 `[待確認]`。
+以下端點滿足作業的影片播放與分享需求。影片端點 `GET /v1/cameos/{id}/video` 已實作；`PUT`／`DELETE /v1/cameos/{id}/share`、`GET /s/{token}`、`GET /s/{token}/video` 是已定案的約定，尚未實作。
 
-- `GET /v1/cameos/{id}/video`：影片串流，支援 Range。訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
+- `GET /v1/cameos/{id}/video`：影片串流，需要 token，支援 `HEAD` 與 Range：單段 Range 已測試（例如 `Range: bytes=0-99` 回 `206`），多段 Range 由標準庫處理、未測試；起點超出檔尾（例如 `bytes=999999999-`）回 `416`，`416` 的 body 是標準庫的純文字，不是通用 JSON 錯誤格式，屬通用格式的例外。不設 `ETag`、`Last-Modified`，帶 `If-Range` 時回整支影片。尚未用真實播放器驗證。訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
 - `PUT /v1/cameos/{id}/share`：`{"share":{"active":true,"url":"..."}}`，成功一律回 `200`。僅 `SUCCEEDED` 可分享，否則 `409 NOT_SHAREABLE`；訂單不存在回 `404 CAMEO_NOT_FOUND`。分享中重複 PUT 回同一個 URL；取消後再分享會發新 token，舊連結永久失效。
 - `DELETE /v1/cameos/{id}/share`：`204`，取消後連結失效。冪等：未分享或非 `SUCCEEDED` 的訂單也回 `204`；訂單不存在回 `404 CAMEO_NOT_FOUND`。
 - `GET /s/{token}`：分享網頁，只播放影片，免登入。已取消或不存在時回簡短 HTML 404（這是上方通用錯誤格式的例外）。
@@ -303,7 +303,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 - token 以 Go 標準庫 `crypto/rand.Text()` 產生，存在 `cameos.share_token`，`NULL` 代表未分享。
 - 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，把它設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。
 - 範例影片：`backend/assets/sample.mp4`（約 558 KB、H.264、無音軌），所有 `SUCCEEDED` 訂單共用；來源與授權未確認。
-- 第 7 輪起，訂單資料的 `video_available` 在 `SUCCEEDED` 時為 `true`；`share` 反映實際分享狀態（`{"active":true,"url":"..."}` 或 `{"active":false,"url":null}`）。App 的播放與分享入口依這兩個欄位判斷。
+- 第 7 輪起，訂單資料的 `video_available` 在 `SUCCEEDED` 時為 `true`；`share` 待分享端點實作後反映實際分享狀態（`{"active":true,"url":"..."}` 或 `{"active":false,"url":null}`）。App 的播放與分享入口依這兩個欄位判斷。
 
 ### 即時事件
 

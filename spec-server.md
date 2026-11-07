@@ -95,7 +95,7 @@
 | `GET /s/{token}/video` | 分享頁播放，免登入，回固定範例影片；分享已取消或不存在維持 JSON `404` | 未實作 |
 | `GET`、`POST`、`DELETE /debug/faults`、`POST /debug/reset` | 異常觸發與重設 | 未實作 |
 
-**影片與分享約定（已定案；端點尚未實作）：**
+**影片與分享約定（已定案；約定 1、6 已實作，約定 8 僅 `video_available` 已實作，其餘分享相關尚未實作）：**
 
 1. `GET /v1/cameos/{id}/video`：訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
 2. `PUT /v1/cameos/{id}/share`：取消後再分享發新 token，舊連結永久失效；分享中重複 PUT 回同一個 URL。成功一律回 `200`。非 `SUCCEEDED` 維持 `409 NOT_SHAREABLE`；訂單不存在回 `404 CAMEO_NOT_FOUND`。
