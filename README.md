@@ -1,6 +1,6 @@
 # 客串短劇（Kimhit 候選人作業）
 
-> 狀態：進行中。主流程（選片段到生成完成通知）的後端與 Android App 已接通，只在 API 37 模擬器驗證過；App 首頁改版、影片播放、分享和異常 API 尚未完成。驗證細節與未涵蓋項目見 `docs/manual-test-checklist.md`。
+> 狀態：進行中。主流程（選片段到生成完成通知）的後端與 Android App 已接通，只在 API 37 模擬器驗證過；後端的影片與分享 API 已完成；App 首頁改版、App 的播放與分享入口、異常 API 尚未完成。驗證細節與未涵蓋項目見 `docs/manual-test-checklist.md`。
 
 ## 專案介紹
 
@@ -35,11 +35,14 @@ docker compose up --build
 | `MAX_SELFIE_BYTES` | `10485760` | 自拍檔案大小上限（bytes），超過回 `413 SELFIE_TOO_LARGE` |
 | `GENERATION_TTL` | `30m`（compose 將設為 `2m`，尚未實作，目前 compose 仍為 `30m`） | 生成期限：送出（轉 `QUEUED`）起算，涵蓋排隊與生成；到期（`<=` 現在）仍未完成的訂單轉 `FAILED`（原因 `TIMEOUT`）並退點。期限在送出時寫入訂單，改設定只影響新訂單。`VENDOR_DELAY_SEC` 調到接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時 |
 | `DEBUG_API_ENABLED` | 關閉（compose 將預設開啟，尚未實作） | 控制 `/debug/*`（見「Debug 異常 API」）；未開啟時回 `404`。尚未實作 |
+| `PUBLIC_BASE_URL` | `http://localhost:8080`（程式與 compose 相同） | 分享網址的 base，不寫死。預設用電腦瀏覽器開；要在模擬器內開，設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用 |
 | `DISPATCH_SWEEP_INTERVAL` | `2s` | 派工與生成逾時掃描間隔；每個週期先處理逾時、再派工（每次最多 20 筆，`created_at` 由舊到新） |
 | `VENDOR_URL` | `http://localhost:9000`（compose 設為 `http://vendor-sim:9000`） | 廠商的 base URL；派工是對 `{VENDOR_URL}/jobs` 的 `POST`，單次逾時 5 秒 |
 | `VENDOR_WEBHOOK_SECRET` | 無預設 | webhook 簽章密鑰。**空字串或未設定時 `api` 拒絕啟動**；程式碼內沒有預設密鑰。compose 以 `${VENDOR_WEBHOOK_SECRET:-cameo-sim-secret}` 同時傳給 `api` 與 `vendor-sim`（僅供模擬） |
 
 例如 `UPLOAD_TTL=5s EXPIRY_SWEEP_INTERVAL=1s docker compose up -d api` 可快速觀察逾期釋放。
+
+本機要放寬每日額度可用 `DAILY_LIMIT=100 docker compose up -d`；預設值不變。
 
 `vendor-sim` 的設定（環境變數，見 `docker-compose.yml`）：
 
@@ -103,7 +106,6 @@ cd android
 
 以下契約細節尚未確認，不在每列重複標註：
 
-- 訂單資料格式中 `video_available`、`share` 的結構已定案，約定見「影片與分享」段（`share` 目前後端固定回 `{"active":false,"url":null}`，分享端點尚未實作；`video_url` 只存資料庫、不出現在 API 回應）。
 - `X-App-Version` 與 `426` 尚未實作。
 
 ## API 說明
@@ -117,7 +119,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 - 先判斷路由再驗 token：未知路徑（不論有沒有 token）回 `404 NOT_FOUND`；已知路徑但方法不對回 `405 METHOD_NOT_ALLOWED`（帶 `Allow`）；已知路徑且方法正確，缺少或錯誤的 `Authorization` 才回 `401 UNAUTHORIZED`；後端錯誤回 `500 INTERNAL`（`retryable: true`）。都使用上述錯誤格式。
 - App 忽略未知欄位。未知的訂單 `status` 視為非終態；有後端 `display` 就顯示，沒有才用通用文字；兩種情況都重新查詢。
 - 版本過舊回 `426 UPGRADE_REQUIRED`。
-- `GET /s/{token}`、`GET /s/{token}/video`（尚未實作）免登入，不需 `Authorization`；`GET /s/{token}` 的 404 回 HTML，是上述錯誤格式的例外，細節見「影片與分享」。
+- `GET /s/{token}`、`GET /s/{token}/video` 免登入，不需 `Authorization`；`GET /s/{token}` 的 404 與查詢錯誤時的 500 回 HTML，是上述錯誤格式的例外，細節見「影片與分享」。
 - 時間為 ISO 8601，台北時間（+08:00）。
 
 ### 常見錯誤碼
@@ -129,7 +131,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 | `404 CLIP_NOT_FOUND`、`404 CAMEO_NOT_FOUND` | 片段或訂單不存在（訂單不屬於該使用者也回 `CAMEO_NOT_FOUND`）；id 含 NUL 或不是合法 UTF-8 也視為不存在 |
 | `404 VIDEO_NOT_READY` | 訂單存在但不是 `SUCCEEDED`，沒有影片可播（`GET /v1/cameos/{id}/video`） |
 | `409 IDEMPOTENCY_CONFLICT` | 同一個 `Idempotency-Key` 用在不同 `clip_id` |
-| `409 NOT_SHAREABLE` | 訂單不是 `SUCCEEDED`，不能分享（`PUT /v1/cameos/{id}/share`，尚未實作） |
+| `409 NOT_SHAREABLE` | 訂單不是 `SUCCEEDED`，不能分享（`PUT /v1/cameos/{id}/share`） |
 | `400 INVALID_SELFIE` | 上傳內容前 3 bytes 不是 JPEG 標頭（`FF D8 FF`），或 body 為空；`message`：「照片格式不正確」 |
 | `408 UPLOAD_INTERRUPTED`（`retryable: true`） | 上傳讀取 body 中途失敗（連線中斷、實際內容少於 `Content-Length`）；暫存檔已丟棄、訂單狀態不變，可整檔重傳；`message`：「上傳中斷，請重試」。寫入暫存檔本身失敗（例如磁碟滿）不屬於此類，回 `500 INTERNAL` |
 | `401 INVALID_SIGNATURE` | 只用於 `POST /webhooks/vendor`：`X-Signature` 缺少或不符；`message`：「簽章無效」 |
@@ -293,17 +295,19 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 ### 影片與分享
 
-以下端點滿足作業的影片播放與分享需求。影片端點 `GET /v1/cameos/{id}/video` 已實作；`PUT`／`DELETE /v1/cameos/{id}/share`、`GET /s/{token}`、`GET /s/{token}/video` 是已定案的約定，尚未實作。
+以下端點滿足作業的影片播放與分享需求。影片端點 `GET /v1/cameos/{id}/video`，以及 `PUT`／`DELETE /v1/cameos/{id}/share`、`GET /s/{token}`、`GET /s/{token}/video` 都已實作；App 的播放與分享入口尚未實作。
 
-- `GET /v1/cameos/{id}/video`：影片串流，需要 token，支援 `HEAD` 與 Range：單段 Range 已測試（例如 `Range: bytes=0-99` 回 `206`），多段 Range 由標準庫處理、未測試；起點超出檔尾（例如 `bytes=999999999-`）回 `416`，`416` 的 body 是標準庫的純文字，不是通用 JSON 錯誤格式，屬通用格式的例外。不設 `ETag`、`Last-Modified`，帶 `If-Range` 時回整支影片。尚未用真實播放器驗證。訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
+- `GET /v1/cameos/{id}/video`：影片串流，需要 token，支援 `HEAD` 與 Range：單段 Range 已測試（例如 `Range: bytes=0-99` 回 `206`），多段 Range 由標準庫處理、未測試；起點超出檔尾（例如 `bytes=999999999-`）回 `416`，`416` 的 body 是標準庫的純文字，不是通用 JSON 錯誤格式，屬通用格式的例外。不設 `ETag`、`Last-Modified`，帶 `If-Range` 時回整支影片。此端點尚未用真實播放器驗證（App 播放入口尚未實作）。訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
 - `PUT /v1/cameos/{id}/share`：`{"share":{"active":true,"url":"..."}}`，成功一律回 `200`。僅 `SUCCEEDED` 可分享，否則 `409 NOT_SHAREABLE`；訂單不存在回 `404 CAMEO_NOT_FOUND`。分享中重複 PUT 回同一個 URL；取消後再分享會發新 token，舊連結永久失效。
 - `DELETE /v1/cameos/{id}/share`：`204`，取消後連結失效。冪等：未分享或非 `SUCCEEDED` 的訂單也回 `204`；訂單不存在回 `404 CAMEO_NOT_FOUND`。
-- `GET /s/{token}`：分享網頁，只播放影片，免登入。已取消或不存在時回簡短 HTML 404（這是上方通用錯誤格式的例外）。
-- `GET /s/{token}/video`：分享頁用的影片，免登入。已取消或不存在時維持 JSON 404（通用錯誤格式）。
+- `GET /s/{token}`：分享網頁，只播放影片，免登入。有效時回 `200 text/html`；已取消或不存在時回簡短 HTML 404、查詢錯誤時回簡短 HTML 500（都是上方通用錯誤格式的例外）。
+- `GET /s/{token}/video`：分享頁用的影片，免登入。已取消或不存在時維持 JSON 404（通用錯誤格式）。Range 超出範圍回 `416`。
+- `GET`／`HEAD /s/{token}` 與 `/s/{token}/video` 的回應都帶 `Cache-Control: no-store`、`X-Robots-Tag: noindex`、`Referrer-Policy: no-referrer`。例外：`405` 與 `/s/{token}/` 這類未註冊路徑的通用 JSON `404` 不帶；`/s/{token}/video` 的 `416` 不帶 `Cache-Control`，body 是標準庫純文字。
+- 驗證：Agent 以 Claude in Chrome 在桌面 Chrome 自動化驗證 `<video>` 可載入、播放與跳轉（JS 操作、靜音），取消分享後舊連結失效（頁面顯示「找不到這個分享。」、影片回 `404`）。未經真人操作，也未在 App 或模擬器驗證。Range 由自動測試與 curl 驗證，沒有瀏覽器紀錄。資料庫真的斷線時的 HTML `500` 也尚未驗證（目前只用已取消的 context 模擬）。
 - token 以 Go 標準庫 `crypto/rand.Text()` 產生，存在 `cameos.share_token`，`NULL` 代表未分享。
 - 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，把它設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。
-- 範例影片：`backend/assets/sample.mp4`（約 558 KB、H.264、無音軌），所有 `SUCCEEDED` 訂單共用；來源與授權未確認。
-- 第 7 輪起，訂單資料的 `video_available` 在 `SUCCEEDED` 時為 `true`；`share` 待分享端點實作後反映實際分享狀態（`{"active":true,"url":"..."}` 或 `{"active":false,"url":null}`）。App 的播放與分享入口依這兩個欄位判斷。
+- 範例影片：`backend/assets/sample.mp4`（約 558 KB、H.264、無音軌），所有 `SUCCEEDED` 訂單共用。實測長度 15 秒、解析度 640×360；畫面上有 `…IMHIT CAMEO WATERMAR…`、`…AMPLE - NOT FOR REUSE` 字樣（兩端被裁切，照原樣記錄），分享頁會顯示這些字。來源與授權未確認。
+- 訂單資料的 `video_available` 在 `SUCCEEDED` 時為 `true`；`share` 反映實際分享狀態（`{"active":true,"url":"..."}` 或 `{"active":false,"url":null}`）。App 的播放與分享入口依這兩個欄位判斷。
 
 ### 即時事件
 
@@ -349,7 +353,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 | 方法與路徑 | 說明 |
 |---|---|
-| `GET /debug/faults` | 查看目前設定的異常，回 `{"active":[],"available":[]}`；`active` 每筆為 `{name,target,times,params}`（`times` 是剩餘次數），`available` 是名稱字串陣列 |
+| `GET /debug/faults` | 查看目前設定的異常，回 `{"active":[...],"available":[...]}`；`active` 每筆為 `{name,target,times,params}`（`times` 是剩餘次數），沒有異常時為空陣列；`available` 是名稱字串陣列，永遠列出 6 種名稱 |
 | `POST /debug/faults` | 設定異常，成功回 `200` 和目前清單（同 `GET`） |
 | `DELETE /debug/faults` | 全部清除，回 `204` |
 | `POST /debug/reset` | 重設環境，回 `204` |

@@ -95,14 +95,14 @@
 | `GET /s/{token}/video` | 分享頁播放，免登入，回固定範例影片；分享已取消或不存在維持 JSON `404` | 已實作（7.2）。Range `206`、HEAD、免登入；已取消或不存在回 JSON `404`；`sha256` 與範例影片相同 |
 | `GET`、`POST`、`DELETE /debug/faults`、`POST /debug/reset`、`POST /debug/faults/consume`（內部） | 異常觸發與重設；consume 供 vendor-sim 取得異常 | 未實作 |
 
-**影片與分享約定（已定案；約定 1、6 已實作，約定 8 僅 `video_available` 已實作，其餘分享相關尚未實作）：**
+**影片與分享約定（已定案；約定都已實作；App 的入口尚未實作）：**
 
 1. `GET /v1/cameos/{id}/video`：訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
 2. `PUT /v1/cameos/{id}/share`：取消後再分享發新 token，舊連結永久失效；分享中重複 PUT 回同一個 URL。成功一律回 `200`。非 `SUCCEEDED` 維持 `409 NOT_SHAREABLE`；訂單不存在回 `404 CAMEO_NOT_FOUND`。
 3. `DELETE /v1/cameos/{id}/share`：未分享或非 `SUCCEEDED` 的訂單也回 `204`（冪等）；訂單不存在回 `404 CAMEO_NOT_FOUND`。
-4. `GET /s/{token}`：已取消或不存在時回簡短 HTML 404（README 通用錯誤格式的例外）。`GET /s/{token}/video`：已取消或不存在時維持 JSON 404。兩者免登入。
+4. `GET /s/{token}`：已取消或不存在時回簡短 HTML 404、查詢錯誤時回簡短 HTML 500（都是 README 通用錯誤格式的例外）。`GET /s/{token}/video`：已取消或不存在時維持 JSON 404。兩者免登入。`GET`／`HEAD /s/{token}` 與 `/s/{token}/video` 的回應都帶 `Cache-Control: no-store`、`X-Robots-Tag: noindex`、`Referrer-Policy: no-referrer`；例外：`405` 與 `/s/{token}/` 這類未註冊路徑的通用 JSON `404` 不帶，`/s/{token}/video` 的 `416` 不帶 `Cache-Control`，body 是標準庫純文字。
 5. token 以 Go 標準庫 `crypto/rand.Text()` 產生，存在 `cameos.share_token`，`NULL` 代表未分享。
-6. 範例影片：`backend/assets/sample.mp4`（約 558 KB、H.264、無音軌），來源與授權未確認。
+6. 範例影片：`backend/assets/sample.mp4`（約 558 KB、H.264、無音軌），實測 15 秒、640×360；畫面上有 `…IMHIT CAMEO WATERMAR…`、`…AMPLE - NOT FOR REUSE` 字樣（兩端被裁切，照原樣記錄），分享頁會顯示這些字；先沿用，測試發現問題再換。來源與授權未確認。換影片的做法：換掉 `backend/assets/sample.mp4`，並更新測試裡的 sha256 和長度；舊檔仍會留在 git 歷史。
 7. 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。
 8. 第 7 輪起，訂單資料的 `video_available` 在 `SUCCEEDED` 時為 true；`share` 反映實際分享狀態（`{"active":true,"url":"..."}`／`{"active":false,"url":null}`）。App 的播放和分享入口依這兩個欄位判斷。
 
@@ -150,7 +150,7 @@
   - registry 放 adapter 層。
   - 開關：`/debug/*` 由 `DEBUG_API_ENABLED` 控制，程式預設關閉，未開啟回 `404`；`docker-compose.yml` 預設開啟；同時需要 Bearer token。
   - `POST /debug/reset` 回 `204`：清空訂單、點數明細、廠商事件、自拍檔案和異常；餘額回到 seed 的值（不寫死）；片段保留；額度因訂單清空而恢復。重設後才到的廠商回呼照未知 `job_id` 處理（`404 CAMEO_NOT_FOUND`、事件不留），訂單不會復活。
-  - `GET`／`POST`／`DELETE /debug/faults`：`POST` body `{"name","target","times","params"}`，成功回 `200` 和目前清單；未知名稱 `400 UNKNOWN_FAULT`，其他參數錯誤 `400 INVALID_FAULT`；`times` 預設 1；`target` 只用於 `response_lost_after_commit`，必填，`create` 或 `submit`；同名覆蓋；`vendor_*` 異常同一時間只允許一種，已有另一種 `vendor_*` 時設定新的回 `400 INVALID_FAULT`，要換就先 `DELETE`，其他異常可並存；`params` 帶不認得的 key，或 `response_lost_after_commit` 以外的異常帶了 `target`，都回 `400 INVALID_FAULT`；`GET` 回 `{"active":[{"name","target","times","params"}],"available":["名稱"]}`（`times` 為剩餘次數，`available` 為名稱字串陣列），空時為 `{"active":[],"available":[]}`；`DELETE` 回 `204`；異常存記憶體，重啟清空。
+  - `GET`／`POST`／`DELETE /debug/faults`：`POST` body `{"name","target","times","params"}`，成功回 `200` 和目前清單；未知名稱 `400 UNKNOWN_FAULT`，其他參數錯誤 `400 INVALID_FAULT`；`times` 預設 1；`target` 只用於 `response_lost_after_commit`，必填，`create` 或 `submit`；同名覆蓋；`vendor_*` 異常同一時間只允許一種，已有另一種 `vendor_*` 時設定新的回 `400 INVALID_FAULT`，要換就先 `DELETE`，其他異常可並存；`params` 帶不認得的 key，或 `response_lost_after_commit` 以外的異常帶了 `target`，都回 `400 INVALID_FAULT`；`GET` 回 `{"active":[{"name","target","times","params"}],"available":["名稱"]}`（`times` 為剩餘次數），沒有異常時 `active` 為空陣列；`available` 是名稱字串陣列，永遠列出 6 種名稱；`DELETE` 回 `204`；異常存記憶體，重啟清空。
   - 情境檔 `backend/faults/*.json` 每種異常一個，只當 `curl -d @...` 的 body，後端不載入。
   - `vendor_*` 異常的 `times`：每個被接受的工作扣 1，連續套用到接下來 N 個工作，和 `vendor_duplicate_callback` 的 `count` 無關。
   - `POST /debug/faults/consume` 和其他 `/debug/*` 一樣受 `DEBUG_API_ENABLED` 與 Bearer token 保護，只給 vendor-sim 用。
