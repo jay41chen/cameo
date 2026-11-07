@@ -21,11 +21,14 @@ const (
 	sampleVideoSHA256 = "972000c2f9b8b3a5a537e9fb28ddca8b7f99a4cc0b25a8a57e34e02b6eb8c6f6"
 )
 
+// testBaseURL 故意帶尾端 /，驗證 WithPublicBaseURL 會去掉。
+const testBaseURL = "http://share.test/"
+
 // newVideoVfx 是 newVfx 加上範例影片路由。
 func newVideoVfx(t *testing.T) *vfx {
 	t.Helper()
 	f := newVfx(t)
-	f.h = apihttp.Handler(f.svc, apihttp.WithVendorWebhook([]byte(webhookSecret)), apihttp.WithSampleVideo(assets.SampleVideo))
+	f.h = apihttp.Handler(f.svc, apihttp.WithVendorWebhook([]byte(webhookSecret)), apihttp.WithSampleVideo(assets.SampleVideo), apihttp.WithPublicBaseURL(testBaseURL))
 	return f
 }
 
@@ -108,8 +111,9 @@ func TestVideoRoutingAndAuth(t *testing.T) {
 	wantError(t, f.video(http.MethodGet, "a%00b", nil), 404, "CAMEO_NOT_FOUND")
 }
 
-func TestVideoNotReadyForOtherStates(t *testing.T) {
-	f := newVideoVfx(t)
+// nonSucceededCameos 建立每種非 SUCCEEDED 狀態各一筆訂單，key 是狀態名。
+func (f *vfx) nonSucceededCameos(t *testing.T) map[string]string {
+	t.Helper()
 	ids := map[string]string{}
 	// 先讓一筆逾期，其他訂單在時鐘推進後才建立，才不會一起逾期。
 	expired := f.create(t, "k-exp")
@@ -128,6 +132,12 @@ func TestVideoNotReadyForOtherStates(t *testing.T) {
 	ids["FAILED"] = failed
 	// generating 會派工所有到期訂單，QUEUED 要最後建立。
 	ids["QUEUED"] = f.queued(t, "k-queued")
+	return ids
+}
+
+func TestVideoNotReadyForOtherStates(t *testing.T) {
+	f := newVideoVfx(t)
+	ids := f.nonSucceededCameos(t)
 
 	for want, id := range ids {
 		if st, _ := f.state(t, id); st != want {

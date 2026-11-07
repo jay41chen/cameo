@@ -47,6 +47,7 @@ func (fakeQueries) DispatchableIDs(context.Context, time.Time, int) ([]string, e
 	return nil, nil
 }
 func (fakeQueries) TimedOutIDs(context.Context, time.Time) ([]string, error) { return nil, nil }
+func (fakeQueries) ShareTokenExists(context.Context, string) (bool, error)   { return false, nil }
 
 type fixedClock struct{}
 

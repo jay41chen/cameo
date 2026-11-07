@@ -63,3 +63,30 @@ func TestHandleMethodsCoexist(t *testing.T) {
 		t.Errorf("GET /q = %d Allow=%q", rec.Code, rec.Header().Get("Allow"))
 	}
 }
+
+// handlePublic 與 handleMethods 相同，只是不驗 token：免 Authorization 可通過，其他方法回 405。
+func TestHandlePublicNoAuth(t *testing.T) {
+	mux := http.NewServeMux()
+	ok := func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"t": r.PathValue("t")})
+	}
+	handlePublic(mux, "/pub/{t}", map[string]http.HandlerFunc{http.MethodGet: ok})
+	handleGET(mux, "/priv", ok)
+	do := func(method, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		return rec
+	}
+	if rec := do("GET", "/pub/abc"); rec.Code != 200 || rec.Body.String() != "{\"t\":\"abc\"}\n" {
+		t.Errorf("GET public without token: %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := do("HEAD", "/pub/abc"); rec.Code != 200 {
+		t.Errorf("HEAD public without token = %d", rec.Code)
+	}
+	if rec := do("POST", "/pub/abc"); rec.Code != 405 || rec.Header().Get("Allow") != "GET, HEAD" {
+		t.Errorf("POST public: %d Allow=%q", rec.Code, rec.Header().Get("Allow"))
+	}
+	if rec := do("GET", "/priv"); rec.Code != 401 {
+		t.Errorf("handleGET without token = %d, want 401", rec.Code)
+	}
+}

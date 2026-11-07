@@ -62,9 +62,11 @@ type Cameo struct {
 	// GenerationExpiresAt 在送出（轉 QUEUED）時寫入，涵蓋排隊與生成兩段；之前的狀態為 nil。
 	GenerationExpiresAt *time.Time
 	// VideoURL 是廠商回報的影片位置，只存資料庫，不放進 API 回應。
-	VideoURL  *string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	VideoURL *string
+	// ShareToken 是分享連結的 token，nil 代表未分享。不直接放進 API 回應，只組成分享網址。
+	ShareToken *string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // VideoAvailable 回傳影片是否可播放：只有 SUCCEEDED。

@@ -16,4 +16,5 @@ var (
 	ErrSelfieNotUploaded   = errors.New("selfie not uploaded")
 	ErrInvalidSelfie       = errors.New("selfie is not a JPEG")
 	ErrVideoNotReady       = errors.New("video not ready")
+	ErrNotShareable        = errors.New("cameo is not shareable")
 )

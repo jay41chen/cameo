@@ -30,6 +30,8 @@ type Queries interface {
 	DispatchableIDs(ctx context.Context, now time.Time, limit int) ([]string, error)
 	// TimedOutIDs 回傳 QUEUED／GENERATING 且 generation_expires_at <= now 的訂單 id。
 	TimedOutIDs(ctx context.Context, now time.Time) ([]string, error)
+	// ShareTokenExists 回傳 token 是否對應一筆 SUCCEEDED 的訂單；只回是否有效，不帶出訂單資料。
+	ShareTokenExists(ctx context.Context, token string) (bool, error)
 }
 
 // VendorEvent 是已通過驗證的廠商回呼；Status 為 SUCCEEDED 或 FAILED。
@@ -85,6 +87,8 @@ type Tx interface {
 	MarkSucceeded(ctx context.Context, id, videoURL string, now time.Time) error
 	// MarkFailed 把訂單設為 FAILED／REFUNDED、寫 failure_reason 並更新 updated_at。
 	MarkFailed(ctx context.Context, id, reason string, now time.Time) error
+	// SetShareToken 設定或清除（nil）分享 token 並更新 updated_at。
+	SetShareToken(ctx context.Context, id string, token *string, now time.Time) error
 	// CreditAccount 把 amount 加回餘額。
 	CreditAccount(ctx context.Context, amount int) error
 	// InsertVendorEvent 記錄廠商事件；event_id 已存在（重複）回 inserted=false，不報錯。

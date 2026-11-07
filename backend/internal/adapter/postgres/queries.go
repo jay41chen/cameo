@@ -37,13 +37,13 @@ func NewQueries(pool *pgxpool.Pool) *Queries {
 }
 
 const cameoSelect = `SELECT c.id, c.idempotency_key, c.clip_id, cl.title, c.cost, c.status, c.points_state,
-	c.failure_reason, c.upload_expires_at, c.generation_expires_at, c.video_url, c.created_at, c.updated_at
+	c.failure_reason, c.upload_expires_at, c.generation_expires_at, c.video_url, c.share_token, c.created_at, c.updated_at
 	FROM cameos c JOIN clips cl ON cl.id = c.clip_id`
 
 func scanCameo(row pgx.Row) (domain.Cameo, error) {
 	var c domain.Cameo
 	err := row.Scan(&c.ID, &c.IdempotencyKey, &c.Clip.ID, &c.Clip.Title, &c.Clip.Cost, &c.Status,
-		&c.PointsState, &c.FailureReason, &c.UploadExpiresAt, &c.GenerationExpiresAt, &c.VideoURL, &c.CreatedAt, &c.UpdatedAt)
+		&c.PointsState, &c.FailureReason, &c.UploadExpiresAt, &c.GenerationExpiresAt, &c.VideoURL, &c.ShareToken, &c.CreatedAt, &c.UpdatedAt)
 	return c, err
 }
 
@@ -71,6 +71,15 @@ func (q *Queries) CameoByID(ctx context.Context, id string) (domain.Cameo, error
 		return domain.Cameo{}, domain.ErrCameoNotFound
 	}
 	return c, err
+}
+
+// ShareTokenExists 回傳 token 是否對應一筆 SUCCEEDED 的訂單；只回是否有效，不帶出訂單資料。
+func (q *Queries) ShareTokenExists(ctx context.Context, token string) (bool, error) {
+	var ok bool
+	err := q.db.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM cameos WHERE user_id = $1 AND share_token = $2 AND status = 'SUCCEEDED')`,
+		userID, token).Scan(&ok)
+	return ok, err
 }
 
 func (q *Queries) ListClips(ctx context.Context) ([]domain.Clip, error) {

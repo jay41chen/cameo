@@ -479,7 +479,7 @@ cd backend && TEST_DATABASE_URL='postgres://cameo:cameo@127.0.0.1:15442/cameo?ss
 ### 未涵蓋
 
 - App「我的客串」頁（5.2b-2）、點通知開此頁（5.2b-3）。
-- `video_available`、`share` 目前固定 `false`／`{"active":false,"url":null}`（同單筆查詢）。
+- `video_available`、`share` 目前固定 `false`／`{"active":false,"url":null}`（同單筆查詢）。（第 7 輪起 `video_available` 在 `SUCCEEDED` 時為 true，`share` 反映實際分享狀態。）
 - 並行寫入時的分頁一致性（只測了靜態資料）。
 - `user_id` 條件沒有回歸測試（`points_account` 有 `CHECK (id = 1)`，目前 schema 只能有一個使用者）。
 - 「列表不觸發逾期、不改狀態」沒有自動測試，只靠讀碼（`Service.Cameos` 只呼叫 `ListCameos`）。
@@ -735,3 +735,24 @@ cd backend && TEST_DATABASE_URL='postgres://cameo:cameo@127.0.0.1:15442/cameo?ss
 | 沒 token | 不帶 `-H "$T"` | 401 |
 
 未驗證：用 App 或真實播放器播放。
+
+## 7.2 輪：分享 `PUT`／`DELETE /v1/cameos/{id}/share`、`GET /s/{token}`（Server）
+
+環境：`VENDOR_DELAY_SEC=2 docker compose -p cameo-server up -d --build`；`T="Authorization: Bearer test-token"`，`B=http://localhost:8080`（`PUBLIC_BASE_URL` 用預設值）。
+
+| 步驟 | 指令 | 結果 |
+|---|---|---|
+| 非 `SUCCEEDED` 分享 | `curl -i -X PUT $B/v1/cameos/$ID/share -H "$T"`（`AWAITING_UPLOAD`） | 409 `NOT_SHAREABLE` |
+| 建單、上傳、送出、等回呼 | 同 7.1 | `SUCCEEDED` |
+| 沒 token | `curl -X PUT $B/v1/cameos/$ID/share` | 401 |
+| 分享 | `curl -X PUT $B/v1/cameos/$ID/share -H "$T"` | 200 `{"share":{"active":true,"url":"http://localhost:8080/s/<token>"}}` |
+| 重複分享 | 再 `PUT` | 同一個網址 |
+| 分享頁（不帶 token） | `curl -i $URL` | 200 `text/html; charset=utf-8`，含 `<video controls playsinline src="/s/<token>/video">`，另有 `Cache-Control: no-store`、`X-Robots-Tag: noindex`、`Referrer-Policy: no-referrer` |
+| 分享影片 | `curl -D - $URL/video -o full.mp4` | 200，`Content-Length: 557914`，`shasum -a 256` = `972000c2…c6f6` |
+| Range／HEAD | `-H 'Range: bytes=0-99'`／`curl -I` | 206，100 bytes／200，`Content-Length: 557914` |
+| 訂單 `share` 欄位 | `GET /v1/cameos/$ID` | `active: true`、`url` 同上 |
+| 取消 | `curl -X DELETE $B/v1/cameos/$ID/share -H "$T"` | 204 |
+| 舊連結 | `curl -i $URL`、`curl -i $URL/video` | 頁面 HTML 404、影片 JSON 404 `NOT_FOUND` |
+| 取消後再分享 | 再 `PUT` | 200，新網址與舊的不同；新頁面 200、舊頁面仍 404 |
+
+未驗證：用瀏覽器或 App 實際播放分享頁（沒有可用的瀏覽器工具）。

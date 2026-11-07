@@ -146,6 +146,11 @@ func (t *txStore) MarkFailed(ctx context.Context, id, reason string, now time.Ti
 	return err
 }
 
+func (t *txStore) SetShareToken(ctx context.Context, id string, token *string, now time.Time) error {
+	_, err := t.db.Exec(ctx, `UPDATE cameos SET share_token = $1, updated_at = $2 WHERE user_id = $3 AND id = $4`, token, now, userID, id)
+	return err
+}
+
 func (t *txStore) CreditAccount(ctx context.Context, amount int) error {
 	_, err := t.db.Exec(ctx, `UPDATE points_account SET balance = balance + $1 WHERE id = $2`, amount, userID)
 	return err

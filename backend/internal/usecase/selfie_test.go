@@ -130,6 +130,10 @@ func (d *fakeDB) MarkSucceeded(_ context.Context, _ string, videoURL string, _ t
 	d.cameo.Status, d.cameo.VideoURL = domain.StatusSucceeded, &videoURL
 	return nil
 }
+func (d *fakeDB) SetShareToken(_ context.Context, _ string, token *string, now time.Time) error {
+	d.cameo.ShareToken, d.cameo.UpdatedAt = token, now
+	return nil
+}
 func (d *fakeDB) MarkFailed(_ context.Context, _ string, reason string, _ time.Time) error {
 	if d.failOn == "MarkFailed" {
 		return errors.New("injected MarkFailed failure")

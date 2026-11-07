@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -40,6 +41,11 @@ func WithSampleVideo(video []byte) Option {
 	return func(s *server) { s.sampleVideo = video }
 }
 
+// WithPublicBaseURL 設定分享網址的 base（例如 http://localhost:8080）；尾端的 / 會去掉。
+func WithPublicBaseURL(base string) Option {
+	return func(s *server) { s.publicBaseURL = strings.TrimRight(base, "/") }
+}
+
 // Handler 組出所有路由。檢查順序：先比對路由（404、405），再驗 token（401）。
 // 廠商 webhook 不用 token，改以簽章驗證。
 func Handler(svc *usecase.Service, opts ...Option) http.Handler {
@@ -62,6 +68,12 @@ func Handler(svc *usecase.Service, opts ...Option) http.Handler {
 	if len(s.sampleVideo) > 0 {
 		handleMethods(mux, "/v1/cameos/{id}/video", map[string]http.HandlerFunc{http.MethodGet: s.cameoVideo})
 	}
+	handleMethods(mux, "/v1/cameos/{id}/share", map[string]http.HandlerFunc{http.MethodPut: s.shareCameo, http.MethodDelete: s.unshareCameo})
+	if len(s.sampleVideo) > 0 {
+		// 分享頁與分享影片免登入，以 token 為憑。
+		handlePublic(mux, "/s/{token}", map[string]http.HandlerFunc{http.MethodGet: s.sharePage})
+		handlePublic(mux, "/s/{token}/video", map[string]http.HandlerFunc{http.MethodGet: s.sharedVideo})
+	}
 	if len(s.webhookSecret) > 0 {
 		mux.HandleFunc("POST /webhooks/vendor", s.vendorWebhook)
 		mux.HandleFunc("/webhooks/vendor", func(w http.ResponseWriter, _ *http.Request) {
@@ -81,9 +93,18 @@ func handleGET(mux *http.ServeMux, path string, h http.HandlerFunc) {
 // handleMethods 在同一路徑註冊多個方法（都需要 token）。其他方法回 405 並帶 Allow；
 // 有 GET 時 Allow 也列出 HEAD。
 func handleMethods(mux *http.ServeMux, path string, handlers map[string]http.HandlerFunc) {
+	registerMethods(mux, path, handlers, requireAuth)
+}
+
+// handlePublic 與 handleMethods 相同，但不驗 token（分享頁以 token 為憑）。
+func handlePublic(mux *http.ServeMux, path string, handlers map[string]http.HandlerFunc) {
+	registerMethods(mux, path, handlers, func(h http.HandlerFunc) http.Handler { return h })
+}
+
+func registerMethods(mux *http.ServeMux, path string, handlers map[string]http.HandlerFunc, wrap func(http.HandlerFunc) http.Handler) {
 	methods := make([]string, 0, len(handlers))
 	for m, h := range handlers {
-		mux.Handle(m+" "+path, requireAuth(h))
+		mux.Handle(m+" "+path, wrap(h))
 		methods = append(methods, m)
 		if m == http.MethodGet {
 			methods = append(methods, http.MethodHead)
@@ -112,6 +133,7 @@ type server struct {
 	svc           *usecase.Service
 	webhookSecret []byte
 	sampleVideo   []byte
+	publicBaseURL string
 }
 
 func (s *server) clips(w http.ResponseWriter, r *http.Request) {
@@ -185,7 +207,7 @@ func (s *server) listCameos(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]cameoJSON, 0, len(page.Items))
 	for _, c := range page.Items {
-		items = append(items, toCameoJSON(c))
+		items = append(items, s.toCameoJSON(c))
 	}
 	var next *string
 	if page.NextCursor != "" {
@@ -241,8 +263,8 @@ type uploadJSON struct {
 	ExpiresAt string `json:"expires_at"`
 }
 
-func toCameoResponse(c domain.Cameo) cameoResponse {
-	resp := cameoResponse{Cameo: toCameoJSON(c)}
+func (s *server) toCameoResponse(c domain.Cameo) cameoResponse {
+	resp := cameoResponse{Cameo: s.toCameoJSON(c)}
 	if c.Status == domain.StatusAwaitingUpload {
 		resp.Upload = &uploadJSON{
 			URL:       "/v1/cameos/" + c.ID + "/selfie",
@@ -265,7 +287,7 @@ func validIdempotencyKey(key string) bool {
 	return true
 }
 
-func toCameoJSON(c domain.Cameo) cameoJSON {
+func (s *server) toCameoJSON(c domain.Cameo) cameoJSON {
 	var j cameoJSON
 	j.ID = c.ID
 	j.Clip.ID, j.Clip.Title, j.Clip.Cost = c.Clip.ID, c.Clip.Title, c.Clip.Cost
@@ -275,6 +297,10 @@ func toCameoJSON(c domain.Cameo) cameoJSON {
 	j.PointsState = c.PointsState
 	j.FailureReason = c.FailureReason
 	j.VideoAvailable = c.VideoAvailable()
+	if c.ShareToken != nil {
+		u := s.publicBaseURL + "/s/" + *c.ShareToken
+		j.Share.Active, j.Share.URL = true, &u
+	}
 	j.CreatedAt = c.CreatedAt.In(taipei).Format(time.RFC3339)
 	j.UpdatedAt = c.UpdatedAt.In(taipei).Format(time.RFC3339)
 	return j
@@ -315,7 +341,7 @@ func (s *server) createCameo(w http.ResponseWriter, r *http.Request) {
 	if res.Created {
 		status = http.StatusCreated
 	}
-	writeJSON(w, status, toCameoResponse(res.Cameo))
+	writeJSON(w, status, s.toCameoResponse(res.Cameo))
 }
 
 func (s *server) getCameo(w http.ResponseWriter, r *http.Request) {
@@ -327,7 +353,7 @@ func (s *server) getCameo(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toCameoResponse(c))
+	writeJSON(w, http.StatusOK, s.toCameoResponse(c))
 }
 
 // cameoVideo 回固定範例影片，Range 與 HEAD 由 http.ServeContent 處理；不設 ETag／Last-Modified。
@@ -343,9 +369,96 @@ func (s *server) cameoVideo(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, r, err)
 		return
 	}
+	s.serveVideo(w, r)
+}
+
+// serveVideo 送出範例影片；Range 與 HEAD 由 http.ServeContent 處理。
+func (s *server) serveVideo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(s.sampleVideo))
+}
+
+// shareCameo 建立分享（冪等）；成功一律 200，不讀 request body。
+func (s *server) shareCameo(w http.ResponseWriter, r *http.Request) {
+	c, err := s.svc.ShareCameo(r.Context(), r.PathValue("id"))
+	switch {
+	case errors.Is(err, domain.ErrNotShareable):
+		writeError(w, http.StatusConflict, "NOT_SHAREABLE", "這筆客串目前無法分享", false)
+		return
+	case writeCameoError(w, err):
+		return
+	case err != nil:
+		writeInternal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"share": s.toCameoJSON(c).Share})
+}
+
+// unshareCameo 取消分享，冪等，成功回 204。
+func (s *server) unshareCameo(w http.ResponseWriter, r *http.Request) {
+	err := s.svc.UnshareCameo(r.Context(), r.PathValue("id"))
+	switch {
+	case writeCameoError(w, err):
+		return
+	case err != nil:
+		writeInternal(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setShareHeaders 是 /s/* 所有回應共用的 header：不快取、不被搜尋引擎收錄、不外洩 Referer（網址含 token）。
+func setShareHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Robots-Tag", "noindex")
+	h.Set("Referrer-Policy", "no-referrer")
+}
+
+var sharePageTmpl = template.Must(template.New("share").Parse(`<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>客串短片</title></head>
+<body><video controls playsinline src="/s/{{.}}/video" style="max-width:100%"></video></body></html>
+`))
+
+func writeHTML(w http.ResponseWriter, status int, body string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(body))
+}
+
+// sharePage 是免登入的分享網頁，只放影片，不顯示任何訂單資料。無效 token 回簡短 HTML 404。
+func (s *server) sharePage(w http.ResponseWriter, r *http.Request) {
+	setShareHeaders(w)
+	token := r.PathValue("token")
+	ok, err := s.svc.SharedVideoAvailable(r.Context(), token)
+	switch {
+	case err != nil:
+		slog.Error("request failed", "route", r.Pattern, "err", err) // 不記 path：含分享 token
+		writeHTML(w, http.StatusInternalServerError, "<!doctype html><meta charset=\"utf-8\"><title>發生問題</title><p>伺服器暫時發生問題，請稍後再試。")
+	case !ok:
+		writeHTML(w, http.StatusNotFound, "<!doctype html><meta charset=\"utf-8\"><title>找不到</title><p>找不到這個分享。")
+	default:
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := sharePageTmpl.Execute(w, token); err != nil {
+			slog.Error("write share page", "err", err)
+		}
+	}
+}
+
+// sharedVideo 是免登入的分享影片；無效 token 回 JSON 404。
+func (s *server) sharedVideo(w http.ResponseWriter, r *http.Request) {
+	setShareHeaders(w)
+	ok, err := s.svc.SharedVideoAvailable(r.Context(), r.PathValue("token"))
+	switch {
+	case err != nil:
+		slog.Error("request failed", "route", r.Pattern, "err", err) // 不記 path：含分享 token
+		writeInternalResponse(w)
+	case !ok:
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "找不到這個分享", false)
+	default:
+		s.serveVideo(w, r)
+	}
 }
 
 // putSelfie 只看內容（前 3 bytes 是否為 JPEG），不看 Content-Type。
@@ -374,7 +487,7 @@ func (s *server) putSelfie(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toCameoResponse(c))
+	writeJSON(w, http.StatusOK, s.toCameoResponse(c))
 }
 
 func (s *server) submitCameo(w http.ResponseWriter, r *http.Request) {
@@ -389,7 +502,7 @@ func (s *server) submitCameo(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toCameoResponse(c))
+	writeJSON(w, http.StatusOK, s.toCameoResponse(c))
 }
 
 // writeCameoError 處理上傳與送出共有的錯誤；有寫出回應時回傳 true。
@@ -419,5 +532,9 @@ func writeError(w http.ResponseWriter, status int, code, message string, retryab
 
 func writeInternal(w http.ResponseWriter, r *http.Request, err error) {
 	slog.Error("request failed", "path", r.URL.Path, "err", err)
+	writeInternalResponse(w)
+}
+
+func writeInternalResponse(w http.ResponseWriter) {
 	writeError(w, http.StatusInternalServerError, "INTERNAL", "伺服器暫時發生問題，請稍後再試", true)
 }

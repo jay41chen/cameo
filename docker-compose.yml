@@ -32,6 +32,7 @@ services:
       GENERATION_TTL: ${GENERATION_TTL:-30m}
       DISPATCH_SWEEP_INTERVAL: ${DISPATCH_SWEEP_INTERVAL:-2s}
       VENDOR_URL: http://vendor-sim:9000
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       # 僅供模擬：api 與 vendor-sim 共用的 webhook 簽章密鑰，不是正式密鑰。
       VENDOR_WEBHOOK_SECRET: ${VENDOR_WEBHOOK_SECRET:-cameo-sim-secret}
     volumes:

@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"crypto/rand"
 	"log/slog"
 
 	"cameo/backend/internal/domain"
@@ -101,6 +102,70 @@ func (s *Service) CameoVideo(ctx context.Context, id string) error {
 		return domain.ErrVideoNotReady
 	}
 	return nil
+}
+
+// ShareCameo 建立分享：只有 SUCCEEDED 可分享（否則 domain.ErrNotShareable）。
+// 已在分享中就回原訂單，不改 updated_at；否則發新 token。在交易內鎖列，併發的 PUT 只會產生一個 token。
+func (s *Service) ShareCameo(ctx context.Context, id string) (domain.Cameo, error) {
+	if !domain.ValidText(id) {
+		return domain.Cameo{}, domain.ErrCameoNotFound
+	}
+	var out domain.Cameo
+	err := s.tx.Run(ctx, func(tx Tx) error {
+		c, found, err := tx.CameoForUpdate(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return domain.ErrCameoNotFound
+		}
+		if !c.VideoAvailable() {
+			return domain.ErrNotShareable
+		}
+		out = c
+		if c.ShareToken != nil {
+			return nil
+		}
+		token := rand.Text()
+		now := s.clock.Now()
+		if err := tx.SetShareToken(ctx, id, &token, now); err != nil {
+			return err
+		}
+		out.ShareToken, out.UpdatedAt = &token, now
+		return nil
+	})
+	if err != nil {
+		return domain.Cameo{}, err
+	}
+	return out, nil
+}
+
+// UnshareCameo 取消分享，冪等：未分享（含非 SUCCEEDED）時不寫入。訂單不存在回 domain.ErrCameoNotFound。
+func (s *Service) UnshareCameo(ctx context.Context, id string) error {
+	if !domain.ValidText(id) {
+		return domain.ErrCameoNotFound
+	}
+	return s.tx.Run(ctx, func(tx Tx) error {
+		c, found, err := tx.CameoForUpdate(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return domain.ErrCameoNotFound
+		}
+		if c.ShareToken == nil {
+			return nil
+		}
+		return tx.SetShareToken(ctx, id, nil, s.clock.Now())
+	})
+}
+
+// SharedVideoAvailable 回傳分享 token 是否有效（對應 SUCCEEDED 且仍在分享中的訂單）。
+func (s *Service) SharedVideoAvailable(ctx context.Context, token string) (bool, error) {
+	if !domain.ValidText(token) {
+		return false, nil
+	}
+	return s.q.ShareTokenExists(ctx, token)
 }
 
 // Quota 回傳當日額度，由訂單計算。
