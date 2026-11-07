@@ -301,7 +301,7 @@ func TestSharedVideo(t *testing.T) {
 	wantShareHeaders(t, r)
 
 	r = f.sharedGet(http.MethodGet, path, map[string]string{"Range": "bytes=0-99"})
-	if r.Code != 206 || r.Header().Get("Content-Range") != "bytes 0-99/557914" || !bytes.Equal(r.Body.Bytes(), assets.SampleVideo[:100]) {
+	if r.Code != 206 || r.Header().Get("Content-Range") != "bytes 0-99/265429" || !bytes.Equal(r.Body.Bytes(), assets.SampleVideo[:100]) {
 		t.Fatalf("range = %d %v", r.Code, r.Header())
 	}
 	wantShareHeaders(t, r)

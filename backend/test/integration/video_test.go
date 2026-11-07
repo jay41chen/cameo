@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	sampleVideoSize   = 557914
-	sampleVideoSHA256 = "972000c2f9b8b3a5a537e9fb28ddca8b7f99a4cc0b25a8a57e34e02b6eb8c6f6"
+	sampleVideoSize   = 265429
+	sampleVideoSHA256 = "1460cf855f9f40fa22628c4831ea817bb824da73c61def19aa4ee52ed4af3982"
 )
 
 // testBaseURL 故意帶尾端 /，驗證 WithPublicBaseURL 會去掉。
@@ -74,11 +74,11 @@ func TestVideoRange(t *testing.T) {
 	id := f.succeeded(t, "k")
 
 	r := f.video(http.MethodGet, id, map[string]string{"Range": "bytes=0-99"})
-	if r.Code != 206 || r.Header().Get("Content-Range") != "bytes 0-99/557914" || !bytes.Equal(r.Body.Bytes(), assets.SampleVideo[:100]) {
+	if r.Code != 206 || r.Header().Get("Content-Range") != "bytes 0-99/265429" || !bytes.Equal(r.Body.Bytes(), assets.SampleVideo[:100]) {
 		t.Fatalf("range = %d %v len=%d", r.Code, r.Header(), r.Body.Len())
 	}
-	r = f.video(http.MethodGet, id, map[string]string{"Range": "bytes=557900-"})
-	if r.Code != 206 || !bytes.Equal(r.Body.Bytes(), assets.SampleVideo[557900:]) {
+	r = f.video(http.MethodGet, id, map[string]string{"Range": "bytes=265415-"})
+	if r.Code != 206 || !bytes.Equal(r.Body.Bytes(), assets.SampleVideo[265415:]) {
 		t.Fatalf("tail range = %d %v", r.Code, r.Header())
 	}
 	r = f.video(http.MethodGet, id, map[string]string{"Range": "bytes=999999999-"})
