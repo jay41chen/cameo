@@ -129,7 +129,7 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
                 ConfirmScreen(
                     onBack = { rootNav.navigateUp() },
                     onRetake = { rootNav.navigateSingleTop(cameraRoute(clipId), ROUTE_CONFIRM) },
-                    onCreated = { rootNav.navigateSingleTop(cameoRoute(it), ROUTE_CONFIRM) },
+                    onCreated = { rootNav.navigateToProgress(cameoRoute(it)) },
                 )
             }
         }
@@ -147,6 +147,7 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
             FlowScaffold {
                 CameoProgressScreen(
                     onBack = { rootNav.navigateUp() },
+                    onSubmitted = { rootNav.popBackStack(ROUTE_MY_CAMEOS, inclusive = false) },
                     onRetake = { clipId, key -> rootNav.navigateSingleTop(cameraRoute(clipId, key), ROUTE_CAMEO) },
                     onRestart = { clipId -> rootNav.navigateSingleTop(cameraRoute(clipId), ROUTE_CAMEO) },
                     onNotCreated = { clipId -> rootNav.navigateSingleTop(confirmRoute(clipId), ROUTE_CAMEO) },
@@ -172,6 +173,14 @@ private fun NavController.navigateSingleTop(route: String, popUpToRoute: String?
     navigate(route) {
         launchSingleTop = true
         if (popUpToRoute != null) popUpTo(popUpToRoute) { inclusive = true }
+    }
+}
+
+/** 建單後進進度頁：彈回首頁為止（首頁保留），選片段和確認頁移出堆疊，進度頁按返回回首頁。 */
+private fun NavController.navigateToProgress(route: String) {
+    navigate(route) {
+        launchSingleTop = true
+        popUpTo(ROUTE_MY_CAMEOS)
     }
 }
 

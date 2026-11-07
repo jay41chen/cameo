@@ -7,10 +7,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.dropUnlessResumed
 import com.kimhit.cameo.domain.usecase.CameoStep
-import com.kimhit.cameo.tracking.TrackWhileGenerating
+import com.kimhit.cameo.tracking.startTrackingIfNeeded
 
 internal const val UPLOADING_TEXT = "上傳中…"
 internal const val SUBMITTING_TEXT = "送出中…"
@@ -20,12 +22,15 @@ internal const val GONE_TEXT = "這筆客串已結束"
 @Composable
 fun CameoProgressScreen(
     onBack: () -> Unit,
+    onSubmitted: () -> Unit,
     onRetake: (clipId: String, clientRequestId: String) -> Unit,
     onRestart: (clipId: String) -> Unit,
     onNotCreated: (clipId: String) -> Unit,
     viewModel: CameoProgressViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
+    val owner = LocalLifecycleOwner.current
     when (val s = state) {
         is ProgressUiState.Working -> when (s.step) {
             null -> LoadingBox()
@@ -37,13 +42,12 @@ fun CameoProgressScreen(
             }
         }
         is ProgressUiState.Done -> {
-            TrackWhileGenerating(s.order)
-            Body {
-                val cameo = s.order.cameo
-                Text(cameo.displayTitle ?: "處理中", style = MaterialTheme.typography.titleLarge)
-                cameo.displayMessage?.takeIf { it.isNotEmpty() }?.let { Text(it) }
-                Button(onClick = onBack) { Text("回片段清單") }
+            // 先啟動追蹤（同步呼叫）再回首頁
+            LaunchedEffect(s.order.cameo.id) {
+                startTrackingIfNeeded(context, owner.lifecycle, s.order)
+                onSubmitted()
             }
+            LoadingBox()
         }
         is ProgressUiState.Expired -> Body {
             Text(s.title?.takeIf { it.isNotBlank() } ?: EXPIRED_TITLE, style = MaterialTheme.typography.titleLarge)

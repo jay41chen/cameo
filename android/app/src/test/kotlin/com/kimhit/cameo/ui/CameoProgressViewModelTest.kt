@@ -143,6 +143,24 @@ class CameoProgressViewModelTest {
     }
 
     @Test
+    fun nonTerminalAndOtherStatuses_becomeDone() = runTest {
+        listOf(
+            CameoStatus.QUEUED,
+            CameoStatus.GENERATING,
+            CameoStatus.SUCCEEDED,
+            CameoStatus.FAILED,
+            CameoStatus.UNKNOWN,
+        ).forEach { status ->
+            pending.rows.clear()
+            row()
+            cameos.gets["u1"] = okOrder(status)
+            val vm = vm()
+            advanceUntilIdle()
+            assertEquals("status=$status", ProgressUiState.Done(orderWith(status)), vm.state.value)
+        }
+    }
+
+    @Test
     fun noCameoId_isNotCreated() = runTest {
         row(cameoId = null)
         val vm = vm()
