@@ -36,7 +36,7 @@ docker compose up --build
 | `SELFIE_DIR` | `/data/selfies` | 自拍存放目錄；`docker-compose.yml` 把 named volume `selfies` 掛在這裡，容器重啟後檔案仍在（容器以 `nobody` 執行，目錄在映像檔內已設為可寫） |
 | `MAX_SELFIE_BYTES` | `10485760` | 自拍檔案大小上限（bytes），超過回 `413 SELFIE_TOO_LARGE` |
 | `GENERATION_TTL` | `30m`（compose 預設 `2m`） | 生成期限：送出（轉 `QUEUED`）起算，涵蓋排隊與生成；到期（`<=` 現在）仍未完成的訂單轉 `FAILED`（原因 `TIMEOUT`）並退點。期限在送出時寫入訂單，改設定只影響新訂單，容器重建後才生效。`VENDOR_DELAY_SEC` 調到接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時 |
-| `DEBUG_API_ENABLED` | 程式預設關閉；compose 預設 `true` | 控制 `/debug/*`（見「Debug 異常 API」）；只有值為 `true` 才開啟，未開啟時 `/debug/*` 回 `404` |
+| `DEBUG_API_ENABLED` | 程式預設關閉；compose 預設 `true` | 控制 `/debug/*`（見「Debug 異常 API」），也控制 `PUT share` 的 `debug_base_url`（見「影片與分享」，尚未實作）；只有值為 `true` 才開啟，未開啟時 `/debug/*` 回 `404` |
 | `PUBLIC_BASE_URL` | `http://localhost:8080`（程式與 compose 相同） | 分享網址的 base，不寫死。預設用電腦瀏覽器開；要在模擬器內開，設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用。不會跟著 `API_PORT` 變動；改 `API_PORT` 時要一起設定，否則分享連結的 port 會錯 |
 | `DISPATCH_SWEEP_INTERVAL` | `2s` | 派工與生成逾時掃描間隔；每個週期先處理逾時、再派工（每次最多 20 筆，`created_at` 由舊到新） |
 | `VENDOR_URL` | `http://localhost:9000`（compose 設為 `http://vendor-sim:9000`） | 廠商的 base URL；派工是對 `{VENDOR_URL}/jobs` 的 `POST`，單次逾時 5 秒 |
@@ -311,6 +311,8 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 - `GET /v1/cameos/{id}/video`：影片串流，需要 token，支援 `HEAD` 與 Range：單段 Range 已測試（例如 `Range: bytes=0-99` 回 `206`），多段 Range 由標準庫處理、未測試；起點超出檔尾（例如 `bytes=999999999-`）回 `416`，`416` 的 body 是標準庫的純文字，不是通用 JSON 錯誤格式，屬通用格式的例外。不設 `ETag`、`Last-Modified`，帶 `If-Range` 時回整支影片。此端點尚未用真實播放器驗證（App 播放入口尚未實作）。訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
 - `PUT /v1/cameos/{id}/share`：`{"share":{"active":true,"url":"..."}}`，成功一律回 `200`。僅 `SUCCEEDED` 可分享，否則 `409 NOT_SHAREABLE`；訂單不存在回 `404 CAMEO_NOT_FOUND`。分享中重複 PUT 回同一個 URL；取消後再分享會發新 token，舊連結永久失效。
+- `PUT /v1/cameos/{id}/share?debug_base_url=<origin>`（選用，例如 `http://10.0.2.2:8080`）：只在 `DEBUG_API_ENABLED=true` 時驗證並套用，這次回應的 `share.url` 改用這個 base；PUT 照舊不帶 body。只接受有 host 的 `http`／`https`，不可帶路徑（尾端只有 `/` 可以）、query、fragment、帳密；空字串也不合格。不合格回 `400 INVALID_REQUEST`（「debug_base_url 必須是 http 或 https 的 origin」，`retryable: false`），而且先驗參數，不建立分享。未開啟時完全忽略、不驗證，一律用 `PUBLIC_BASE_URL`。尚未實作。
+- base 不存進資料庫：token 不受影響，用不同 base 重複 `PUT` 照舊冪等，回應網址用這次請求的 base。`GET /v1/cameos/{id}` 和列表的 `share.url` 一律用 `PUBLIC_BASE_URL`，可能和用 debug base 分享出去的網址不同；要分享時一律呼叫 `PUT`，用它回應的網址。
 - `DELETE /v1/cameos/{id}/share`：`204`，取消後連結失效。冪等：未分享或非 `SUCCEEDED` 的訂單也回 `204`；訂單不存在回 `404 CAMEO_NOT_FOUND`。
 - `GET /s/{token}`：分享網頁，只播放影片，免登入。有效時回 `200 text/html`；已取消或不存在時回簡短 HTML 404、查詢錯誤時回簡短 HTML 500（都是上方通用錯誤格式的例外）。
 - `GET /s/{token}/video`：分享頁用的影片，免登入。已取消或不存在時維持 JSON 404（通用錯誤格式）。Range 超出範圍回 `416`。
