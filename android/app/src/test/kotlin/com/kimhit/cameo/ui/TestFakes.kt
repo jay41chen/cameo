@@ -19,6 +19,7 @@ import com.kimhit.cameo.domain.repository.ClipRepository
 import com.kimhit.cameo.domain.repository.PendingCameoRepository
 import com.kimhit.cameo.domain.repository.QuotaRepository
 import com.kimhit.cameo.tracking.SubmissionKeepAlive
+import kotlinx.coroutines.CompletableDeferred
 
 class FakeClips(val results: ArrayDeque<DomainResult<List<Clip>>>) : ClipRepository {
     override suspend fun getClips() = results.removeFirst()
@@ -197,5 +198,35 @@ class FakeShareRepo : CameoShareRepository {
     override suspend fun unshare(cameoId: String): DomainResult<Unit> {
         unshareCalls++
         return unshares.removeFirst()
+    }
+}
+
+/** 可以卡住 createCameo、getCameo、submitCameo 與 uploadSelfie，驗證執行中的狀態、不重入與離開頁面後工作仍繼續。 */
+internal class GatedCameos(val delegate: FakeCameoRepo) : CameoRepository by delegate {
+    var createGate: CompletableDeferred<Unit>? = null
+    var getGate: CompletableDeferred<Unit>? = null
+    var uploadGate: CompletableDeferred<Unit>? = null
+    var submitGate: CompletableDeferred<Unit>? = null
+    var getCalls = 0
+
+    override suspend fun createCameo(clientRequestId: String, clipId: String): DomainResult<CameoOrder> {
+        createGate?.await()
+        return delegate.createCameo(clientRequestId, clipId)
+    }
+
+    override suspend fun getCameo(id: String): DomainResult<CameoOrder> {
+        getCalls++
+        getGate?.await()
+        return delegate.getCameo(id)
+    }
+
+    override suspend fun submitCameo(cameoId: String): DomainResult<CameoOrder> {
+        submitGate?.await()
+        return delegate.submitCameo(cameoId)
+    }
+
+    override suspend fun uploadSelfie(url: String, photoPath: String): DomainResult<CameoOrder> {
+        uploadGate?.await()
+        return delegate.uploadSelfie(url, photoPath)
     }
 }

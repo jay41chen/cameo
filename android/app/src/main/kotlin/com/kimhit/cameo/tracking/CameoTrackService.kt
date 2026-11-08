@@ -38,7 +38,7 @@ private const val EXTRA_CAMEO_ID = "cameoId"
 /**
  * 前景服務（dataSync）：每 [POLL_INTERVAL_MS] 用 `getCameo` 查所有追蹤中的訂單，
  * 到結束狀態就先認領（刪草稿）、認領成功才發完成通知。全部都用主執行緒（Dispatchers.Main），所以追蹤表不需要鎖。
- * 另外提交期間（確認支付、進度頁上傳與送出）由 [SubmissionKeepAlive] 保持服務存活；上傳與送出仍由 ViewModel 執行。
+ * 另外提交期間（確認支付、進度頁上傳與送出）由 [SubmissionKeepAlive] 保持服務存活；上傳與送出由程序層級的 `SubmissionRunner`（`com.kimhit.cameo.submission`）執行，並呼叫 acquire／release／track。
  * 只存在記憶體；程序被殺就不再追蹤、保持也消失（不做持久化）。
  */
 @AndroidEntryPoint

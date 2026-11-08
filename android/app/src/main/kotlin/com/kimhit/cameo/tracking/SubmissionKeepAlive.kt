@@ -23,7 +23,7 @@ internal fun expiredHolds(holds: Map<String, Long>, now: Long, limitMs: Long = H
 
 /**
  * 提交期間讓前景服務保持存活（付款後上傳與送出需要在背景繼續）。
- * 上傳與送出仍由呼叫端執行，服務不接手。
+ * 上傳與送出由程序層級的 `SubmissionRunner`（`com.kimhit.cameo.submission`）執行，並呼叫 acquire／release／track；服務不接手。
  */
 interface SubmissionKeepAlive {
     /** App 可能已在背景，啟動前景服務可能被拒；失敗時不丟例外，記 log，並移除該 key。 */

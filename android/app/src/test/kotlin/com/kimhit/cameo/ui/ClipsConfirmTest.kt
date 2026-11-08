@@ -2,17 +2,27 @@ package com.kimhit.cameo.ui
 
 import androidx.lifecycle.SavedStateHandle
 import com.kimhit.cameo.domain.model.CameoStatus
+import com.kimhit.cameo.domain.model.CameoOrder
 import com.kimhit.cameo.domain.model.Clip
 import com.kimhit.cameo.domain.model.DomainError
 import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.model.PendingCameo
 import com.kimhit.cameo.domain.model.PendingStep
 import com.kimhit.cameo.domain.model.UnfinishedCameo
+import com.kimhit.cameo.domain.repository.CameoRepository
 import com.kimhit.cameo.domain.repository.PendingCameoRepository
+import com.kimhit.cameo.domain.usecase.AdvanceCameoUseCase
+import com.kimhit.cameo.domain.usecase.AdvanceResult
+import com.kimhit.cameo.domain.usecase.AttachCameoPhotoUseCase
 import com.kimhit.cameo.domain.usecase.ConfirmCameoUseCase
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
 import com.kimhit.cameo.domain.usecase.GetQuotaUseCase
+import com.kimhit.cameo.submission.AdvanceRun
+import com.kimhit.cameo.submission.ConfirmRun
+import com.kimhit.cameo.submission.SubmissionRunner
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -236,35 +246,52 @@ class MyCameosUnfinishedTest {
 @OptIn(ExperimentalCoroutinesApi::class)
 class ConfirmViewModelTest {
     @Before
-    fun setUp() = Dispatchers.setMain(StandardTestDispatcher())
+    fun setUp() {
+        Dispatchers.setMain(StandardTestDispatcher())
+        // 建單後 runner 會接著推進；訂單已送出（QUEUED），推進只會 track
+        cameos.gets["u1"] = DomainResult.Success(testOrder(CameoStatus.QUEUED))
+    }
 
     @After
     fun tearDown() = Dispatchers.resetMain()
 
     private val pending = FakePendingRepo()
     private val cameos = FakeCameoRepo()
+    private val gated = GatedCameos(cameos)
     private val keepAlive = FakeKeepAlive()
+
+    /** runner 的 scope 跑在測試的 Main dispatcher（與 runTest 同一個 scheduler）。 */
+    private val runner by lazy {
+        SubmissionRunner(
+            ConfirmCameoUseCase(gated, pending),
+            AdvanceCameoUseCase(gated, pending),
+            AttachCameoPhotoUseCase(pending),
+            keepAlive,
+            CoroutineScope(SupervisorJob() + Dispatchers.Main),
+        )
+    }
 
     private fun vm(
         clips: DomainResult<List<Clip>> = clipsOk(),
         clipId: String = "c1",
         photo: String? = "/cache/captures/a.jpg",
+        handle: SavedStateHandle = SavedStateHandle(mapOf("clipId" to clipId, "photo" to photo)),
     ) = ConfirmViewModel(
-        SavedStateHandle(mapOf("clipId" to clipId, "photo" to photo)),
+        handle,
         GetClipsUseCase(FakeClips(ArrayDeque(listOf(clips, clips)))),
-        ConfirmCameoUseCase(cameos, pending),
-        keepAlive,
+        runner,
     )
 
     @Test
-    fun confirm_acquiresBeforeSubmit_andIsNotAcquiredOnLoad() = runTest {
+    fun confirm_runsInRunner_acquireTrackRelease_andIsNotAcquiredOnLoad() = runTest {
         cameos.creates.addLast(DomainResult.Success(testOrder()))
         val vm = vm()
         advanceUntilIdle()
         assertTrue(keepAlive.events.isEmpty())
         vm.confirm()
-        assertEquals(listOf("acquire:confirm:c1"), keepAlive.events) // 還沒執行請求就已取得
+        assertTrue(runner.confirmState("c1").value is ConfirmRun.Running) // 同步進入執行中
         advanceUntilIdle()
+        assertEquals(listOf("acquire:submit:c1", "track:u1", "release:submit:c1"), keepAlive.events)
     }
 
     @Test
@@ -286,11 +313,14 @@ class ConfirmViewModelTest {
         advanceUntilIdle()
         vm.confirm()
         advanceUntilIdle()
-        assertEquals(listOf("acquire:confirm:c1", "release:confirm:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
         vm.confirm()
         advanceUntilIdle()
         assertEquals(
-            listOf("acquire:confirm:c1", "release:confirm:c1", "acquire:confirm:c1"),
+            listOf(
+                "acquire:submit:c1", "release:submit:c1",
+                "acquire:submit:c1", "track:u1", "release:submit:c1",
+            ),
             keepAlive.events,
         )
     }
@@ -302,7 +332,7 @@ class ConfirmViewModelTest {
         advanceUntilIdle()
         vm.confirm()
         advanceUntilIdle()
-        assertEquals(listOf("acquire:confirm:c1", "release:confirm:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
     }
 
     @Test
@@ -313,7 +343,7 @@ class ConfirmViewModelTest {
         vm.confirm()
         advanceUntilIdle()
         assertEquals(ConfirmUiState.PhotoMissing, vm.state.value)
-        assertEquals(listOf("acquire:confirm:c1", "release:confirm:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
     }
 
     @Test
@@ -324,20 +354,93 @@ class ConfirmViewModelTest {
         vm.confirm()
         advanceUntilIdle()
         assertTrue(vm.state.value is ConfirmUiState.Expired)
-        assertEquals(listOf("acquire:confirm:c1", "release:confirm:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
     }
 
     @Test
-    fun created_doesNotRelease_untilOnCleared() = runTest {
+    fun created_runnerReleasesAfterTrack_viewModelHoldsNothing() = runTest {
         cameos.creates.addLast(DomainResult.Success(testOrder()))
         val vm = vm()
         advanceUntilIdle()
         vm.confirm()
         advanceUntilIdle()
         assertTrue(vm.state.value is ConfirmUiState.Created)
-        assertEquals(listOf("acquire:confirm:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1", "track:u1", "release:submit:c1"), keepAlive.events)
         clearViewModel(vm)
-        assertEquals(listOf("acquire:confirm:c1", "release:confirm:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1", "track:u1", "release:submit:c1"), keepAlive.events)
+    }
+
+    @Test
+    fun clearingViewModelWhileCreating_runnerStillFinishesConfirmAndAdvance_releaseIsLast() = runTest {
+        cameos.creates.addLast(DomainResult.Success(testOrder()))
+        val gate = CompletableDeferred<Unit>()
+        gated.createGate = gate
+        val vm = vm()
+        advanceUntilIdle()
+        vm.confirm()
+        advanceUntilIdle()
+        clearViewModel(vm) // 建單卡住時離開頁面
+        advanceUntilIdle()
+        assertEquals(listOf("acquire:submit:c1"), keepAlive.events)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertTrue((runner.confirmState("c1").value as ConfirmRun.Finished).result is DomainResult.Success)
+        val adv = runner.advanceState("key-1").value as AdvanceRun.Finished
+        assertTrue(adv.result is AdvanceResult.Done)
+        assertEquals(listOf("acquire:submit:c1", "track:u1", "release:submit:c1"), keepAlive.events)
+    }
+
+    @Test
+    fun leavingConfirmWhileCreating_newViewModelPicksUpCreated() = runTest {
+        cameos.creates.addLast(DomainResult.Success(testOrder()))
+        val gate = CompletableDeferred<Unit>()
+        gated.createGate = gate
+        val vm1 = vm()
+        advanceUntilIdle()
+        vm1.confirm()
+        advanceUntilIdle()
+        clearViewModel(vm1) // 建單卡住時離開確認頁
+        val vm2 = vm()
+        advanceUntilIdle()
+        assertEquals(ConfirmUiState.Ready(clipList[0], submitting = true), vm2.state.value)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(vm2.state.value is ConfirmUiState.Created)
+    }
+
+    @Test
+    fun staleFinishedFromEarlierRun_isIgnoredByNewViewModel() = runTest {
+        cameos.creates.addLast(DomainResult.Success(testOrder()))
+        runner.confirm("c1", "/cache/captures/a.jpg")
+        advanceUntilIdle()
+        assertTrue((runner.confirmState("c1").value as ConfirmRun.Finished).result is DomainResult.Success)
+        val vm = vm()
+        advanceUntilIdle()
+        assertEquals(ConfirmUiState.Ready(clipList[0]), vm.state.value)
+    }
+
+    @Test
+    fun progressViewModelAfterCreated_joinsRunningAdvance_withoutStartingAnother() = runTest {
+        cameos.creates.addLast(DomainResult.Success(testOrder()))
+        val getGate = CompletableDeferred<Unit>()
+        gated.getGate = getGate
+        val vm = vm()
+        advanceUntilIdle()
+        vm.confirm()
+        advanceUntilIdle()
+        val created = vm.state.value as ConfirmUiState.Created
+        assertEquals(1, gated.getCalls) // 推進已在 runner 裡跑，卡在 getCameo
+        val progress = CameoProgressViewModel(
+            SavedStateHandle(mapOf("clientRequestId" to created.clientRequestId)),
+            runner,
+        )
+        advanceUntilIdle()
+        assertEquals(1, gated.getCalls)
+        getGate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(1, gated.getCalls)
+        assertTrue(progress.state.value is ProgressUiState.Done)
+        assertEquals(listOf("acquire:submit:c1", "track:u1", "release:submit:c1"), keepAlive.events)
     }
 
     @Test
@@ -354,8 +457,7 @@ class ConfirmViewModelTest {
         val vm = ConfirmViewModel(
             SavedStateHandle(mapOf("clipId" to "c1", "photo" to "/cache/captures/a.jpg")),
             GetClipsUseCase(failing),
-            ConfirmCameoUseCase(cameos, pending),
-            keepAlive,
+            runner,
         )
         advanceUntilIdle()
         assertEquals(ConfirmUiState.LoadError("x"), vm.state.value)
@@ -472,8 +574,7 @@ class ConfirmViewModelTest {
         val vm = ConfirmViewModel(
             handle,
             GetClipsUseCase(FakeClips(ArrayDeque(listOf(clipsOk())))),
-            ConfirmCameoUseCase(cameos, pending),
-            keepAlive,
+            runner,
         )
         advanceUntilIdle()
         vm.confirm()

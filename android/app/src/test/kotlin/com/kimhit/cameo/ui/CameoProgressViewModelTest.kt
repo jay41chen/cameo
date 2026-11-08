@@ -11,10 +11,20 @@ import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.model.PendingCameo
 import com.kimhit.cameo.domain.model.PendingStep
 import com.kimhit.cameo.domain.repository.CameoRepository
+import com.kimhit.cameo.domain.repository.PendingCameoRepository
 import com.kimhit.cameo.domain.usecase.AdvanceCameoUseCase
+import com.kimhit.cameo.domain.usecase.AdvanceResult
 import com.kimhit.cameo.domain.usecase.AttachCameoPhotoUseCase
 import com.kimhit.cameo.domain.usecase.CameoStep
+import com.kimhit.cameo.domain.usecase.ConfirmCameoUseCase
+import com.kimhit.cameo.submission.AdvanceRun
+import com.kimhit.cameo.submission.SubmissionRunner
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -38,30 +48,6 @@ private fun orderWith(status: CameoStatus, upload: Boolean = false) = CameoOrder
 
 private fun okOrder(status: CameoStatus, upload: Boolean = false) = DomainResult.Success(orderWith(status, upload))
 
-/** 可以卡住 getCameo 與 uploadSelfie，驗證執行中的狀態與不重入。 */
-private class GatedCameos(val delegate: FakeCameoRepo) : CameoRepository by delegate {
-    var getGate: CompletableDeferred<Unit>? = null
-    var uploadGate: CompletableDeferred<Unit>? = null
-    var submitGate: CompletableDeferred<Unit>? = null
-    var getCalls = 0
-
-    override suspend fun getCameo(id: String): DomainResult<CameoOrder> {
-        getCalls++
-        getGate?.await()
-        return delegate.getCameo(id)
-    }
-
-    override suspend fun submitCameo(cameoId: String): DomainResult<CameoOrder> {
-        submitGate?.await()
-        return delegate.submitCameo(cameoId)
-    }
-
-    override suspend fun uploadSelfie(url: String, photoPath: String): DomainResult<CameoOrder> {
-        uploadGate?.await()
-        return delegate.uploadSelfie(url, photoPath)
-    }
-}
-
 @OptIn(ExperimentalCoroutinesApi::class)
 class CameoProgressViewModelTest {
     @Before
@@ -78,24 +64,32 @@ class CameoProgressViewModelTest {
         pending.rows += PendingCameo("k1", "c1", cameoId, PendingStep.UPLOAD, null, photo)
     }
 
-    private fun vm(photo: String? = null, handle: SavedStateHandle = SavedStateHandle(mapOf("clientRequestId" to "k1", "photo" to photo))) =
-        CameoProgressViewModel(
-            handle,
-            AdvanceCameoUseCase(gated, pending),
-            AttachCameoPhotoUseCase(pending),
-            keepAlive,
-        )
-
     private val keepAlive = FakeKeepAlive()
+
+    private fun runnerFor(
+        cameoRepo: CameoRepository,
+        pendingRepo: PendingCameoRepository,
+    ) = SubmissionRunner(
+        ConfirmCameoUseCase(cameoRepo, pendingRepo),
+        AdvanceCameoUseCase(cameoRepo, pendingRepo),
+        AttachCameoPhotoUseCase(pendingRepo),
+        keepAlive,
+        CoroutineScope(SupervisorJob() + Dispatchers.Main), // 測試的 Main dispatcher，與 runTest 同一個 scheduler
+    )
+
+    private val runner by lazy { runnerFor(gated, pending) }
+
+    private fun vm(photo: String? = null, handle: SavedStateHandle = SavedStateHandle(mapOf("clientRequestId" to "k1", "photo" to photo))) =
+        CameoProgressViewModel(handle, runner)
 
     @Test
     fun start_acquiresWithClientRequestId_beforeAnyWork() = runTest {
         row()
         gated.getGate = CompletableDeferred()
         vm()
-        assertEquals(listOf("acquire:k1"), keepAlive.events)
+        assertTrue(runner.isAdvancing("k1")) // 建立時就已同步登記
         advanceUntilIdle()
-        assertEquals(listOf("acquire:k1"), keepAlive.events)
+        assertEquals(listOf("acquire:advance:k1"), keepAlive.events)
     }
 
     @Test
@@ -106,12 +100,13 @@ class CameoProgressViewModelTest {
             row()
             cameos.gets["u1"] = okOrder(status)
             val vm = vm()
-            var stateAtRelease: ProgressUiState? = null
-            keepAlive.onRelease = { stateAtRelease = vm.state.value }
             advanceUntilIdle()
-            assertEquals("status=$status", listOf("acquire:k1", "track:u1", "release:k1"), keepAlive.events)
+            assertEquals(
+                "status=$status",
+                listOf("acquire:advance:k1", "track:u1", "release:advance:k1"),
+                keepAlive.events,
+            )
             assertTrue(vm.state.value is ProgressUiState.Done)
-            assertTrue("release 時狀態應還不是 Done：$stateAtRelease", stateAtRelease is ProgressUiState.Working)
         }
     }
 
@@ -124,13 +119,13 @@ class CameoProgressViewModelTest {
             cameos.gets["u1"] = okOrder(status)
             vm()
             advanceUntilIdle()
-            assertEquals("status=$status", listOf("acquire:k1", "release:k1"), keepAlive.events)
+            assertEquals("status=$status", listOf("acquire:advance:k1", "release:advance:k1"), keepAlive.events)
         }
     }
 
     @Test
     fun expired_needPhoto_notCreated_gone_failed_allRelease() = runTest {
-        val release = listOf("acquire:k1", "release:k1")
+        val release = listOf("acquire:advance:k1", "release:advance:k1")
         row()
         cameos.gets["u1"] = okOrder(CameoStatus.EXPIRED)
         vm()
@@ -181,7 +176,10 @@ class CameoProgressViewModelTest {
         vm.retry()
         advanceUntilIdle()
         assertEquals(
-            listOf("acquire:k1", "release:k1", "acquire:k1", "track:u1", "release:k1"),
+            listOf(
+                "acquire:advance:k1", "release:advance:k1",
+                "acquire:advance:k1", "track:u1", "release:advance:k1",
+            ),
             keepAlive.events,
         )
     }
@@ -193,23 +191,64 @@ class CameoProgressViewModelTest {
         pending.missingSources += CAMERA_FILE
         vm(photo = CAMERA_FILE)
         advanceUntilIdle()
-        assertEquals(listOf("acquire:k1", "release:k1"), keepAlive.events)
+        assertEquals(listOf("acquire:advance:k1", "release:advance:k1"), keepAlive.events)
         // Gone
         keepAlive.events.clear()
         pending.rows.clear()
         vm(photo = CAMERA_FILE)
         advanceUntilIdle()
-        assertEquals(listOf("acquire:k1", "release:k1"), keepAlive.events)
+        assertEquals(listOf("acquire:advance:k1", "release:advance:k1"), keepAlive.events)
     }
 
     @Test
-    fun onCleared_releases() = runTest {
+    fun clearingViewModelWhileRunning_runnerStillFinishes_releaseIsLast() = runTest {
         row()
-        gated.getGate = CompletableDeferred()
+        cameos.gets["u1"] = okOrder(CameoStatus.QUEUED)
+        val gate = CompletableDeferred<Unit>()
+        gated.getGate = gate
         val vm = vm()
         advanceUntilIdle()
-        clearViewModel(vm)
-        assertEquals(listOf("acquire:k1", "release:k1"), keepAlive.events)
+        clearViewModel(vm) // 離開進度頁
+        advanceUntilIdle()
+        assertEquals(listOf("acquire:advance:k1"), keepAlive.events)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        val finished = runner.advanceState("k1").value as AdvanceRun.Finished
+        assertTrue(finished.result is AdvanceResult.Done)
+        assertEquals(listOf("acquire:advance:k1", "track:u1", "release:advance:k1"), keepAlive.events)
+    }
+
+    @Test
+    fun photoArg_isClearedAtOnceAndHandedToRunner() = runTest {
+        row(photo = null)
+        cameos.gets["u1"] = okOrder(CameoStatus.QUEUED)
+        val handle = SavedStateHandle(mapOf("clientRequestId" to "k1", "photo" to CAMERA_FILE))
+        vm(handle = handle)
+        assertNull(handle.get<String>("photo")) // 排程還沒推進就已清掉
+        advanceUntilIdle()
+        assertEquals(listOf("k1" to CAMERA_FILE), pending.attached)
+    }
+
+    @Test
+    fun staleFinishedFromEarlierRun_isNeverShown_andAdvanceRunsAgain() = runTest {
+        row()
+        cameos.gets["u1"] = okOrder(CameoStatus.AWAITING_UPLOAD, upload = true)
+        cameos.uploads.addLast(DomainResult.Failure(DomainError("舊的失敗", true)))
+        runner.advance("k1", null)
+        advanceUntilIdle()
+        val old = runner.advanceState("k1").value as AdvanceRun.Finished
+        assertTrue(old.result is AdvanceResult.Failed)
+        assertEquals(1, gated.getCalls)
+
+        cameos.uploads.addLast(okOrder(CameoStatus.UPLOADED))
+        cameos.submits.addLast(okOrder(CameoStatus.QUEUED))
+        val vm = vm()
+        val seen = mutableListOf<ProgressUiState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.toList(seen) }
+        advanceUntilIdle()
+        assertTrue("不應看到舊的 Failed：$seen", seen.none { it is ProgressUiState.Failed })
+        assertEquals(2, gated.getCalls)
+        assertTrue(vm.state.value is ProgressUiState.Done)
     }
 
     @Test
@@ -329,9 +368,7 @@ class CameoProgressViewModelTest {
         }
         val vm2 = CameoProgressViewModel(
             SavedStateHandle(mapOf("clientRequestId" to "k1")),
-            AdvanceCameoUseCase(c2, p2),
-            AttachCameoPhotoUseCase(p2),
-            keepAlive,
+            runnerFor(c2, p2),
         )
         advanceUntilIdle()
         assertEquals(ProgressUiState.Failed(null, false), vm2.state.value)

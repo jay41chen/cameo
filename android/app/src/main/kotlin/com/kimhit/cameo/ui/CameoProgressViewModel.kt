@@ -4,16 +4,12 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kimhit.cameo.domain.model.CameoOrder
-import com.kimhit.cameo.domain.usecase.AdvanceCameoUseCase
 import com.kimhit.cameo.domain.usecase.AdvanceResult
-import com.kimhit.cameo.domain.usecase.AttachCameoPhotoUseCase
-import com.kimhit.cameo.domain.usecase.AttachResult
 import com.kimhit.cameo.domain.usecase.CameoStep
-import com.kimhit.cameo.tracking.SubmissionKeepAlive
-import com.kimhit.cameo.tracking.needsTracking
+import com.kimhit.cameo.submission.AdvanceRun
+import com.kimhit.cameo.submission.SubmissionRunner
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -40,15 +36,14 @@ internal fun progressActions(state: ProgressUiState): List<ProgressAction> = whe
 }
 
 /**
- * 進入就開始上傳與送出；離開畫面（ViewModel 清除）會取消請求，草稿保留。
- * 重拍後帶 `photo` 參數回來：先附到草稿，附上成功就立刻清掉參數，避免重建時再附一次。
+ * 進入就請程序層級的 [SubmissionRunner] 開始上傳與送出（同一個 clientRequestId 已在推進就接上，不重複啟動）；
+ * 離開畫面不會取消，推進由 runner 執行，這裡只觀察 [SubmissionRunner.advanceState]。
+ * 重拍後帶 `photo` 參數回來：交給 runner 後就立刻清掉參數，避免重建時再附一次。
  */
 @HiltViewModel
 class CameoProgressViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
-    private val advance: AdvanceCameoUseCase,
-    private val attachPhoto: AttachCameoPhotoUseCase,
-    private val keepAlive: SubmissionKeepAlive,
+    private val runner: SubmissionRunner,
 ) : ViewModel() {
     private val clientRequestId: String = checkNotNull(savedStateHandle["clientRequestId"])
     private var photo: String? = savedStateHandle[PHOTO_KEY]
@@ -56,62 +51,36 @@ class CameoProgressViewModel @Inject constructor(
     private val _state = MutableStateFlow<ProgressUiState>(ProgressUiState.Working(null))
     val state: StateFlow<ProgressUiState> = _state
 
-    private var job: Job? = null
-
     init {
-        start()
-    }
-
-    /** 執行中不重入。 */
-    fun retry() {
-        if (job?.isActive == true) return
-        start()
-    }
-
-    private fun start() {
-        keepAlive.acquire(clientRequestId)
-        _state.value = ProgressUiState.Working(null)
-        job = viewModelScope.launch {
-            photo?.let { source ->
-                when (val a = attachPhoto(clientRequestId, source)) {
-                    AttachResult.Attached -> {
-                        photo = null
-                        savedStateHandle[PHOTO_KEY] = null
-                    }
-                    is AttachResult.NeedPhoto -> {
-                        keepAlive.release(clientRequestId)
-                        _state.value = ProgressUiState.NeedPhoto(a.clipId, clientRequestId)
-                        return@launch
-                    }
-                    AttachResult.Gone -> {
-                        keepAlive.release(clientRequestId)
-                        _state.value = ProgressUiState.Gone
-                        return@launch
+        // 先呼叫 advance 再收集：不會先看到上一次留下的結果；先清 photo：程序被殺重建時不會拿已搬走的檔案再附一次
+        runner.advance(clientRequestId, photo)
+        photo = null
+        savedStateHandle[PHOTO_KEY] = null
+        viewModelScope.launch {
+            runner.advanceState(clientRequestId).collect { run ->
+                when (run) {
+                    null -> Unit
+                    is AdvanceRun.Working -> _state.value = ProgressUiState.Working(run.step)
+                    is AdvanceRun.Finished -> _state.value = when (val r = run.result) {
+                        is AdvanceResult.Done -> ProgressUiState.Done(r.order)
+                        is AdvanceResult.Expired -> ProgressUiState.Expired(
+                            title = r.order.cameo.displayTitle,
+                            message = r.order.cameo.displayMessage,
+                        )
+                        is AdvanceResult.NeedPhoto -> ProgressUiState.NeedPhoto(r.clipId, clientRequestId)
+                        is AdvanceResult.NotCreated -> ProgressUiState.NotCreated(r.clipId)
+                        AdvanceResult.Gone -> ProgressUiState.Gone
+                        is AdvanceResult.Failed -> ProgressUiState.Failed(r.error.message, r.error.retryable)
                     }
                 }
-            }
-            val result = advance(clientRequestId) { _state.value = ProgressUiState.Working(it) }
-            // 先轉交追蹤再釋放保持（兩者都要在狀態變成 Done 之前完成）；其餘結果直接釋放
-            if (result is AdvanceResult.Done && needsTracking(result.order.cameo.status)) {
-                keepAlive.track(result.order.cameo.id)
-            }
-            keepAlive.release(clientRequestId)
-            _state.value = when (val r = result) {
-                is AdvanceResult.Done -> ProgressUiState.Done(r.order)
-                is AdvanceResult.Expired -> ProgressUiState.Expired(
-                    title = r.order.cameo.displayTitle,
-                    message = r.order.cameo.displayMessage,
-                )
-                is AdvanceResult.NeedPhoto -> ProgressUiState.NeedPhoto(r.clipId, clientRequestId)
-                is AdvanceResult.NotCreated -> ProgressUiState.NotCreated(r.clipId)
-                AdvanceResult.Gone -> ProgressUiState.Gone
-                is AdvanceResult.Failed -> ProgressUiState.Failed(r.error.message, r.error.retryable)
             }
         }
     }
 
-    override fun onCleared() {
-        keepAlive.release(clientRequestId)
+    /** 執行中不重入。 */
+    fun retry() {
+        if (runner.isAdvancing(clientRequestId)) return
+        runner.advance(clientRequestId, photo)
     }
 }
 
