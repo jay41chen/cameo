@@ -3,6 +3,7 @@ package com.kimhit.cameo.di
 import com.kimhit.cameo.BuildConfig
 import com.kimhit.cameo.data.network.DataConfig
 import com.kimhit.cameo.domain.repository.CameoRepository
+import com.kimhit.cameo.domain.repository.CameoShareRepository
 import com.kimhit.cameo.domain.repository.ClipRepository
 import com.kimhit.cameo.domain.repository.PendingCameoRepository
 import com.kimhit.cameo.domain.repository.PointsRepository
@@ -20,6 +21,8 @@ import com.kimhit.cameo.domain.usecase.GetPointsUseCase
 import com.kimhit.cameo.domain.usecase.GetQuotaUseCase
 import com.kimhit.cameo.domain.usecase.GetUnfinishedCameosUseCase
 import com.kimhit.cameo.domain.usecase.ResumeTrackingUseCase
+import com.kimhit.cameo.domain.usecase.ShareCameoUseCase
+import com.kimhit.cameo.domain.usecase.UnshareCameoUseCase
 import android.content.Context
 import com.kimhit.cameo.tracking.ServiceSubmissionKeepAlive
 import com.kimhit.cameo.tracking.SubmissionKeepAlive
@@ -36,7 +39,11 @@ import java.io.File
 @InstallIn(SingletonComponent::class)
 object AppModule {
     @Provides
-    fun provideDataConfig(): DataConfig = DataConfig(BuildConfig.BASE_URL, BuildConfig.API_TOKEN)
+    fun provideDataConfig(): DataConfig = DataConfig(
+        BuildConfig.BASE_URL,
+        BuildConfig.API_TOKEN,
+        shareDebugBaseUrl = if (BuildConfig.DEBUG) BuildConfig.BASE_URL else null,
+    )
 
     @Provides
     fun provideCaptureFiles(@ApplicationContext context: Context): CaptureFiles =
@@ -59,6 +66,12 @@ object AppModule {
 
     @Provides
     fun provideGetCameo(repository: CameoRepository) = GetCameoUseCase(repository)
+
+    @Provides
+    fun provideShareCameo(repository: CameoShareRepository) = ShareCameoUseCase(repository)
+
+    @Provides
+    fun provideUnshareCameo(repository: CameoShareRepository) = UnshareCameoUseCase(repository)
 
     @Provides
     fun provideGetQuota(repository: QuotaRepository) = GetQuotaUseCase(repository)

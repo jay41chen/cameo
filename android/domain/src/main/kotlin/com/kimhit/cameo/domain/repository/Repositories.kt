@@ -1,6 +1,7 @@
 package com.kimhit.cameo.domain.repository
 
 import com.kimhit.cameo.domain.model.CameoPage
+import com.kimhit.cameo.domain.model.CameoShare
 import com.kimhit.cameo.domain.model.Clip
 import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.model.LedgerPage
@@ -33,6 +34,14 @@ interface CameoRepository {
 
     /** [cursor] 為 null 取第一頁；之後用上一頁的 nextCursor。 */
     suspend fun listCameos(cursor: String?): DomainResult<CameoPage>
+}
+
+interface CameoShareRepository {
+    /** 開啟分享並回傳連結；非 SUCCEEDED 回 `NOT_SHAREABLE`，訂單不存在回 `CAMEO_NOT_FOUND`。 */
+    suspend fun share(cameoId: String): DomainResult<CameoShare>
+
+    /** 取消分享，冪等；訂單不存在回 `CAMEO_NOT_FOUND`。 */
+    suspend fun unshare(cameoId: String): DomainResult<Unit>
 }
 
 interface PendingCameoRepository {

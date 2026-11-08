@@ -6,12 +6,14 @@ import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.model.LedgerPage
 import com.kimhit.cameo.domain.model.CameoOrder
 import com.kimhit.cameo.domain.model.CameoPage
+import com.kimhit.cameo.domain.model.CameoShare
 import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.PendingStep
 import com.kimhit.cameo.domain.model.Points
 import com.kimhit.cameo.domain.model.Quota
 import com.kimhit.cameo.domain.model.UnfinishedCameo
 import com.kimhit.cameo.domain.repository.CameoRepository
+import com.kimhit.cameo.domain.repository.CameoShareRepository
 import com.kimhit.cameo.domain.repository.ClipRepository
 import com.kimhit.cameo.domain.repository.PendingCameoRepository
 import com.kimhit.cameo.domain.repository.PointsRepository
@@ -40,6 +42,14 @@ class GetCameoPageUseCase(private val repository: CameoRepository) {
 /** 查單一訂單的最新狀態。 */
 class GetCameoUseCase(private val repository: CameoRepository) {
     suspend operator fun invoke(cameoId: String): DomainResult<CameoOrder> = repository.getCameo(cameoId)
+}
+
+class ShareCameoUseCase(private val repository: CameoShareRepository) {
+    suspend operator fun invoke(cameoId: String): DomainResult<CameoShare> = repository.share(cameoId)
+}
+
+class UnshareCameoUseCase(private val repository: CameoShareRepository) {
+    suspend operator fun invoke(cameoId: String): DomainResult<Unit> = repository.unshare(cameoId)
 }
 
 class GetQuotaUseCase(private val repository: QuotaRepository) {

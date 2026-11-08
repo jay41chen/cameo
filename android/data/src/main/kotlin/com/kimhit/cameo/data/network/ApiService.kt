@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import retrofit2.Response
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
@@ -58,7 +59,15 @@ internal data class CameoDto(
     val status: String,
     val display: CameoDisplayDto? = null,
     @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("video_available") val videoAvailable: Boolean = false,
+    val share: ShareDto? = null,
 )
+
+@Serializable
+internal data class ShareDto(val active: Boolean = false, val url: String? = null)
+
+@Serializable
+internal data class ShareResponse(val share: ShareDto)
 
 @Serializable
 internal data class CameoListResponse(
@@ -106,6 +115,16 @@ internal interface ApiService {
 
     @POST("v1/cameos/{id}/submit")
     suspend fun submit(@Path("id") id: String): Response<CameoOrderResponse>
+
+    /** [debugBaseUrl] 為 null 時 Retrofit 不帶這個 query。 */
+    @PUT("v1/cameos/{id}/share")
+    suspend fun share(
+        @Path("id") id: String,
+        @Query("debug_base_url") debugBaseUrl: String?,
+    ): Response<ShareResponse>
+
+    @DELETE("v1/cameos/{id}/share")
+    suspend fun unshare(@Path("id") id: String): Response<Unit>
 }
 
 /** 只給上傳用，搭配逾時較長且不自動重送的獨立 client（見 [createUploadClient]）。 */

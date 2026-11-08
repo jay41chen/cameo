@@ -12,6 +12,7 @@ import com.kimhit.cameo.data.pending.PendingCameoRepositoryImpl
 import com.kimhit.cameo.data.quota.QuotaRepositoryImpl
 import com.kimhit.cameo.domain.model.CameoOrder
 import com.kimhit.cameo.domain.model.CameoPage
+import com.kimhit.cameo.domain.model.CameoShare
 import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.DomainResult
 import com.kimhit.cameo.domain.model.PendingStep
@@ -57,7 +58,7 @@ class CameoRepositoryTest {
         server.start()
         config = DataConfig(server.url("/").toString().trimEnd('/'), "test-token")
         val api = createApiService(config)
-        cameos = CameoRepositoryImpl(api, createUploadApi(config))
+        cameos = CameoRepositoryImpl(api, createUploadApi(config), config)
         quota = QuotaRepositoryImpl(api)
     }
 
@@ -113,6 +114,84 @@ class CameoRepositoryTest {
         assertEquals(CameoStatus.UNKNOWN, b.status)
         assertNull(b.displayTitle)
         assertNull(b.createdAt)
+    }
+
+    private fun shareRepo(debugBase: String?): CameoRepositoryImpl {
+        val c = DataConfig(config.baseUrl, config.authToken, shareDebugBaseUrl = debugBase)
+        return CameoRepositoryImpl(createApiService(c), createUploadApi(c), c)
+    }
+
+    @Test
+    fun get_parsesVideoAvailableAndShare() = runTest {
+        server.enqueue(json(cameoJson("SUCCEEDED", ""","video_available":true,"share":{"active":true,"url":"http://x/s/abc"}""")))
+        val c = order(cameos.getCameo("u1")).cameo
+        assertTrue(c.videoAvailable)
+        assertEquals(CameoShare(true, "http://x/s/abc"), c.share)
+    }
+
+    @Test
+    fun get_parsesInactiveShareWithNullUrl() = runTest {
+        server.enqueue(json(cameoJson("SUCCEEDED", ""","video_available":true,"share":{"active":false,"url":null}""")))
+        assertEquals(CameoShare(false, null), order(cameos.getCameo("u1")).cameo.share)
+    }
+
+    @Test
+    fun get_missingVideoAndShareFieldsDefaultToFalseAndNull() = runTest {
+        server.enqueue(json(cameoJson("PROCESSING")))
+        val c = order(cameos.getCameo("u1")).cameo
+        assertFalse(c.videoAvailable)
+        assertNull(c.share)
+    }
+
+    @Test
+    fun share_withDebugBase_sendsEncodedQueryAndParsesResponse() = runTest {
+        server.enqueue(json("""{"share":{"active":true,"url":"http://localhost:8080/s/tok"}}"""))
+        val r = shareRepo("http://10.0.2.2:8080").share("u1")
+        assertEquals(CameoShare(true, "http://localhost:8080/s/tok"), (r as DomainResult.Success).value)
+        val req = server.takeRequest()
+        assertEquals("PUT", req.method)
+        assertEquals("/v1/cameos/u1/share", req.requestUrl!!.encodedPath)
+        assertEquals("http://10.0.2.2:8080", req.requestUrl!!.queryParameter("debug_base_url"))
+        assertEquals(0L, req.bodySize)
+    }
+
+    @Test
+    fun share_withoutDebugBase_sendsNoQuery() = runTest {
+        server.enqueue(json("""{"share":{"active":true,"url":"http://x/s/tok"}}"""))
+        shareRepo(null).share("u1")
+        val req = server.takeRequest()
+        assertEquals("/v1/cameos/u1/share", req.path)
+        assertNull(req.requestUrl!!.query)
+        assertNull(req.requestUrl!!.queryParameter("debug_base_url"))
+    }
+
+    @Test
+    fun share_notShareable_becomesFailureWithCode() = runTest {
+        server.enqueue(json("""{"code":"NOT_SHAREABLE","message":"尚未完成","retryable":false}""", 409))
+        val e = failure(shareRepo(null).share("u1"))
+        assertEquals("NOT_SHAREABLE", e.code)
+        assertFalse(e.retryable)
+    }
+
+    @Test
+    fun unshare_204_isSuccess() = runTest {
+        server.enqueue(MockResponse().setResponseCode(204))
+        assertTrue(shareRepo(null).unshare("u1") is DomainResult.Success)
+        val req = server.takeRequest()
+        assertEquals("DELETE", req.method)
+        assertEquals("/v1/cameos/u1/share", req.path)
+    }
+
+    @Test
+    fun unshare_notFound_becomesFailureWithCode() = runTest {
+        server.enqueue(json("""{"code":"CAMEO_NOT_FOUND","message":"找不到","retryable":false}""", 404))
+        assertEquals("CAMEO_NOT_FOUND", failure(shareRepo(null).unshare("u1")).code)
+    }
+
+    @Test
+    fun share_networkError_isRetryable() = runTest {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START))
+        assertTrue(failure(shareRepo(null).share("u1")).retryable)
     }
 
     @Test

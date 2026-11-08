@@ -34,7 +34,14 @@ data class Cameo(
     val displayMessage: String?,
     /** 後端的 ISO 8601 字串；列表與單筆回應都有，缺漏時為 null（畫面不顯示時間），預設值讓只關心狀態的呼叫端可省略。 */
     val createdAt: String? = null,
+    /** `SUCCEEDED` 時為 true；缺漏視為 false。 */
+    val videoAvailable: Boolean = false,
+    /** 分享狀態；後端沒帶時為 null。 */
+    val share: CameoShare? = null,
 )
+
+/** [url] 只在 [active] 為 true 時有值。 */
+data class CameoShare(val active: Boolean, val url: String?)
 
 typealias CameoPage = Page<Cameo>
 

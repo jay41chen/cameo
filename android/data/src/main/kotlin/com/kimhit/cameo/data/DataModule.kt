@@ -16,6 +16,7 @@ import com.kimhit.cameo.data.pending.PendingDatabase
 import com.kimhit.cameo.data.points.PointsRepositoryImpl
 import com.kimhit.cameo.data.quota.QuotaRepositoryImpl
 import com.kimhit.cameo.domain.repository.CameoRepository
+import com.kimhit.cameo.domain.repository.CameoShareRepository
 import com.kimhit.cameo.domain.repository.ClipRepository
 import com.kimhit.cameo.domain.repository.PendingCameoRepository
 import com.kimhit.cameo.domain.repository.PointsRepository
@@ -60,8 +61,13 @@ object DataModule {
 
     @Provides
     @Singleton
-    internal fun provideCameoRepository(api: ApiService, uploadApi: UploadApi): CameoRepository =
-        CameoRepositoryImpl(api, uploadApi)
+    internal fun provideCameoRepository(api: ApiService, uploadApi: UploadApi, config: DataConfig): CameoRepository =
+        CameoRepositoryImpl(api, uploadApi, config)
+
+    @Provides
+    @Singleton
+    internal fun provideCameoShareRepository(api: ApiService, uploadApi: UploadApi, config: DataConfig): CameoShareRepository =
+        CameoRepositoryImpl(api, uploadApi, config)
 
     @Provides
     @Singleton
