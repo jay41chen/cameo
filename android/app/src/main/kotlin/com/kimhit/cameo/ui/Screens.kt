@@ -90,7 +90,16 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
                 onContinue = { rootNav.navigateSingleTop(continueRoute(it)) },
                 onStartClick = { rootNav.navigateSingleTop(ROUTE_CLIPS) },
                 onOpenPoints = { rootNav.navigateSingleTop(ROUTE_POINTS) },
+                onOpenVideo = { rootNav.navigateSingleTop(videoRoute(it)) },
             )
+        }
+        composable(
+            ROUTE_VIDEO,
+            arguments = listOf(navArgument("cameoId") { type = NavType.StringType }),
+        ) {
+            FlowScaffold {
+                VideoScreen(onBackHome = { rootNav.popBackStack(ROUTE_MY_CAMEOS, inclusive = false) })
+            }
         }
         composable(ROUTE_CLIPS) {
             FlowScaffold {
@@ -440,6 +449,7 @@ fun MyCameosScreen(
     onContinue: (PendingCameo) -> Unit,
     onStartClick: () -> Unit,
     onOpenPoints: () -> Unit,
+    onOpenVideo: (String) -> Unit,
     viewModel: MyCameosViewModel = hiltViewModel(),
 ) {
     val throttle = rememberNavClickThrottle()
@@ -588,7 +598,7 @@ fun MyCameosScreen(
                                 )
                             }
                         }
-                        items(state.items, key = { it.id }) { MyCameoRow(it) }
+                        items(state.items, key = { it.id }) { MyCameoRow(it) { throttle.guarded { onOpenVideo(it.id) } } }
                         pagedFooter(state, viewModel::loadMore)
                     }
                 }
@@ -611,9 +621,9 @@ fun MyCameosScreen(
 }
 
 @Composable
-private fun MyCameoRow(cameo: Cameo) {
+private fun MyCameoRow(cameo: Cameo, onOpenVideo: () -> Unit) {
     Column {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Column(Modifier.fillMaxWidth().then(if (canOpenVideo(cameo)) Modifier.clickable(onClick = onOpenVideo) else Modifier).padding(horizontal = 16.dp, vertical = 8.dp)) {
             Text(cameo.clip.title, style = MaterialTheme.typography.titleMedium)
             Text(cameo.displayTitle ?: "狀態未知")
             cameo.displayMessage?.let { Text(it) }
@@ -622,3 +632,6 @@ private fun MyCameoRow(cameo: Cameo) {
         HorizontalDivider()
     }
 }
+
+/** 只有影片可播放的列能點進影片頁。 */
+internal fun canOpenVideo(cameo: Cameo): Boolean = cameo.videoAvailable

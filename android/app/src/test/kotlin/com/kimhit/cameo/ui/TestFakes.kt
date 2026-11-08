@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelStore
 import com.kimhit.cameo.domain.model.Cameo
 import com.kimhit.cameo.domain.model.CameoOrder
 import com.kimhit.cameo.domain.model.CameoPage
+import com.kimhit.cameo.domain.model.CameoShare
 import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.model.Clip
 import com.kimhit.cameo.domain.model.DomainResult
@@ -13,6 +14,7 @@ import com.kimhit.cameo.domain.model.PendingCameo
 import com.kimhit.cameo.domain.model.PendingStep
 import com.kimhit.cameo.domain.model.Quota
 import com.kimhit.cameo.domain.repository.CameoRepository
+import com.kimhit.cameo.domain.repository.CameoShareRepository
 import com.kimhit.cameo.domain.repository.ClipRepository
 import com.kimhit.cameo.domain.repository.PendingCameoRepository
 import com.kimhit.cameo.domain.repository.QuotaRepository
@@ -179,4 +181,21 @@ fun <T : ViewModel> clearViewModel(vm: T) {
     }
     ViewModelProvider.create(store, factory)[vm.javaClass]
     store.clear()
+}
+
+class FakeShareRepo : CameoShareRepository {
+    val shares = ArrayDeque<DomainResult<CameoShare>>()
+    val unshares = ArrayDeque<DomainResult<Unit>>()
+    var shareCalls = 0
+    var unshareCalls = 0
+
+    override suspend fun share(cameoId: String): DomainResult<CameoShare> {
+        shareCalls++
+        return shares.removeFirst()
+    }
+
+    override suspend fun unshare(cameoId: String): DomainResult<Unit> {
+        unshareCalls++
+        return unshares.removeFirst()
+    }
 }

@@ -10,7 +10,10 @@ internal const val ROUTE_POINTS = "points"
 internal const val ROUTE_MY_CAMEOS = "my_cameos"
 internal const val ROUTE_CAMERA = "camera/{clipId}?request={request}"
 internal const val ROUTE_CONFIRM = "confirm/{clipId}?photo={photo}"
+internal const val ROUTE_VIDEO = "video/{cameoId}"
 internal const val ROUTE_CAMEO = "cameo/{clientRequestId}?photo={photo}"
+
+internal fun videoRoute(cameoId: String): String = "video/$cameoId"
 
 /** [request] 不為 null 表示替既有草稿重拍：「使用這張」後回進度畫面而不是確認頁。 */
 internal fun cameraRoute(clipId: String, request: String? = null): String =
