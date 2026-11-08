@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -314,12 +315,32 @@ func (s *server) toCameoJSON(c domain.Cameo) cameoJSON {
 	j.FailureReason = c.FailureReason
 	j.VideoAvailable = c.VideoAvailable()
 	if c.ShareToken != nil {
-		u := s.publicBaseURL + "/s/" + *c.ShareToken
+		u := shareURL(s.publicBaseURL, *c.ShareToken)
 		j.Share.Active, j.Share.URL = true, &u
 	}
 	j.CreatedAt = c.CreatedAt.In(taipei).Format(time.RFC3339)
 	j.UpdatedAt = c.UpdatedAt.In(taipei).Format(time.RFC3339)
 	return j
+}
+
+// shareURL 組出分享網址：base（去掉尾端 /）+ /s/ + token。
+func shareURL(base, token string) string {
+	return strings.TrimRight(base, "/") + "/s/" + token
+}
+
+// validDebugBase 檢查 debug_base_url 是否為 http/https 的 origin：
+// 有 host，沒有 userinfo、query、fragment，path 只能是空或 /。
+func validDebugBase(raw string) bool {
+	if strings.Contains(raw, "#") { // 空 fragment（http://h#）解析後看不出來，只能看原字串
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" && u.User == nil &&
+		u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && u.RawFragment == "" &&
+		(u.Path == "" || u.Path == "/") && u.RawPath == "" && u.Opaque == ""
 }
 
 func (s *server) createCameo(w http.ResponseWriter, r *http.Request) {
@@ -397,7 +418,22 @@ func (s *server) serveVideo(w http.ResponseWriter, r *http.Request) {
 }
 
 // shareCameo 建立分享（冪等）；成功一律 200，不讀 request body。
+// debug 開啟時可用 query debug_base_url 改變回應網址的 base（不存資料庫）；未開啟時忽略。
 func (s *server) shareCameo(w http.ResponseWriter, r *http.Request) {
+	base := s.publicBaseURL
+	if s.debug {
+		// r.URL.Query() 會丟掉解析失敗的項目；ParseQuery 有 err 一律 400（即使有部分結果）。
+		// query 有任何語法錯誤（含 ; 分隔、不合法的 % 編碼）都回 400，因為出錯時無法確定是否帶了 debug_base_url。
+		q, qerr := url.ParseQuery(r.URL.RawQuery)
+		vals, ok := q["debug_base_url"]
+		if qerr != nil || (ok && (len(vals) != 1 || !validDebugBase(vals[0]))) {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "debug_base_url 必須是 http 或 https 的 origin", false)
+			return
+		}
+		if ok {
+			base = vals[0]
+		}
+	}
 	c, err := s.svc.ShareCameo(r.Context(), r.PathValue("id"))
 	switch {
 	case errors.Is(err, domain.ErrNotShareable):
@@ -409,7 +445,12 @@ func (s *server) shareCameo(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"share": s.toCameoJSON(c).Share})
+	share := s.toCameoJSON(c).Share
+	if c.ShareToken != nil {
+		u := shareURL(base, *c.ShareToken)
+		share.URL = &u
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"share": share})
 }
 
 // unshareCameo 取消分享，冪等，成功回 204。

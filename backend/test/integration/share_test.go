@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -458,5 +459,119 @@ func TestMigration0006ShareToken(t *testing.T) {
 	// NULL 可重複（未分享的訂單不互相衝突）。
 	if _, err := f.pool.Exec(ctx, `UPDATE cameos SET share_token = NULL`); err != nil {
 		t.Fatalf("NULL tokens conflict: %v", err)
+	}
+}
+
+func (f *vfx) sharePutBase(id, rawQuery string) resp {
+	return send(f.h, http.MethodPut, "/v1/cameos/"+id+"/share?"+rawQuery, nil, true, nil)
+}
+
+func (f *vfx) shareOf(t *testing.T, id string) map[string]any {
+	t.Helper()
+	return cameoOf(call(t, f.h, http.MethodGet, "/v1/cameos/"+id, "", ""))["share"].(map[string]any)
+}
+
+var badDebugBases = []string{"", "ftp://x", "http://h/path", "http://h?x=1", "http://h?", "http://h#f", "http://h#", "http://:8080", "http://u:p@h", "10.0.2.2:8080", "http://"}
+
+// debug 開：合格 base 套用在 PUT 回應；token 不變；GET 仍用 publicBaseURL。
+func TestSharePutDebugBaseURL(t *testing.T) {
+	f := newVideoVfx(t)
+	id := f.succeeded(t, "k")
+	f.h = f.handler(f.svc) // 加上 WithDebugAPI
+	tok := tokenOf(t, f.shareURL(t, id))
+	for _, base := range []string{"http://10.0.2.2:8080", "https://example.test", "http://10.0.2.2:8080/", "http://[::1]:8080"} {
+		r := f.sharePutBase(id, "debug_base_url="+url.QueryEscape(base))
+		if r.Code != 200 {
+			t.Fatalf("base %q: %d %s", base, r.Code, r.Body.String())
+		}
+		want := strings.TrimRight(base, "/") + "/s/" + tok
+		if got := r.body["share"].(map[string]any)["url"]; got != want {
+			t.Fatalf("base %q: url = %v, want %s", base, got, want)
+		}
+		if got := f.shareOf(t, id)["url"]; got != shareURLPrefix+tok {
+			t.Fatalf("GET share.url = %v after base %q", got, base)
+		}
+	}
+}
+
+// debug 開：不同 base 重複 PUT，token 不變，網址用該次的 base。
+func TestSharePutDebugBaseURLSwitching(t *testing.T) {
+	f := newVideoVfx(t)
+	id := f.succeeded(t, "k")
+	f.h = f.handler(f.svc)
+	a := f.sharePutBase(id, "debug_base_url=http://a.test:1").body["share"].(map[string]any)["url"].(string)
+	b := f.sharePutBase(id, "debug_base_url=http://b.test:2").body["share"].(map[string]any)["url"].(string)
+	if a != "http://a.test:1/s/"+strings.TrimPrefix(b, "http://b.test:2/s/") || !strings.HasPrefix(b, "http://b.test:2/s/") {
+		t.Fatalf("a = %s, b = %s", a, b)
+	}
+}
+
+// debug 開：不合格值回 400，且不建立分享。
+func TestSharePutDebugBaseURLInvalid(t *testing.T) {
+	f := newVideoVfx(t)
+	id := f.succeeded(t, "k")
+	f.h = f.handler(f.svc)
+	for _, bad := range badDebugBases {
+		r := f.sharePutBase(id, "debug_base_url="+url.QueryEscape(bad))
+		wantError(t, r, 400, "INVALID_REQUEST")
+		if r.body["message"] != "debug_base_url 必須是 http 或 https 的 origin" || r.body["retryable"] != false {
+			t.Fatalf("bad %q: body = %v", bad, r.body)
+		}
+		if sh := f.shareOf(t, id); sh["active"] != false || sh["url"] != nil {
+			t.Fatalf("bad %q created a share: %v", bad, sh)
+		}
+	}
+	// 沒有 = 的寫法也算有帶參數但值為空。
+	wantError(t, f.sharePutBase(id, "debug_base_url"), 400, "INVALID_REQUEST")
+	if sh := f.shareOf(t, id); sh["active"] != false {
+		t.Fatalf("share created: %v", sh)
+	}
+}
+
+// debug 關：忽略 debug_base_url，不驗證，一律用 publicBaseURL。
+func TestSharePutDebugBaseURLIgnoredWithoutDebug(t *testing.T) {
+	f := newVideoVfx(t)
+	id := f.succeeded(t, "k")
+	tok := tokenOf(t, f.shareURL(t, id))
+	for _, v := range append([]string{"http://10.0.2.2:8080"}, badDebugBases...) {
+		r := f.sharePutBase(id, "debug_base_url="+url.QueryEscape(v))
+		if r.Code != 200 || r.body["share"].(map[string]any)["url"] != shareURLPrefix+tok {
+			t.Fatalf("value %q: %d %s", v, r.Code, r.Body.String())
+		}
+	}
+}
+
+// 同一請求帶多個 debug_base_url、或 query 本身解析失敗：debug 開一律 400 且不建立分享；debug 關忽略。
+var badDebugQueries = []string{
+	"debug_base_url=http://a&debug_base_url=http://b",
+	"debug_base_url=%zz",
+	"debug_base_url=http%3A%2F%2Fa;x=1",
+}
+
+func TestSharePutDebugBaseURLBadQuery(t *testing.T) {
+	f := newVideoVfx(t)
+	id := f.succeeded(t, "k")
+	f.h = f.handler(f.svc)
+	for _, q := range badDebugQueries {
+		r := f.sharePutBase(id, q)
+		wantError(t, r, 400, "INVALID_REQUEST")
+		if r.body["message"] != "debug_base_url 必須是 http 或 https 的 origin" || r.body["retryable"] != false {
+			t.Fatalf("query %q: body = %v", q, r.body)
+		}
+		if sh := f.shareOf(t, id); sh["active"] != false || sh["url"] != nil {
+			t.Fatalf("query %q created a share: %v", q, sh)
+		}
+	}
+}
+
+func TestSharePutDebugBaseURLBadQueryIgnoredWithoutDebug(t *testing.T) {
+	f := newVideoVfx(t)
+	id := f.succeeded(t, "k")
+	tok := tokenOf(t, f.shareURL(t, id))
+	for _, q := range badDebugQueries {
+		r := f.sharePutBase(id, q)
+		if r.Code != 200 || r.body["share"].(map[string]any)["url"] != shareURLPrefix+tok {
+			t.Fatalf("query %q: %d %s", q, r.Code, r.Body.String())
+		}
 	}
 }
