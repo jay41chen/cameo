@@ -407,6 +407,75 @@ class SubmissionRunnerTest {
         assertTrue(r.confirmState("c1").value is ConfirmRun.Finished)
     }
 
+    /** 收集 [SubmissionRunner.finished]，回傳收到的次數清單（Unconfined，發出當下就記）。 */
+    private fun TestScope.collectFinished(r: SubmissionRunner): MutableList<Unit> {
+        val got = mutableListOf<Unit>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { r.finished.collect { got += it } }
+        return got
+    }
+
+    @Test
+    fun `finished emits once when confirm succeeds and advance completes`() = runTest {
+        stubHappyPath()
+        val r = runner(bg())
+        val got = collectFinished(r)
+        r.confirm("c1", CAMERA)
+        advanceUntilIdle()
+        assertTrue((r.advanceState("key-1").value as AdvanceRun.Finished).result is AdvanceResult.Done)
+        assertEquals(1, got.size)
+    }
+
+    @Test
+    fun `finished emits once when advance alone completes`() = runTest {
+        draftRow()
+        repo.gets["u1"] = ok(CameoStatus.AWAITING_UPLOAD, upload = true)
+        repo.uploads += ok(CameoStatus.UPLOADED)
+        repo.submits += ok(CameoStatus.GENERATING)
+        val r = runner(bg())
+        val got = collectFinished(r)
+        r.advance("k1", null)
+        advanceUntilIdle()
+        assertTrue((r.advanceState("k1").value as AdvanceRun.Finished).result is AdvanceResult.Done)
+        assertEquals(1, got.size)
+    }
+
+    @Test
+    fun `finished emits once when confirm returns failure`() = runTest {
+        repo.creates += fail(retryable = true)
+        val r = runner(bg())
+        val got = collectFinished(r)
+        r.confirm("c1", CAMERA)
+        advanceUntilIdle()
+        assertTrue((r.confirmState("c1").value as ConfirmRun.Finished).result is DomainResult.Failure)
+        assertEquals(1, got.size)
+    }
+
+    @Test
+    fun `finished emits once when the use case throws`() = runTest {
+        // creates 佇列為空，createCameo 會丟 NoSuchElementException
+        val r = runner(bg())
+        val got = collectFinished(r)
+        r.confirm("c1", CAMERA)
+        advanceUntilIdle()
+        assertTrue((r.confirmState("c1").value as ConfirmRun.Finished).result is DomainResult.Failure)
+        assertEquals(1, got.size)
+    }
+
+    @Test
+    fun `finished emits once in total when the same clip is confirmed again while running`() = runTest {
+        stubHappyPath()
+        gated.createGate = CompletableDeferred()
+        val r = runner(bg())
+        val got = collectFinished(r)
+        r.confirm("c1", CAMERA)
+        advanceUntilIdle()
+        r.confirm("c1", CAMERA)
+        gated.createGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(1, repo.keys.size)
+        assertEquals(1, got.size)
+    }
+
     private fun assertRetryableAdvanceFailure(state: AdvanceRun?) {
         val f = (state as AdvanceRun.Finished).result as AdvanceResult.Failed
         assertTrue(f.error.retryable)

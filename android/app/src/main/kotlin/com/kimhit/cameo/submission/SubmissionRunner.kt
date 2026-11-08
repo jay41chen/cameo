@@ -16,7 +16,10 @@ import com.kimhit.cameo.tracking.needsTracking
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -41,6 +44,8 @@ private const val RUNNER_TAG = "SubmissionRunner"
  * - confirm 成功（非 EXPIRED）後在同一條工作裡直接推進，並把該工作登記為該 clientRequestId 的推進工作。
  * - 工作結束只移除「進行中」登記，最後的狀態保留給之後才來觀察的畫面。
  * - keepAlive 的 release 一定在 `finally`，且在推進與 track 之後。
+ * - [finished] 在 confirm、advance 各自那條工作結束時發一次（成功、失敗、例外、取消都發，在鎖外）；
+ *   confirm 接著推進的整條工作只發一次；重複呼叫被擋掉與 scope 已取消的提早 return 不發。
  */
 class SubmissionRunner(
     private val confirmCameo: ConfirmCameoUseCase,
@@ -54,6 +59,11 @@ class SubmissionRunner(
     private val advanceFlows = mutableMapOf<String, MutableStateFlow<AdvanceRun?>>()
     private val confirmJobs = mutableMapOf<String, Job>()
     private val advanceJobs = mutableMapOf<String, Job>()
+
+    private val _finished = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /** 每次提交工作結束時發一次，供首頁刷新已送出區與待處理區。 */
+    val finished: SharedFlow<Unit> = _finished
 
     fun confirmState(clipId: String): StateFlow<ConfirmRun?> = synchronized(lock) { confirmFlow(clipId) }
 
@@ -112,6 +122,7 @@ class SubmissionRunner(
                         }
                         if (confirmJobs[clipId] === self) confirmJobs.remove(clipId)
                     }
+                    _finished.tryEmit(Unit)
                 }
             }
             confirmJobs[clipId] = job
@@ -141,6 +152,7 @@ class SubmissionRunner(
                         if (af.value is AdvanceRun.Working) af.value = AdvanceRun.Finished(retryableAdvanceFailure())
                         if (advanceJobs[clientRequestId] === self) advanceJobs.remove(clientRequestId)
                     }
+                    _finished.tryEmit(Unit)
                 }
             }
             advanceJobs[clientRequestId] = job

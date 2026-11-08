@@ -12,6 +12,7 @@ import com.kimhit.cameo.domain.usecase.DeletePendingCameoUseCase
 import com.kimhit.cameo.domain.model.CameoStatus
 import com.kimhit.cameo.domain.usecase.GetCameoPageUseCase
 import com.kimhit.cameo.domain.usecase.GetCameoUseCase
+import com.kimhit.cameo.submission.SubmissionRunner
 import com.kimhit.cameo.tracking.needsTracking
 import com.kimhit.cameo.domain.usecase.GetClipsUseCase
 import com.kimhit.cameo.domain.usecase.GetPointsUseCase
@@ -70,6 +71,7 @@ class MyCameosViewModel @Inject constructor(
     private val getUnfinished: GetUnfinishedCameosUseCase,
     private val deletePending: DeletePendingCameoUseCase,
     private val getCameo: GetCameoUseCase,
+    private val runner: SubmissionRunner,
 ) : ViewModel() {
     private val _refreshErrors = Channel<String?>(Channel.CONFLATED)
 
@@ -120,11 +122,23 @@ class MyCameosViewModel @Inject constructor(
      * 另刷新待處理區、額度、點數，片段名稱還沒有時補查。
      */
     fun onResume() {
-        if (state.value.phase == PagePhase.Error) loadFirstPage() else refresh()
-        refreshUnfinished()
+        refreshSections()
         gate.refresh()
         loadClipsIfEmpty()
         refreshPoints()
+    }
+
+    private fun refreshSections() {
+        if (state.value.phase == PagePhase.Error) loadFirstPage() else refresh()
+        refreshUnfinished()
+    }
+
+    /**
+     * 提交結束（成功或失敗）時刷新已送出區和待處理區，方式同回前景。由畫面在 RESUMED 時啟動、離開就取消；
+     * 只刷這兩區，依規格不刷點數和額度。
+     */
+    suspend fun watchSubmissions() {
+        runner.finished.collect { refreshSections() }
     }
 
     /**

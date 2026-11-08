@@ -37,6 +37,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
@@ -521,13 +522,18 @@ fun MyCameosScreen(
             if (result == SnackbarResult.ActionPerformed) viewModel.refresh()
         }
     }
-    // 只有畫面在 RESUMED 才輪詢：進背景、離開首頁就取消，回來重新開始
+    // 只有畫面在 RESUMED 才輪詢，並在提交結束時刷新兩區：進背景、離開首頁就取消，回來重新開始
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner, viewModel, listState) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            viewModel.pollVisible(
-                snapshotFlow { listState.layoutInfo.visibleItemsInfo.mapTo(HashSet<Any>()) { it.key } },
-            )
+            coroutineScope {
+                launch {
+                    viewModel.pollVisible(
+                        snapshotFlow { listState.layoutInfo.visibleItemsInfo.mapTo(HashSet<Any>()) { it.key } },
+                    )
+                }
+                launch { viewModel.watchSubmissions() }
+            }
         }
     }
     OnResume(viewModel::onResume)

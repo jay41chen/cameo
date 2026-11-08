@@ -26,7 +26,13 @@ import com.kimhit.cameo.domain.usecase.GetLedgerPageUseCase
 import com.kimhit.cameo.domain.usecase.GetPointsUseCase
 import com.kimhit.cameo.domain.usecase.GetQuotaUseCase
 import com.kimhit.cameo.domain.usecase.GetUnfinishedCameosUseCase
+import com.kimhit.cameo.domain.usecase.AdvanceCameoUseCase
+import com.kimhit.cameo.domain.usecase.AttachCameoPhotoUseCase
+import com.kimhit.cameo.domain.usecase.ConfirmCameoUseCase
+import com.kimhit.cameo.submission.SubmissionRunner
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -103,6 +109,13 @@ internal fun myCameosVm(
     listCameos: suspend (String?) -> DomainResult<CameoPage> = { DomainResult.Success(Page(emptyList(), null)) },
     points: PointsRepository = ScriptedPoints(),
     getCameo: (suspend (String) -> DomainResult<CameoOrder>)? = null,
+    runner: SubmissionRunner = SubmissionRunner(
+        ConfirmCameoUseCase(cameos, pending),
+        AdvanceCameoUseCase(cameos, pending),
+        AttachCameoPhotoUseCase(pending),
+        FakeKeepAlive(),
+        CoroutineScope(SupervisorJob()),
+    ),
 ): MyCameosViewModel {
     val repo = object : CameoRepository by cameos {
         override suspend fun listCameos(cursor: String?): DomainResult<CameoPage> = listCameos(cursor)
@@ -117,6 +130,7 @@ internal fun myCameosVm(
         GetUnfinishedCameosUseCase(pending, cameos),
         DeletePendingCameoUseCase(pending),
         GetCameoUseCase(repo),
+        runner,
     )
 }
 
