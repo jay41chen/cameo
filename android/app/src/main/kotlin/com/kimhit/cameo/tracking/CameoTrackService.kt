@@ -192,6 +192,8 @@ class CameoTrackService : Service() {
             .setContentText("處理中，完成後會通知你")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            // Android 12 以上前景服務通知預設延後約 10 秒顯示；規格要求「處理中」通知全程顯示
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
 
     companion object {
