@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.kimhit.cameo.data"
+    namespace = "io.github.jay41chen.cameo.data"
     compileSdk {
         version = release(37)
     }

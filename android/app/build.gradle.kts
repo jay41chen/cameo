@@ -6,13 +6,13 @@ plugins {
 }
 
 android {
-    namespace = "com.kimhit.cameo"
+    namespace = "io.github.jay41chen.cameo"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.kimhit.cameo"
+        applicationId = "io.github.jay41chen.cameo"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
