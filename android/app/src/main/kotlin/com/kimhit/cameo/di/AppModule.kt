@@ -26,6 +26,7 @@ import com.kimhit.cameo.domain.usecase.UnshareCameoUseCase
 import android.content.Context
 import com.kimhit.cameo.tracking.ServiceSubmissionKeepAlive
 import com.kimhit.cameo.tracking.SubmissionKeepAlive
+import com.kimhit.cameo.submission.SubmissionRunner
 import com.kimhit.cameo.ui.CaptureFiles
 import com.kimhit.cameo.ui.CaptureFilesImpl
 import dagger.Module
@@ -34,6 +35,10 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import java.io.File
+import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -51,6 +56,21 @@ object AppModule {
 
     @Provides
     fun provideSubmissionKeepAlive(impl: ServiceSubmissionKeepAlive): SubmissionKeepAlive = impl
+
+    @Provides
+    @Singleton
+    fun provideSubmissionRunner(
+        confirm: ConfirmCameoUseCase,
+        advance: AdvanceCameoUseCase,
+        attachPhoto: AttachCameoPhotoUseCase,
+        keepAlive: SubmissionKeepAlive,
+    ) = SubmissionRunner(
+        confirm,
+        advance,
+        attachPhoto,
+        keepAlive,
+        CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    )
 
     @Provides
     fun provideGetClips(repository: ClipRepository) = GetClipsUseCase(repository)
