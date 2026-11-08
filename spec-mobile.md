@@ -84,6 +84,7 @@
 
 - 入口：點已送出區 `video_available` 為 true 的列，進「影片」頁；其他狀態的列維持不可點。
 - 進頁時重新查 `GET /v1/cameos/{id}`，分享狀態以後端為準。
+- 進頁重查失敗時：網路錯誤顯示錯誤和「重試」，不顯示播放器；`404 CAMEO_NOT_FOUND` 顯示「找不到這支影片」和「回首頁」，回首頁時刷新列表；查到的狀態不是 `SUCCEEDED` 時，顯示後端 `display` 文字和「回首頁」，不顯示播放器與分享（正常情況下只有 `SUCCEEDED` 的列能點）。
 - 播放：用 Media3 ExoPlayer，沿用現有 OkHttp client 帶登入憑證，播 `GET /v1/cameos/{id}/video`。旋轉後從原位置繼續；進背景時暫停，回來停在原位、不自動播放；不做全螢幕切換。
 - 播放失敗（`404`、網路錯誤）：顯示錯誤和「重試」。
 - 分享：按「分享」一律先呼叫 `PUT /v1/cameos/{id}/share`，用回應的網址開系統分享選單（`ACTION_SEND`）；不拿 `GET` 的 `share.url` 分享，App 不改寫網址、不另外處理剪貼簿。分享中再按一次，拿到同一個網址。debug 版帶 `debug_base_url`，值是 App 自己的 API base；release 版不帶。
@@ -236,7 +237,7 @@ App 用到的其他端點（路徑來自 `README.md`）：
 - `GET /v1/cameos/{id}`
 - `GET /v1/cameos/{id}/video`（第 7 輪）：不存在回 `404 CAMEO_NOT_FOUND`，非 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`
 - `PUT`、`DELETE /v1/cameos/{id}/share`（第 7 輪）：`PUT` 成功回 `200`，非 `SUCCEEDED` 回 `409 NOT_SHAREABLE`，分享中重複 `PUT` 得到同一個 URL；`DELETE` 冪等回 `204`；訂單不存在兩者都回 `404 CAMEO_NOT_FOUND`；`PUT` 可帶 query `debug_base_url`（只在後端 debug 開啟時生效，規則見 `README.md`「影片與分享」，尚未實作）
-- 第 7 輪起播放與分享入口依訂單的 `video_available`（`SUCCEEDED` 時為 true）和 `share`（`{"active":...,"url":...}`）判斷；約定細節見 `README.md`「影片與分享」App 的訂單模型要解析這兩個欄位（尚未實作）。
+- 第 7 輪起播放與分享入口依訂單的 `video_available`（`SUCCEEDED` 時為 true）和 `share`（`{"active":...,"url":...}`）判斷；約定細節見 `README.md`「影片與分享」；App 的訂單模型要解析這兩個欄位（尚未實作）。
 
 ## 6. App 架構（§10）
 

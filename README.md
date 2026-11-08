@@ -307,7 +307,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 ### 影片與分享
 
-以下端點提供影片播放與分享。影片端點 `GET /v1/cameos/{id}/video`，以及 `PUT`／`DELETE /v1/cameos/{id}/share`、`GET /s/{token}`、`GET /s/{token}/video` 都已實作；App 的播放與分享入口尚未實作。
+以下端點提供影片播放與分享。影片端點 `GET /v1/cameos/{id}/video`，以及 `PUT`／`DELETE /v1/cameos/{id}/share`、`GET /s/{token}`、`GET /s/{token}/video` 都已實作；App 的播放與分享入口尚未實作。`PUT` 的 `debug_base_url` 參數尚未實作。
 
 - `GET /v1/cameos/{id}/video`：影片串流，需要 token，支援 `HEAD` 與 Range：單段 Range 已測試（例如 `Range: bytes=0-99` 回 `206`），多段 Range 由標準庫處理、未測試；起點超出檔尾（例如 `bytes=999999999-`）回 `416`，`416` 的 body 是標準庫的純文字，不是通用 JSON 錯誤格式，屬通用格式的例外。不設 `ETag`、`Last-Modified`，帶 `If-Range` 時回整支影片。此端點尚未用真實播放器驗證（App 播放入口尚未實作）。訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
 - `PUT /v1/cameos/{id}/share`：`{"share":{"active":true,"url":"..."}}`，成功一律回 `200`。僅 `SUCCEEDED` 可分享，否則 `409 NOT_SHAREABLE`；訂單不存在回 `404 CAMEO_NOT_FOUND`。分享中重複 PUT 回同一個 URL；取消後再分享會發新 token，舊連結永久失效。
@@ -319,7 +319,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 - `GET`／`HEAD /s/{token}` 與 `/s/{token}/video` 的回應都帶 `Cache-Control: no-store`、`X-Robots-Tag: noindex`、`Referrer-Policy: no-referrer`。例外：`405` 與 `/s/{token}/` 這類未註冊路徑的通用 JSON `404` 不帶；`/s/{token}/video` 的 `416` 不帶 `Cache-Control`，body 是標準庫純文字。
 - 驗證：Agent 以 Claude in Chrome 在桌面 Chrome 自動化驗證 `<video>` 可載入、播放與跳轉（JS 操作、靜音），取消分享後舊連結失效（頁面顯示「找不到這個分享。」、影片回 `404`）。未經真人操作，也未在 App 或模擬器驗證。Range 由自動測試與 curl 驗證，沒有瀏覽器紀錄。資料庫真的斷線時的 HTML `500` 也尚未驗證（目前只用已取消的 context 模擬）。
 - token 以 Go 標準庫 `crypto/rand.Text()` 產生，存在 `cameos.share_token`，`NULL` 代表未分享。
-- 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，把它設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。
+- 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，把它設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。debug 開啟時，`PUT` 可用 `debug_base_url` 覆寫這次回應的網址（見上方，尚未實作）。
 - 範例影片：`backend/assets/sample.mp4`（約 265 KB、H.264、無音軌），所有 `SUCCEEDED` 訂單共用。長度 15 秒、解析度 640×360；畫面是程式產生的動態漸層和 `Cameo sample video` 字樣，沒有第三方素材。
 - 訂單資料的 `video_available` 在 `SUCCEEDED` 時為 `true`；`share` 反映實際分享狀態（`{"active":true,"url":"..."}` 或 `{"active":false,"url":null}`）。App 的播放與分享入口依這兩個欄位判斷。
 
