@@ -24,7 +24,7 @@ docker compose up --build
 | `SELFIE_DIR` | `/data/selfies` | 自拍存放目錄；`docker-compose.yml` 把 named volume `selfies` 掛在這裡，容器重啟後檔案仍在（容器以 `nobody` 執行，目錄在映像檔內已設為可寫） |
 | `MAX_SELFIE_BYTES` | `10485760` | 自拍檔案大小上限（bytes），超過回 `413 SELFIE_TOO_LARGE` |
 | `GENERATION_TTL` | `30m`（compose 預設 `2m`） | 生成期限：送出（轉 `QUEUED`）起算，涵蓋排隊與生成；到期（`<=` 現在）仍未完成的訂單轉 `FAILED`（原因 `TIMEOUT`）並退點。期限在送出時寫入訂單，改設定只影響新訂單，容器重建後才生效。`VENDOR_DELAY_SEC` 調到接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時 |
-| `DEBUG_API_ENABLED` | 程式預設關閉；compose 預設 `true` | 控制 `/debug/*`（見 [`../API.md`](../API.md)「Debug 異常 API」），也控制 `PUT share` 的 `debug_base_url`（見 [`../API.md`](../API.md)「影片與分享」）；只有值為 `true` 才開啟，未開啟時 `/debug/*` 回 `404` |
+| `DEBUG_API_ENABLED` | 程式預設關閉；compose 預設 `true` | 控制 `/debug/*`（含網頁控制台 `/debug/console`，見 [`../API.md`](../API.md)「Debug 異常 API」），也控制 `PUT share` 的 `debug_base_url`（見 [`../API.md`](../API.md)「影片與分享」）；只有值為 `true` 才開啟，未開啟時 `/debug/*` 回 `404` |
 | `PUBLIC_BASE_URL` | `http://localhost:8080`（程式與 compose 相同） | 分享網址的 base，不寫死。預設用電腦瀏覽器開；要在模擬器內開，設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用。不會跟著 `API_PORT` 變動；改 `API_PORT` 時要一起設定，否則分享連結的 port 會錯 |
 | `DISPATCH_SWEEP_INTERVAL` | `2s` | 派工與生成逾時掃描間隔；每個週期先處理逾時、再派工（每次最多 20 筆，`created_at` 由舊到新） |
 | `VENDOR_URL` | `http://localhost:9000`（compose 設為 `http://vendor-sim:9000`） | 廠商的 base URL；派工是對 `{VENDOR_URL}/jobs` 的 `POST`，單次逾時 5 秒 |
@@ -56,7 +56,7 @@ Seed：測試帳號初始 100 點；3 個片段（`c1` 雨夜重逢、`c2` 屋�
 curl -X POST -H "Authorization: Bearer test-token" http://localhost:8080/debug/reset
 ```
 
-成功回 `204`。不會清 App 本機資料。`DEBUG_API_ENABLED` 不是 `true` 時回 `404`，細節見 [`../API.md`](../API.md)「Debug 異常 API」。也可以用 `backend/scripts/fault.sh reset`；登記異常見 [`../API.md`](../API.md)「異常觸發方式」。
+成功回 `204`。不會清 App 本機資料。`DEBUG_API_ENABLED` 不是 `true` 時回 `404`，細節見 [`../API.md`](../API.md)「Debug 異常 API」。也可以用 `backend/scripts/fault.sh reset` 或網頁控制台 `http://localhost:8080/debug/console` 的「重設環境」；登記異常見 [`../API.md`](../API.md)「異常觸發方式」。
 
 快速檢查：
 

@@ -74,6 +74,8 @@ curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
 
 後端啟動後，在專案根目錄用 `backend/scripts/fault.sh` 登記異常，再到 App 上照常客串一次，就會觸發。
 
+也可以用瀏覽器開 `http://localhost:8080/debug/console`：按情境按鈕會填入範例 JSON，可先改參數（例如內容審核拒絕的 `CONTENT_REJECTED`）再按「登記」；頁面也能清空異常、重設環境，並每 3 秒顯示點數、額度和最近 10 筆已送出的訂單。
+
 | 異常 | 指令 | App 上會看到 |
 |---|---|---|
 | 廠商回報失敗 | `backend/scripts/fault.sh vendor-failed` | 失敗通知，點數退還 |
@@ -87,6 +89,7 @@ curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
 - 廠商類的 3 種同時只能登記一種，換別種前先 `clear`。
 - 內容審核拒絕：用自訂 JSON，`{"name":"vendor_failed","params":{"reason":"CONTENT_REJECTED"}}`，存成檔案後執行 `backend/scripts/fault.sh <檔案>.json`。
 - 送出回應遺失：情境檔預設是建單；要測送出，用自訂 JSON `{"name":"response_lost_after_commit","target":"submit"}`，存成檔案後執行 `backend/scripts/fault.sh <檔案>.json`。
+- 控制台只列已送出的訂單；上傳期限已過、上傳中斷的結果要看 App 或 API 回應。改過 port 時，網址換成對應的 port。
 - 每種異常的參數、後端結果與 curl 寫法見 [`API.md`](API.md)「異常觸發方式」。
 
 ## 文件導覽

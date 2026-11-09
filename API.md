@@ -249,11 +249,13 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 已實作 `GET`／`POST`／`DELETE /debug/faults`、`POST /debug/reset`、`POST /debug/faults/consume`，以及 6 種異常的實際觸發。
 
+網頁控制台 `GET /debug/console`：在瀏覽器登記、清空、重設異常，並每 3 秒顯示點數、今日額度、最近 10 筆已送出的訂單和已登記的異常（`GET /v1/cameos` 只回已送出的訂單，所以 `AWAITING_UPLOAD`、`UPLOADED`、`EXPIRED` 不會出現）。只在 `DEBUG_API_ENABLED=true` 時開放，否則和其他 `/debug/*` 一樣回 `404`。開頁面不用 token；頁內 JS 固定帶 `Authorization: Bearer test-token`，同源呼叫既有 API，其他 `/debug/*` 與 `/v1/*` 不帶 token 仍回 `401`。只收 `GET`、`HEAD`，其他方法回 `405`；回應帶 `Cache-Control: no-store`。頁面是嵌進後端的純 HTML/CSS/JS，不載入外部資源；頁面裡的範例 JSON 與 `backend/faults/*.json` 由測試比對一致。驗證程度：Go 測試涵蓋 `200` 與標頭、關閉時 `404`、`POST` 回 `405`、範例 JSON 一致；Docker 實測 `200`、`no-store`、`405`，關閉後 `404`；在 Chrome 實際操作登記、清空、重設、3 秒更新，並在頁面登記 `vendor-failed` 後用 curl 走完一筆訂單，結果為 `FAILED`／`VENDOR_FAILED`／`REFUNDED`；375px 寬不會水平捲動，沒有用真手機測。
+
 驗證程度：自動測試涵蓋上述端點和 6 種異常（`vendor_*` 分別測 `vendor-sim` 與 `consume`，兩者串接只有 Docker 實測）；在 Docker 實測確認 reset、互斥、並存、部分輸入驗證和 6 種異常的觸發。`consume` 的 2 秒逾時只有單元測試，沒有 Docker 實測；App 在這些異常下的表現已在 API 37 模擬器實測，見「異常觸發方式」。`DEBUG_API_ENABLED=false` 已於 Docker 重跑（`/debug/reset`、`/debug/faults`、`consume` 回 `404`，訂單與額度不變；`vendor-sim` 記 log 後照常回呼，訂單 `SUCCEEDED`），開關讀環境變數的判斷沒有自動測試；同名覆蓋和其餘輸入驗證只有自動測試，沒有 Docker 實測。
 
-僅存在於模擬環境，不檢查 App 版本；不做 console 網站。
+僅存在於模擬環境，不檢查 App 版本。
 
-開關與驗證：`/debug/*` 由環境變數 `DEBUG_API_ENABLED` 控制，程式預設關閉，未開啟時回 `404`；`docker-compose.yml` 預設開啟（模擬環境）。開啟時仍需 Bearer token。
+開關與驗證：`/debug/*` 由環境變數 `DEBUG_API_ENABLED` 控制，程式預設關閉，未開啟時回 `404`；`docker-compose.yml` 預設開啟（模擬環境）。開啟時仍需 Bearer token（`GET /debug/console` 頁面本身除外）。
 
 | 方法與路徑 | 說明 |
 |---|---|
@@ -305,8 +307,8 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 在專案根目錄執行：
 
-1. 重設環境：`backend/scripts/fault.sh reset`（也可以直接用 curl：`curl -X POST -H "Authorization: Bearer test-token" localhost:8080/debug/reset`）
-2. 設定異常，其他異常換情境名稱：`backend/scripts/fault.sh vendor-failed`（也可以直接用 curl：`curl -X POST -H "Authorization: Bearer test-token" -H 'Content-Type: application/json' -d @backend/faults/vendor-failed.json localhost:8080/debug/faults`）。`fault.sh` 不帶參數列出所有情境，`list` 看已登記的異常，`clear` 清除；改過 port 時設 `API_PORT`，或用 `API_BASE` 指定完整網址；也可以傳自訂 JSON 檔路徑。
+1. 重設環境：`backend/scripts/fault.sh reset`（也可以直接用 curl：`curl -X POST -H "Authorization: Bearer test-token" localhost:8080/debug/reset`），或用網頁控制台的「重設環境」
+2. 設定異常，其他異常換情境名稱：`backend/scripts/fault.sh vendor-failed`（也可以直接用 curl：`curl -X POST -H "Authorization: Bearer test-token" -H 'Content-Type: application/json' -d @backend/faults/vendor-failed.json localhost:8080/debug/faults`）。`fault.sh` 不帶參數列出所有情境，`list` 看已登記的異常，`clear` 清除；改過 port 時設 `API_PORT`，或用 `API_BASE` 指定完整網址；也可以傳自訂 JSON 檔路徑。也可以在瀏覽器開 `http://localhost:8080/debug/console` 登記（見「Debug 異常 API」）。
 3. 走一筆新訂單（建單、上傳、送出）：
 
    ```bash

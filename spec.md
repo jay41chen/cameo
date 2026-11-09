@@ -139,7 +139,7 @@ stateDiagram-v2
 
 只寫文件、不實作（7 種）：`socket_event_lost`、`upgrade_required`、`server_error`、`slow_network`、`vendor_dispatch_error`、`vendor_out_of_order`、`unknown_status`。
 
-registry 放 adapter 層，提供 debug API。異常用 `GET/POST/DELETE /debug/faults` 設定；`backend/faults/*.json` 每種異常一個檔案，只當 `curl -d @...` 的 body，後端不載入，檔名是異常名稱把底線改成連字號再加 `.json`（例如 `backend/faults/response-lost-after-commit.json`）；另提供 `POST /debug/reset`（清空訂單與異常，重設點數與額度）；不做 console 網站。登記、重設、開關、`POST /debug/faults/consume` 和 6 種異常的實際觸發都已實作，細節見 `API.md`「Debug 異常 API」與 spec-server.md 第 7 節。
+registry 放 adapter 層，提供 debug API。異常用 `GET/POST/DELETE /debug/faults` 設定；`backend/faults/*.json` 每種異常一個檔案，只當 `curl -d @...` 的 body，後端不載入，檔名是異常名稱把底線改成連字號再加 `.json`（例如 `backend/faults/response-lost-after-commit.json`）；另提供 `POST /debug/reset`（清空訂單與異常，重設點數與額度）；另有網頁控制台 `GET /debug/console`（登記、清空、重設異常與看狀態；只在 `DEBUG_API_ENABLED=true` 時開放）。登記、重設、開關、`POST /debug/faults/consume` 和 6 種異常的實際觸發都已實作，細節見 `API.md`「Debug 異常 API」與 spec-server.md 第 7 節。
 
 ## 9. 技術基礎
 

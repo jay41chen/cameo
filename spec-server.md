@@ -13,7 +13,6 @@
   - 位元組續傳
   - 驗證照片來源
   - 正式推播服務
-  - console 網站
   - 登入（使用固定測試帳號與 token）
 
 ## 2. 額度（§3）
@@ -148,7 +147,7 @@
 - **做法（已實作）：** 登記（`GET`／`POST`／`DELETE /debug/faults`）、重設（`POST /debug/reset`）、開關（`DEBUG_API_ENABLED`）、`POST /debug/faults/consume` 和 6 種異常的實際觸發都已實作。`docker-compose.yml` 的 `GENERATION_TTL` 預設已改為 `2m`（8.3）。
   - 生成期限：程式預設 `GENERATION_TTL` 維持 30 分鐘；`docker-compose.yml` 預設 `2m`；期限在送出時寫入訂單，改設定只影響新訂單；`VENDOR_DELAY_SEC` 接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時。
   - registry 放 adapter 層。
-  - 開關：`/debug/*` 由 `DEBUG_API_ENABLED` 控制，程式預設關閉，未開啟回 `404`；`docker-compose.yml` 預設開啟；同時需要 Bearer token。
+  - 開關：`/debug/*` 由 `DEBUG_API_ENABLED` 控制，程式預設關閉，未開啟回 `404`；`docker-compose.yml` 預設開啟；同時需要 Bearer token（`GET /debug/console` 頁面本身除外）。
   - `POST /debug/reset` 回 `204`：清空訂單、點數明細、廠商事件、自拍檔案和異常；餘額回到 seed 的值（不寫死）；片段保留；額度因訂單清空而恢復。重設後才到的廠商回呼照未知 `job_id` 處理（`404 CAMEO_NOT_FOUND`、事件不留），訂單不會復活。自拍檔案只刪被清除訂單對應的檔案，刪除失敗只記 log，仍回 `204`。
   - `GET`／`POST`／`DELETE /debug/faults`：`POST` body `{"name","target","times","params"}`，成功回 `200` 和目前清單；body 是空的、JSON 語法錯誤、尾端有多餘內容、含多個 JSON 值、超過 64 KB、不是合法 UTF-8、或頂層不是物件回 `400 INVALID_REQUEST`，`name`、`times`、`target` 型別錯誤回 `400 INVALID_FAULT`；未知名稱 `400 UNKNOWN_FAULT`，其他參數錯誤 `400 INVALID_FAULT`；`times` 預設 1；`target` 只用於 `response_lost_after_commit`，必填，`create` 或 `submit`；同名覆蓋；`vendor_*` 異常同一時間只允許一種，已有另一種 `vendor_*` 時設定新的回 `400 INVALID_FAULT`，要換就先 `DELETE`，其他異常可並存；`params` 帶不認得的 key，或 `response_lost_after_commit` 以外的異常帶了 `target`，都回 `400 INVALID_FAULT`；`GET` 回 `{"active":[{"name","target","times","params"}],"available":["名稱"]}`（`times` 為剩餘次數），沒有異常時 `active` 為空陣列；`available` 是名稱字串陣列，永遠列出 6 種名稱；`DELETE` 回 `204`；異常存記憶體，重啟清空。
   - 情境檔 `backend/faults/*.json` 每種異常一個，只當 `curl -d @...` 的 body，後端不載入；檔名是異常名稱把底線改成連字號再加 `.json`，例如 `backend/faults/response-lost-after-commit.json`。
