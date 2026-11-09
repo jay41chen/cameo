@@ -4,7 +4,7 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
-/** 對應 spec.md「Room pending_cameos」。確認支付寫入 CREATE／UPLOAD，上傳成功寫入 SUBMIT，送出成功寫入 TRACK。[photoPath] 為 `filesDir/selfies/<key>.jpg`，確認支付時寫入。 */
+/** 對應 spec-mobile.md 第 6 章「Room `pending_cameos`」。確認支付寫入 CREATE／UPLOAD，上傳成功寫入 SUBMIT，送出成功寫入 TRACK。[photoPath] 為 `filesDir/selfies/<key>.jpg`，確認支付時寫入。 */
 @Entity(tableName = "pending_cameos")
 internal data class PendingCameoEntity(
     @PrimaryKey @ColumnInfo(name = "client_request_id") val clientRequestId: String,
