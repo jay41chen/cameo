@@ -13,6 +13,7 @@ import io.github.jay41chen.cameo.domain.usecase.ConfirmCameoUseCase
 import io.github.jay41chen.cameo.domain.usecase.CreatedCameo
 import io.github.jay41chen.cameo.tracking.SubmissionKeepAlive
 import io.github.jay41chen.cameo.tracking.needsTracking
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -40,7 +41,9 @@ private const val RUNNER_TAG = "SubmissionRunner"
  * 程序層級的提交執行者：建單、上傳、送出、轉交追蹤都跑在注入的 [scope]，不依賴畫面或 ViewModel，
  * App 在背景時流程也不會停。畫面只觀察 [confirmState]、[advanceState]。
  *
- * - 同一個 clipId 的 confirm、同一個 clientRequestId 的推進，各自最多一條進行中工作（登記在 [lock] 內原子完成）。
+ * - 同一個 clipId 的 confirm 去重只涵蓋建單階段：建單結果寫入的同一個鎖區塊內就放掉該片段，
+ *   之後同片段可再提交新的一張訂單；推進階段改以 clientRequestId 去重（各自最多一條進行中工作，登記在 [lock] 內原子完成）。
+ * - keepAlive 的 key 每次提交各自獨立（`submit:<clipId>:<序號>`），同片段的兩張訂單不會互相放掉對方的保持。
  * - confirm 成功（非 EXPIRED）後在同一條工作裡直接推進，並把該工作登記為該 clientRequestId 的推進工作。
  * - 工作結束只移除「進行中」登記，最後的狀態保留給之後才來觀察的畫面。
  * - keepAlive 的 release 一定在 `finally`，且在推進與 track 之後。
@@ -59,6 +62,7 @@ class SubmissionRunner(
     private val advanceFlows = mutableMapOf<String, MutableStateFlow<AdvanceRun?>>()
     private val confirmJobs = mutableMapOf<String, Job>()
     private val advanceJobs = mutableMapOf<String, Job>()
+    private val submitSeq = AtomicLong()
 
     private val _finished = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
@@ -88,15 +92,16 @@ class SubmissionRunner(
             val job = scope.launch {
                 synchronized(lock) { } // 等外層登記完成
                 val self = coroutineContext[Job]!!
-                val key = "submit:$clipId"
+                val key = "submit:$clipId:${submitSeq.incrementAndGet()}"
                 var ownedCrid: String? = null
+                var confirmDone = false
                 try {
                     keepAlive.acquire(key)
                     val r = runCatchingResult(
                         { confirmCameo(clipId, photoSourcePath) },
                         { retryableConfirmFailure() },
                     )
-                    // 同一個鎖區塊：先登記推進，最後才寫 Finished；觀察者看到 Finished(success) 時推進已登記
+                    // 同一個鎖區塊：先登記推進，再寫 Finished，接著放掉片段登記並標記 confirmDone；觀察者看到 Finished(success) 時推進已登記
                     synchronized(lock) {
                         if (r is DomainResult.Success && r.value.order.cameo.status != CameoStatus.EXPIRED) {
                             val crid = r.value.clientRequestId
@@ -107,6 +112,9 @@ class SubmissionRunner(
                             }
                         }
                         confirmFlow(clipId).value = ConfirmRun.Finished(r)
+                        // 建單階段結束就放掉片段，推進期間同片段可再提交；只移除自己的登記
+                        if (confirmJobs[clipId] === self) confirmJobs.remove(clipId)
+                        confirmDone = true
                     }
                     ownedCrid?.let { runAdvance(it, null) }
                 } finally {
@@ -114,7 +122,7 @@ class SubmissionRunner(
                     synchronized(lock) {
                         // 被取消或遇到沒被 catch 的 Error 時，狀態仍停在進行中，改寫成可重試的失敗
                         val cf = confirmFlow(clipId)
-                        if (cf.value is ConfirmRun.Running) cf.value = ConfirmRun.Finished(retryableConfirmFailure())
+                        if (!confirmDone && cf.value is ConfirmRun.Running) cf.value = ConfirmRun.Finished(retryableConfirmFailure())
                         ownedCrid?.let { crid ->
                             val af = advanceFlow(crid)
                             if (af.value is AdvanceRun.Working) af.value = AdvanceRun.Finished(retryableAdvanceFailure())

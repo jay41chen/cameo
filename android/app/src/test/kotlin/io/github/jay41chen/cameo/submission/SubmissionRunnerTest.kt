@@ -40,12 +40,13 @@ import org.junit.Test
 
 private const val CAMERA = "/cache/captures/a.jpg"
 
-private fun orderWith(status: CameoStatus, upload: Boolean = false) = CameoOrder(
-    Cameo("u1", Clip("c1", "雨夜重逢", 10), status, "標題", "說明"),
-    if (upload) CameoUpload("/v1/cameos/u1/selfie", "2026-11-07T10:30:00+08:00") else null,
+private fun orderWith(status: CameoStatus, upload: Boolean = false, id: String = "u1") = CameoOrder(
+    Cameo(id, Clip("c1", "雨夜重逢", 10), status, "標題", "說明"),
+    if (upload) CameoUpload("/v1/cameos/$id/selfie", "2026-11-07T10:30:00+08:00") else null,
 )
 
-private fun ok(status: CameoStatus, upload: Boolean = false) = DomainResult.Success(orderWith(status, upload))
+private fun ok(status: CameoStatus, upload: Boolean = false, id: String = "u1") =
+    DomainResult.Success(orderWith(status, upload, id))
 
 private fun fail(retryable: Boolean, code: String? = null) =
     DomainResult.Failure(DomainError(message = "壞了", retryable = retryable, code = code))
@@ -127,7 +128,7 @@ class SubmissionRunnerTest {
         val state = r.advanceState("key-1").value as AdvanceRun.Finished
         assertEquals(CameoStatus.GENERATING, (state.result as AdvanceResult.Done).order.cameo.status)
         assertTrue(r.confirmState("c1").value is ConfirmRun.Finished)
-        assertEquals(listOf("acquire:submit:c1", "track:u1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "track:u1", "release:submit:c1:1"), keepAlive.events)
         assertEquals(listOf("upload", "submit"), repo.calls.filter { it != "get" })
         assertFalse(r.isAdvancing("key-1"))
     }
@@ -147,7 +148,7 @@ class SubmissionRunnerTest {
             val s = r.confirmState("c1").value as ConfirmRun.Finished
             assertEquals(retryable, (s.result as DomainResult.Failure).error.retryable)
             assertTrue(rp.calls.isEmpty())
-            assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), ka.events)
+            assertEquals(listOf("acquire:submit:c1:1", "release:submit:c1:1"), ka.events)
             assertNull(r.advanceState("key-1").value)
         }
     }
@@ -161,7 +162,7 @@ class SubmissionRunnerTest {
         assertTrue(r.confirmState("c1").value is ConfirmRun.Finished)
         assertNull(r.advanceState("key-1").value)
         assertTrue(repo.calls.isEmpty())
-        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "release:submit:c1:1"), keepAlive.events)
     }
 
     @Test
@@ -173,7 +174,7 @@ class SubmissionRunnerTest {
         assertEquals(PHOTO_MISSING, (s.result as DomainResult.Failure).error.code)
         assertTrue(repo.keys.isEmpty())
         assertTrue(repo.calls.isEmpty())
-        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "release:submit:c1:1"), keepAlive.events)
     }
 
     @Test
@@ -191,6 +192,92 @@ class SubmissionRunnerTest {
         assertEquals(1, keepAlive.events.count { it.startsWith("acquire") })
     }
 
+    /** 同一個片段兩張訂單（u1、u2）的 stub：建單、上傳、送出各兩次。 */
+    private fun stubTwoOrders() {
+        for (id in listOf("u1", "u2")) {
+            repo.creates += ok(CameoStatus.AWAITING_UPLOAD, upload = true, id = id)
+            repo.gets[id] = ok(CameoStatus.AWAITING_UPLOAD, upload = true, id = id)
+            repo.uploads += ok(CameoStatus.UPLOADED, id = id)
+            repo.submits += ok(CameoStatus.GENERATING, id = id)
+        }
+    }
+
+    @Test
+    fun `second confirm for same clip during advance creates a second order`() = runTest {
+        stubTwoOrders()
+        gated.uploadGate = CompletableDeferred()
+        val r = runner(bg())
+        r.confirm("c1", CAMERA)
+        advanceUntilIdle()
+        assertTrue(r.isAdvancing("key-1"))
+        r.confirm("c1", CAMERA)
+        advanceUntilIdle()
+        assertEquals(2, repo.keys.size)
+        assertEquals(listOf("key-1", "key-2"), repo.keys)
+        assertTrue(r.isAdvancing("key-2"))
+        gated.uploadGate!!.complete(Unit)
+        advanceUntilIdle()
+        for (k in listOf("key-1", "key-2")) {
+            val f = r.advanceState(k).value as AdvanceRun.Finished
+            assertTrue(f.result is AdvanceResult.Done)
+        }
+    }
+
+    @Test
+    fun `first job ending does not overwrite second confirm running`() = runTest {
+        stubTwoOrders()
+        gated.uploadGate = CompletableDeferred()
+        val r = runner(bg())
+        r.confirm("c1", CAMERA)
+        advanceUntilIdle()
+        assertTrue(r.isAdvancing("key-1"))
+        gated.createGate = CompletableDeferred()
+        r.confirm("c1", CAMERA)
+        advanceUntilIdle()
+        assertEquals(ConfirmRun.Running, r.confirmState("c1").value)
+        gated.uploadGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertTrue((r.advanceState("key-1").value as AdvanceRun.Finished).result is AdvanceResult.Done)
+        assertEquals(ConfirmRun.Running, r.confirmState("c1").value)
+        // 第二張還在建單：第三次 confirm 應被同片段的建單去重擋下
+        val keysBefore = repo.keys.size
+        r.confirm("c1", CAMERA)
+        advanceUntilIdle()
+        assertEquals(keysBefore, repo.keys.size)
+        assertEquals(2, keepAlive.events.count { it.startsWith("acquire:") })
+        gated.createGate!!.complete(Unit)
+        advanceUntilIdle()
+        val f = r.confirmState("c1").value as ConfirmRun.Finished
+        assertTrue(f.result is DomainResult.Success)
+        assertTrue((r.advanceState("key-2").value as AdvanceRun.Finished).result is AdvanceResult.Done)
+    }
+
+    @Test
+    fun `keep alive keys are per submission`() = runTest {
+        stubTwoOrders()
+        gated.uploadGate = CompletableDeferred()
+        val r = runner(bg())
+        r.confirm("c1", CAMERA)
+        advanceUntilIdle()
+        gated.createGate = CompletableDeferred()
+        r.confirm("c1", CAMERA)
+        advanceUntilIdle()
+        val acquired = keepAlive.events.filter { it.startsWith("acquire:") }.map { it.removePrefix("acquire:") }
+        assertEquals(2, acquired.size)
+        assertEquals(2, acquired.toSet().size)
+        val (k1, k2) = acquired
+        gated.uploadGate!!.complete(Unit)
+        advanceUntilIdle()
+        // 第一張結束：它的 key 已放掉，第二張的 key 仍在保持中
+        assertEquals(1, keepAlive.events.count { it == "release:$k1" })
+        assertEquals(0, keepAlive.events.count { it == "release:$k2" })
+        gated.createGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(1, keepAlive.events.count { it == "release:$k1" })
+        assertEquals(1, keepAlive.events.count { it == "release:$k2" })
+        assertEquals(4, keepAlive.events.count { it.startsWith("acquire:") || it.startsWith("release:") })
+    }
+
     @Test
     fun `advance during confirm driven advance does not start another`() = runTest {
         stubHappyPath()
@@ -204,7 +291,7 @@ class SubmissionRunnerTest {
         advanceUntilIdle()
         assertEquals(1, gated.uploadCalls)
         assertTrue((r.advanceState("key-1").value as AdvanceRun.Finished).result is AdvanceResult.Done)
-        assertEquals(listOf("acquire:submit:c1", "track:u1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "track:u1", "release:submit:c1:1"), keepAlive.events)
     }
 
     @Test
@@ -308,7 +395,7 @@ class SubmissionRunnerTest {
         advanceUntilIdle()
         val s = r.confirmState("c1").value as ConfirmRun.Finished
         assertTrue((s.result as DomainResult.Failure).error.retryable)
-        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "release:submit:c1:1"), keepAlive.events)
     }
 
     @Test
@@ -322,7 +409,7 @@ class SubmissionRunnerTest {
         assertTrue(r.isAdvancing("key-1"))
         scope.cancel()
         advanceUntilIdle()
-        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "release:submit:c1:1"), keepAlive.events)
         assertFalse(r.isAdvancing("key-1"))
         // confirm 已成功，被取消的是推進：停在進行中的推進狀態改寫成可重試失敗
         assertTrue((r.confirmState("c1").value as ConfirmRun.Finished).result is DomainResult.Success)
@@ -345,7 +432,7 @@ class SubmissionRunnerTest {
         assertTrue(e.retryable)
         assertNull(e.message)
         assertNull(r.advanceState("key-1").value)
-        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "release:submit:c1:1"), keepAlive.events)
     }
 
     @Test

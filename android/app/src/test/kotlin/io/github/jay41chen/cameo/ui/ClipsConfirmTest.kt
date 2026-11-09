@@ -3,6 +3,7 @@ package io.github.jay41chen.cameo.ui
 import androidx.lifecycle.SavedStateHandle
 import io.github.jay41chen.cameo.domain.model.CameoStatus
 import io.github.jay41chen.cameo.domain.model.CameoOrder
+import io.github.jay41chen.cameo.domain.model.CameoUpload
 import io.github.jay41chen.cameo.domain.model.Clip
 import io.github.jay41chen.cameo.domain.model.DomainError
 import io.github.jay41chen.cameo.domain.model.DomainResult
@@ -291,7 +292,44 @@ class ConfirmViewModelTest {
         vm.confirm()
         assertTrue(runner.confirmState("c1").value is ConfirmRun.Running) // 同步進入執行中
         advanceUntilIdle()
-        assertEquals(listOf("acquire:submit:c1", "track:u1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "track:u1", "release:submit:c1:1"), keepAlive.events)
+    }
+
+    @Test
+    fun newViewModelForSameClip_whileFirstOrderAdvancing_canConfirmAgain() = runTest {
+        cameos.creates.addLast(DomainResult.Success(testOrder(id = "u1")))
+        cameos.creates.addLast(DomainResult.Success(testOrder(id = "u2")))
+        cameos.gets["u2"] = DomainResult.Success(testOrder(CameoStatus.QUEUED, id = "u2"))
+        val vm1 = vm()
+        advanceUntilIdle()
+        // gets 以 QUEUED 回覆，推進只會 track；改用上傳卡住的訂單讓第一張停在推進階段
+        cameos.gets["u1"] = DomainResult.Success(testOrder(CameoStatus.AWAITING_UPLOAD, id = "u1").copy(
+            upload = CameoUpload("/v1/cameos/u1/selfie", "2026-11-07T10:30:00+08:00"),
+        ))
+        cameos.uploads.addLast(DomainResult.Success(testOrder(CameoStatus.UPLOADED, id = "u1")))
+        cameos.submits.addLast(DomainResult.Success(testOrder(CameoStatus.QUEUED, id = "u1")))
+        gated.uploadGate = CompletableDeferred()
+        vm1.confirm()
+        advanceUntilIdle()
+        val first = (vm1.state.value as ConfirmUiState.Created).clientRequestId
+        assertTrue(runner.isAdvancing(first))
+
+        val vm2 = vm()
+        advanceUntilIdle()
+        assertEquals(ConfirmUiState.Ready(clipList[0], submitting = false), vm2.state.value)
+        vm2.confirm()
+        advanceUntilIdle()
+        val second = (vm2.state.value as ConfirmUiState.Created).clientRequestId
+        assertTrue(vm1.state.value is ConfirmUiState.Created)
+        assertEquals(first, (vm1.state.value as ConfirmUiState.Created).clientRequestId)
+        assertTrue(first != second)
+        assertEquals(2, cameos.keys.size)
+        gated.uploadGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(vm1.state.value is ConfirmUiState.Created)
+        assertEquals(first, (vm1.state.value as ConfirmUiState.Created).clientRequestId)
+        assertTrue(vm2.state.value is ConfirmUiState.Created)
+        assertEquals(second, (vm2.state.value as ConfirmUiState.Created).clientRequestId)
     }
 
     @Test
@@ -313,13 +351,13 @@ class ConfirmViewModelTest {
         advanceUntilIdle()
         vm.confirm()
         advanceUntilIdle()
-        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "release:submit:c1:1"), keepAlive.events)
         vm.confirm()
         advanceUntilIdle()
         assertEquals(
             listOf(
-                "acquire:submit:c1", "release:submit:c1",
-                "acquire:submit:c1", "track:u1", "release:submit:c1",
+                "acquire:submit:c1:1", "release:submit:c1:1",
+                "acquire:submit:c1:2", "track:u1", "release:submit:c1:2",
             ),
             keepAlive.events,
         )
@@ -332,7 +370,7 @@ class ConfirmViewModelTest {
         advanceUntilIdle()
         vm.confirm()
         advanceUntilIdle()
-        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "release:submit:c1:1"), keepAlive.events)
     }
 
     @Test
@@ -343,7 +381,7 @@ class ConfirmViewModelTest {
         vm.confirm()
         advanceUntilIdle()
         assertEquals(ConfirmUiState.PhotoMissing, vm.state.value)
-        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "release:submit:c1:1"), keepAlive.events)
     }
 
     @Test
@@ -354,7 +392,7 @@ class ConfirmViewModelTest {
         vm.confirm()
         advanceUntilIdle()
         assertTrue(vm.state.value is ConfirmUiState.Expired)
-        assertEquals(listOf("acquire:submit:c1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "release:submit:c1:1"), keepAlive.events)
     }
 
     @Test
@@ -365,9 +403,9 @@ class ConfirmViewModelTest {
         vm.confirm()
         advanceUntilIdle()
         assertTrue(vm.state.value is ConfirmUiState.Created)
-        assertEquals(listOf("acquire:submit:c1", "track:u1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "track:u1", "release:submit:c1:1"), keepAlive.events)
         clearViewModel(vm)
-        assertEquals(listOf("acquire:submit:c1", "track:u1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "track:u1", "release:submit:c1:1"), keepAlive.events)
     }
 
     @Test
@@ -381,13 +419,13 @@ class ConfirmViewModelTest {
         advanceUntilIdle()
         clearViewModel(vm) // 建單卡住時離開頁面
         advanceUntilIdle()
-        assertEquals(listOf("acquire:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1"), keepAlive.events)
         gate.complete(Unit)
         advanceUntilIdle()
         assertTrue((runner.confirmState("c1").value as ConfirmRun.Finished).result is DomainResult.Success)
         val adv = runner.advanceState("key-1").value as AdvanceRun.Finished
         assertTrue(adv.result is AdvanceResult.Done)
-        assertEquals(listOf("acquire:submit:c1", "track:u1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "track:u1", "release:submit:c1:1"), keepAlive.events)
     }
 
     @Test
@@ -440,7 +478,7 @@ class ConfirmViewModelTest {
         advanceUntilIdle()
         assertEquals(1, gated.getCalls)
         assertTrue(progress.state.value is ProgressUiState.Done)
-        assertEquals(listOf("acquire:submit:c1", "track:u1", "release:submit:c1"), keepAlive.events)
+        assertEquals(listOf("acquire:submit:c1:1", "track:u1", "release:submit:c1:1"), keepAlive.events)
     }
 
     @Test
