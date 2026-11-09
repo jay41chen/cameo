@@ -39,90 +39,115 @@ class AdvanceCameoUseCase(
     ): AdvanceResult {
         val row = pending.get(clientRequestId) ?: return AdvanceResult.Gone
         val cameoId = row.cameoId ?: return AdvanceResult.NotCreated(row.clipId)
-        var photoPath = row.photoPath
-        var rechecks = 0
-        var uploaded = false
-        var submitted = false
-        var current: DomainResult<CameoOrder> = cameos.getCameo(cameoId)
-
-        while (true) {
-            // 失敗統一在這裡分流；成功才往下走狀態判斷
-            val order = when (val r = current) {
-                is DomainResult.Success -> r.value
-                is DomainResult.Failure -> {
-                    val error = r.error
-                    when {
-                        error.code in RECHECK_CODES && rechecks < MAX_RECHECKS -> {
-                            rechecks++
-                            current = cameos.getCameo(cameoId)
-                            continue
-                        }
-                        error.code in PHOTO_REJECTED_CODES -> {
-                            pending.deletePhoto(clientRequestId)
-                            return AdvanceResult.NeedPhoto(row.clipId)
-                        }
-                        error.code == CAMEO_NOT_FOUND -> {
-                            pending.delete(clientRequestId)
-                            return AdvanceResult.Gone
-                        }
-                        else -> {
-                            pending.recordError(clientRequestId, error.message)
-                            return AdvanceResult.Failed(error)
-                        }
-                    }
-                }
-            }
-
-            when (order.cameo.status) {
-                CameoStatus.AWAITING_UPLOAD -> {
-                    val upload = order.upload
-                    // 上傳過一次訂單卻仍是 AWAITING_UPLOAD：不再重傳，避免無限循環（要在缺照片判斷之前，上傳後 photoPath 已清空）
-                    if (uploaded) return unexpected(clientRequestId)
-                    if (photoPath == null || upload == null) return AdvanceResult.NeedPhoto(row.clipId)
-                    onStep(CameoStep.UPLOADING)
-                    current = cameos.uploadSelfie(upload.url, photoPath)
-                    if (current is DomainResult.Success) {
-                        pending.markUploaded(clientRequestId)
-                        photoPath = null
-                        uploaded = true
-                    }
-                }
-                CameoStatus.UPLOADED -> {
-                    if (submitted) return unexpected(clientRequestId)
-                    if (photoPath != null) {
-                        // 上傳回應遺失後當機：後端已收到，本機照片用不到了
-                        pending.deletePhoto(clientRequestId)
-                        photoPath = null
-                    }
-                    onStep(CameoStep.SUBMITTING)
-                    current = cameos.submitCameo(cameoId)
-                    if (current is DomainResult.Success) {
-                        pending.markSubmitted(clientRequestId)
-                        submitted = true
-                    }
-                }
-                CameoStatus.EXPIRED -> {
-                    pending.deletePhoto(clientRequestId)
-                    return AdvanceResult.Expired(order)
-                }
-                CameoStatus.QUEUED,
-                CameoStatus.GENERATING,
-                CameoStatus.SUCCEEDED,
-                CameoStatus.FAILED,
-                -> {
-                    if (photoPath != null) pending.deletePhoto(clientRequestId)
-                    if (!submitted) pending.markSubmitted(clientRequestId)
-                    return AdvanceResult.Done(order)
-                }
-                CameoStatus.UNKNOWN -> return AdvanceResult.Done(order)
-            }
-        }
+        return Run(clientRequestId, row.clipId, cameoId, row.photoPath, onStep).execute()
     }
 
-    private suspend fun unexpected(clientRequestId: String): AdvanceResult.Failed {
-        val error = DomainError(message = null, retryable = true, code = UNEXPECTED_STATE)
-        pending.recordError(clientRequestId, error.message)
-        return AdvanceResult.Failed(error)
+    /** 一次推進的執行狀態：每次 invoke 建一個，跑完就丟，所以同時多次呼叫不會共用狀態。 */
+    private inner class Run(
+        private val clientRequestId: String,
+        private val clipId: String,
+        private val cameoId: String,
+        private var photoPath: String?,
+        private val onStep: (CameoStep) -> Unit,
+    ) {
+        private var rechecks = 0
+        private var uploaded = false
+        private var submitted = false
+
+        suspend fun execute(): AdvanceResult {
+            var current: DomainResult<CameoOrder> = cameos.getCameo(cameoId)
+            while (true) {
+                // 失敗統一在這裡分流；成功才往下走狀態判斷
+                val step = when (val r = current) {
+                    is DomainResult.Success -> nextStep(r.value)
+                    is DomainResult.Failure -> onFailure(r.error)
+                }
+                current = when (step) {
+                    is Step.Call -> step.result
+                    is Step.Stop -> return step.result
+                }
+            }
+        }
+
+        private suspend fun onFailure(error: DomainError): Step = when {
+            error.code in RECHECK_CODES && rechecks < MAX_RECHECKS -> {
+                rechecks++
+                Step.Call(cameos.getCameo(cameoId))
+            }
+            error.code in PHOTO_REJECTED_CODES -> {
+                pending.deletePhoto(clientRequestId)
+                Step.Stop(AdvanceResult.NeedPhoto(clipId))
+            }
+            error.code == CAMEO_NOT_FOUND -> {
+                pending.delete(clientRequestId)
+                Step.Stop(AdvanceResult.Gone)
+            }
+            else -> {
+                pending.recordError(clientRequestId, error.message)
+                Step.Stop(AdvanceResult.Failed(error))
+            }
+        }
+
+        private suspend fun nextStep(order: CameoOrder): Step = when (order.cameo.status) {
+            CameoStatus.AWAITING_UPLOAD -> upload(order)
+            CameoStatus.UPLOADED -> submit()
+            CameoStatus.EXPIRED -> expire(order)
+            CameoStatus.QUEUED,
+            CameoStatus.GENERATING,
+            CameoStatus.SUCCEEDED,
+            CameoStatus.FAILED,
+            -> finish(order)
+            CameoStatus.UNKNOWN -> Step.Stop(AdvanceResult.Done(order))
+        }
+
+        private suspend fun upload(order: CameoOrder): Step {
+            val uploadInfo = order.upload
+            // 上傳過一次訂單卻仍是 AWAITING_UPLOAD：不再重傳，避免無限循環（要在缺照片判斷之前，上傳後 photoPath 已清空）
+            if (uploaded) return unexpected()
+            val path = photoPath
+            if (path == null || uploadInfo == null) return Step.Stop(AdvanceResult.NeedPhoto(clipId))
+            onStep(CameoStep.UPLOADING)
+            val result = cameos.uploadSelfie(uploadInfo.url, path)
+            if (result is DomainResult.Success) {
+                pending.markUploaded(clientRequestId)
+                photoPath = null
+                uploaded = true
+            }
+            return Step.Call(result)
+        }
+
+        private suspend fun submit(): Step {
+            if (submitted) return unexpected()
+            if (photoPath != null) {
+                // 上傳回應遺失後當機：後端已收到，本機照片用不到了
+                pending.deletePhoto(clientRequestId)
+                photoPath = null
+            }
+            onStep(CameoStep.SUBMITTING)
+            val result = cameos.submitCameo(cameoId)
+            if (result is DomainResult.Success) {
+                pending.markSubmitted(clientRequestId)
+                submitted = true
+            }
+            return Step.Call(result)
+        }
+
+        private suspend fun expire(order: CameoOrder): Step {
+            pending.deletePhoto(clientRequestId)
+            return Step.Stop(AdvanceResult.Expired(order))
+        }
+
+        private suspend fun finish(order: CameoOrder): Step {
+            if (photoPath != null) pending.deletePhoto(clientRequestId)
+            if (!submitted) pending.markSubmitted(clientRequestId)
+            return Step.Stop(AdvanceResult.Done(order))
+        }
+
+        private suspend fun unexpected(): Step {
+            val error = DomainError(message = null, retryable = true, code = UNEXPECTED_STATE)
+            pending.recordError(clientRequestId, error.message)
+            return Step.Stop(AdvanceResult.Failed(error))
+        }
     }
 }
 
@@ -131,6 +156,12 @@ private const val UNEXPECTED_STATE = "UNEXPECTED_STATE"
 private const val MAX_RECHECKS = 1
 private val RECHECK_CODES = setOf("UPLOAD_EXPIRED", "INVALID_STATE", "SELFIE_NOT_UPLOADED")
 private val PHOTO_REJECTED_CODES = setOf("INVALID_SELFIE", "SELFIE_TOO_LARGE", PHOTO_MISSING)
+
+/** 每一步的結果：打了一次 API，拿結果進下一圈（[Call]）；或結束並回傳（[Stop]）。 */
+private sealed interface Step {
+    data class Call(val result: DomainResult<CameoOrder>) : Step
+    data class Stop(val result: AdvanceResult) : Step
+}
 
 /** 上傳照片的結果：已附上，或需要重拍／草稿不存在。 */
 sealed interface AttachResult {
