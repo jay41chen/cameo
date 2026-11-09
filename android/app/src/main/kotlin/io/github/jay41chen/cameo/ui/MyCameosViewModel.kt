@@ -31,9 +31,11 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
-private const val POLL_DEBOUNCE_MS = 300L
-private const val POLL_INTERVAL_MS = 3_000L
+private val POLL_DEBOUNCE = 300.milliseconds
+private val POLL_INTERVAL = 3.seconds
 
 /** 輪詢目標：可視（key 在 [visibleKeys]）且還在排隊或生成中的訂單 id。 */
 internal fun pollTargets(items: List<Cameo>, visibleKeys: Set<Any>): List<String> =
@@ -147,10 +149,10 @@ class MyCameosViewModel @Inject constructor(
      */
     suspend fun pollVisible(visibleKeys: Flow<Set<Any>>) {
         visibleKeys.distinctUntilChanged().collectLatest { keys ->
-            delay(POLL_DEBOUNCE_MS)
+            delay(POLL_DEBOUNCE)
             while (true) {
                 pollOnce(keys)
-                delay(POLL_INTERVAL_MS)
+                delay(POLL_INTERVAL)
             }
         }
     }

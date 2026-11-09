@@ -1,5 +1,6 @@
 package io.github.jay41chen.cameo.tracking
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.Service
 import android.content.Context
@@ -28,15 +29,16 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.seconds
 
 internal const val TRACK_TAG = "CameoTrack"
-internal const val POLL_INTERVAL_MS = 10_000L
-private const val HOLD_CHECK_MS = 30_000L
+internal val POLL_INTERVAL = 10.seconds
+private val HOLD_CHECK = 30.seconds
 private const val ONGOING_ID = 1
 private const val EXTRA_CAMEO_ID = "cameoId"
 
 /**
- * 前景服務（dataSync）：每 [POLL_INTERVAL_MS] 用 `getCameo` 查所有追蹤中的訂單，
+ * 前景服務（dataSync）：每 [POLL_INTERVAL] 用 `getCameo` 查所有追蹤中的訂單，
  * 到結束狀態就先認領（刪草稿）、認領成功才發完成通知。全部都用主執行緒（Dispatchers.Main），所以追蹤表不需要鎖。
  * 另外提交期間（確認支付、進度頁上傳與送出）由 [SubmissionKeepAlive] 保持服務存活；上傳與送出由程序層級的 `SubmissionRunner`（`io.github.jay41chen.cameo.submission`）執行，並呼叫 acquire／release／track。
  * 只存在記憶體；程序被殺就不再追蹤、保持也消失（不做持久化）。
@@ -64,9 +66,10 @@ class CameoTrackService : Service() {
         notifier.ensureChannels()
         // startForegroundService 之後必須在時限內呼叫；每次收到命令都呼叫，確保一定有常駐通知
         try {
-            ServiceCompat.startForeground(
-                this, ONGOING_ID, ongoingNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-            )
+            // 常數在編譯時內嵌；ServiceCompat 低於 API 29 時呼叫不帶 type 的 startForeground，會忽略這個值
+            @SuppressLint("InlinedApi")
+            val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            ServiceCompat.startForeground(this, ONGOING_ID, ongoingNotification(), type)
         } catch (e: IllegalStateException) {
             // ForegroundServiceStartNotAllowedException（API 31+）的父類別：App 不在可啟動前景服務的狀態。
             // 不崩潰、不追蹤；回前景時由 ResumeTrackingUseCase 接手
@@ -93,7 +96,7 @@ class CameoTrackService : Service() {
 
     /**
      * 第一次命令後才啟動（此時追蹤表已更新）：保持表被釋放到空且沒有追蹤時結束服務；
-     * 另有逾時 job 每 [HOLD_CHECK_MS] 釋放超過 [HOLD_LIMIT_MS] 的保持。scope 取消時一起停止。
+     * 另有逾時 job 每 [HOLD_CHECK] 釋放超過 [HOLD_LIMIT_MS] 的保持。scope 取消時一起停止。
      */
     private fun startWatchers() {
         if (watchers.isNotEmpty()) return
@@ -105,7 +108,7 @@ class CameoTrackService : Service() {
             },
             scope.launch {
                 while (true) {
-                    delay(HOLD_CHECK_MS)
+                    delay(HOLD_CHECK)
                     val expired = expiredHolds(keepAlive.holds.value, SystemClock.elapsedRealtime())
                     expired.forEach {
                         Log.w(TRACK_TAG, "hold expired key=$it")
@@ -152,7 +155,7 @@ class CameoTrackService : Service() {
                 }
             }
             if (tracked.isEmpty()) break
-            delay(POLL_INTERVAL_MS)
+            delay(POLL_INTERVAL)
         }
         // 保持不空就不停：服務留著，等新的 cameoId 重啟輪詢或保持被釋放
         if (shouldStopService(tracked.isEmpty(), keepAlive.holds.value.isEmpty())) finish()
