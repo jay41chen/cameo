@@ -56,7 +56,7 @@ Seed：測試帳號初始 100 點；3 個片段（`c1` 雨夜重逢、`c2` 屋�
 curl -X POST -H "Authorization: Bearer test-token" http://localhost:8080/debug/reset
 ```
 
-成功回 `204`。不會清 App 本機資料。`DEBUG_API_ENABLED` 不是 `true` 時回 `404`，細節見 [`../API.md`](../API.md)「Debug 異常 API」。
+成功回 `204`。不會清 App 本機資料。`DEBUG_API_ENABLED` 不是 `true` 時回 `404`，細節見 [`../API.md`](../API.md)「Debug 異常 API」。也可以用 `backend/scripts/fault.sh reset`；登記異常見 [`../API.md`](../API.md)「異常觸發方式」。
 
 快速檢查：
 

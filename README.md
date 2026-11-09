@@ -46,6 +46,49 @@ MVP 已完成。Android App 只在 API 37 模擬器驗證，沒有真機；已�
 
    細節見 [`android/README.md`](android/README.md)。
 
+## API 一覽
+
+所有 `/v1` 請求都要帶 `Authorization: Bearer test-token`。參數、回應格式與錯誤碼見 [`API.md`](API.md)。
+
+| 方法與路徑 | 用途 |
+|---|---|
+| `GET /v1/clips` | 片段清單 |
+| `GET /v1/points`、`GET /v1/points/ledger?cursor=` | 點數餘額、點數明細 |
+| `GET /v1/quota` | 今日剩餘次數 |
+| `POST /v1/cameos` | 建單並占用點數（需 `Idempotency-Key`） |
+| `PUT /v1/cameos/{id}/selfie` | 上傳自拍（JPEG） |
+| `POST /v1/cameos/{id}/submit` | 送出並扣點 |
+| `GET /v1/cameos?cursor=`、`GET /v1/cameos/{id}` | 我的客串、單筆訂單 |
+| `GET /v1/cameos/{id}/video` | 觀看影片 |
+| `PUT`、`DELETE /v1/cameos/{id}/share` | 建立、取消分享 |
+| `GET /s/{token}`、`GET /s/{token}/video` | 分享網頁與影片（免登入） |
+| `POST /webhooks/vendor` | 廠商回呼（HMAC 簽章） |
+
+範例：
+
+```
+curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
+```
+
+## 異常觸發
+
+後端啟動後，在專案根目錄用 `backend/scripts/fault.sh` 登記異常，再到 App 上照常客串一次，就會觸發。
+
+| 異常 | 指令 | App 上會看到 |
+|---|---|---|
+| 廠商回報失敗 | `backend/scripts/fault.sh vendor-failed` | 失敗通知，點數退還 |
+| 廠商不回呼 | `backend/scripts/fault.sh vendor-no-callback` | 約 2 分鐘後逾時，失敗通知，點數退還 |
+| 廠商重複回呼 | `backend/scripts/fault.sh vendor-duplicate-callback` | 只有 1 則通知、只扣 1 次 |
+| 上傳中斷 | `backend/scripts/fault.sh upload-interrupted` | 錯誤與「重試」，重試後成功，只扣 1 次 |
+| 上傳期限已過 | `backend/scripts/fault.sh upload-expired` | 顯示「已過期」與「上傳期限已過，點數沒有扣款，請重新客串。」 |
+| 建單回應遺失 | `backend/scripts/fault.sh response-lost-after-commit` | 常被自動重送吸收，看不到錯誤；只扣 1 次 |
+
+- `backend/scripts/fault.sh` 不帶參數會列出所有情境；`reset` 重設環境，`list` 看已登記的異常，`clear` 清除。
+- 廠商類的 3 種同時只能登記一種，換別種前先 `clear`。
+- 內容審核拒絕：用自訂 JSON，`{"name":"vendor_failed","params":{"reason":"CONTENT_REJECTED"}}`，存成檔案後執行 `backend/scripts/fault.sh <檔案>.json`。
+- 送出回應遺失：情境檔預設是建單；要測送出，用自訂 JSON `{"name":"response_lost_after_commit","target":"submit"}`，存成檔案後執行 `backend/scripts/fault.sh <檔案>.json`。
+- 每種異常的參數、後端結果與 curl 寫法見 [`API.md`](API.md)「異常觸發方式」。
+
 ## 文件導覽
 
 | 文件 | 內容 |

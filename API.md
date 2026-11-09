@@ -305,8 +305,8 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 在專案根目錄執行：
 
-1. 重設環境：`curl -X POST -H "Authorization: Bearer test-token" localhost:8080/debug/reset`
-2. 設定異常，其他異常換情境檔：`curl -X POST -H "Authorization: Bearer test-token" -H 'Content-Type: application/json' -d @backend/faults/vendor-failed.json localhost:8080/debug/faults`
+1. 重設環境：`backend/scripts/fault.sh reset`（也可以直接用 curl：`curl -X POST -H "Authorization: Bearer test-token" localhost:8080/debug/reset`）
+2. 設定異常，其他異常換情境名稱：`backend/scripts/fault.sh vendor-failed`（也可以直接用 curl：`curl -X POST -H "Authorization: Bearer test-token" -H 'Content-Type: application/json' -d @backend/faults/vendor-failed.json localhost:8080/debug/faults`）。`fault.sh` 不帶參數列出所有情境，`list` 看已登記的異常，`clear` 清除；改過 port 時設 `API_PORT`，或用 `API_BASE` 指定完整網址；也可以傳自訂 JSON 檔路徑。
 3. 走一筆新訂單（建單、上傳、送出）：
 
    ```bash
