@@ -215,7 +215,7 @@ stateDiagram-v2
 - 後端新增狀態、修改欄位：以向前相容為原則（只新增、不改語意）；破壞性變更走新版本路徑。
 - 調整規則（例如每日上限）：值來自後端設定（`DAILY_LIMIT`）與 `GET /v1/quota` 回應，App 不寫死。
 - 強制更新：後端對低於最低版本的 App 回 `426`（`upgrade_required`），App 顯示強制更新畫面。判斷門檻：已上架版本無法正確處理新契約時（例如金流語意變動）才強制更新。
-- 強制更新的實作視進度可能只寫文件（見 `spec.md` 第 13 節）。
+- 強制更新只寫文件、未實作。
 
 ## 7. 失敗
 
@@ -281,9 +281,9 @@ stateDiagram-v2
 - 首頁入口的權限判斷不存持久的「已請求過」旗標：權限沒開時每次先向系統請求；收到拒絕後，依 `shouldShowRequestPermissionRationale` 決定說明原因或提供「前往設定」（Android 行為為推論，未實測）。
 - 未完成清單與結果入口：已送出的訂單在草稿刪除前就不列在未完成清單（查不到狀態且步驟不是 `TRACK` 時暫時仍會列出；單元測試涵蓋，模擬器尚未實測），結果由「我的客串」頁提供（已實作），點完成通知會開到此頁（已實作，改版後回首頁、不定位單筆；前景在相機、確認、進度頁時，流程頁會結束，進行中的提交由提交執行者繼續完成（改版前在 API 37 模擬器驗過點通知回首頁後由待處理列接續、只扣一次；改版後 API 37 模擬器實測 2/2：點通知時另一筆提交照樣送出並通知，每筆只扣一次點））。進度頁停留時畫面狀態在 ViewModel 內，不受草稿被刪影響；程序被殺、訂單完成後回到 App、導覽還原到進度頁時，草稿或訂單已不存在就回首頁，結果在首頁的已送出區（導覽還原未實測）。
 
-**通知權限檢查（已實作，已在 API 37 模擬器實測，部分入口未涵蓋，見 `VERIFICATION.md`）：** 按 FAB、重新客串或尚未建單的「繼續」時，先檢查「通知可用」，再檢查相機。「通知可用」= `areNotificationsEnabled()` 且「生成結果」頻道 importance 不是 `IMPORTANCE_NONE`（頻道還沒建立視為可用），首頁入口、回前景補發、服務發通知共用同一個判斷。頻道被關而 App 通知開著：一律顯示「前往設定」提示（`ACTION_APP_NOTIFICATION_SETTINGS` 導到 App 通知設定），不請求權限。其餘不可用時，API 33 以上每次先向系統請求，同意後繼續檢查，拒絕時留在首頁，系統還能詢問就說明原因，不能再詢問就顯示「前往設定」與「取消」，從設定回來要再按一次；API 32 以下直接顯示「前往設定」與「取消」。App 開啟時不主動請求；確認頁和進度頁不請求。有 `cameoId` 的訂單（未完成清單的繼續、重試）不擋；還不確定是否建單的 `CREATE` 草稿在首頁按「繼續」時檢查，確認頁不再檢查，代價是通知關著時，這筆可能要等上傳期限才釋放點數。訂單進行中才關通知也不擋，這時收不到通知，草稿保留，開啟 App 時補發。程序被殺後還原到相機或確認頁，或停在流程中才關通知，都不會再檢查通知權限；當下可能收不到通知，恢復後開 App 補發（讀碼推論，未實測）。通知關閉時保留的草稿，若訂單已送出（`QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED`）或查不到狀態但步驟是 `TRACK`，不在未完成清單上（單元測試涵蓋，模擬器尚未實測）；這時也無法從首頁開始新客串，不會累積。查不到狀態且步驟不是 `TRACK` 時仍會列出，顯示「暫時無法取得狀態」，沒有按鈕，查到狀態後依狀態決定是否列出。代價：拒絕通知的人完全不能用客串功能。原因：讓「完成後會通知你」的文字與規格 §7 承諾成立（使用者決定）。
+**通知權限檢查（已實作，部分入口未涵蓋，見 [`VERIFICATION.md`](VERIFICATION.md)）：** 開始新客串前（按 FAB、重新客串、尚未建單的「繼續」）先確認通知可用，不可用就請求或引導到設定，拒絕就留在首頁。已建單的訂單不擋；流程中才關通知也不擋，這時收不到通知，通知恢復可用後開 App 補發。詳細規則見 [`spec-mobile.md`](spec-mobile.md) 第 3 章「通知權限」與第 4 章。代價：拒絕通知的人完全不能用客串功能；尚未確定是否建單的草稿在通知關著時無法繼續，若其實已建單，點數可能要等上傳期限才釋放。原因：讓「完成後會通知你」的承諾成立（使用者決定）。
 
-**SDK 版本的取捨：** 只有 `targetSdk` 用 36（`compileSdk` 為 37，因多個 AndroidX／OkHttp 依賴要求）。`targetSdk` 37 預設封鎖 App 連 `10.0.2.2`（區網位址），要多寫授權流程或手動操作；targetSdk 用 36 才能照 `android/README.md` 直接跑。什麼情況會改變：功能大致完成後再評估是否升 `targetSdk` 37，升級時要補執行時授權。
+**SDK 版本的取捨：** 只有 `targetSdk` 用 36（`compileSdk` 為 37，因多個 AndroidX／OkHttp 依賴要求）。`targetSdk` 37 預設封鎖 App 連 `10.0.2.2`（區網位址），要多寫授權流程或手動操作；targetSdk 用 36 才能照 `android/README.md` 直接跑。什麼情況會改變：之後升 `targetSdk` 37 時，要補執行時授權。
 
 **假設：** PDF 沒定初始點數，模擬後端用 100 點。
 
@@ -309,7 +309,7 @@ stateDiagram-v2
 | 異常 | 為什麼不實作 |
 |---|---|
 | `socket_event_lost` | WebSocket 只寫文件、不實作（使用者決定，見 `spec.md` 第 6 節）；狀態靠回前景和輪詢補回 |
-| `upgrade_required` | `X-App-Version` 與 `426` 未實作；依進度排序，優先做主流程與金流異常（見 `spec.md` 第 13 節） |
+| `upgrade_required` | `X-App-Version` 與 `426` 未實作；依進度排序，優先做主流程與金流異常 |
 | `server_error` | 走一般重試，沒有獨立的金流風險 |
 | `slow_network` | 由逾時和重試涵蓋 |
 | `vendor_dispatch_error` | 結果和 `vendor_failed` 相同，都走退點 |
@@ -322,7 +322,3 @@ stateDiagram-v2
 
 - App（Android）：Kotlin、Jetpack Compose（Material 3、Navigation）、Coroutines／Flow、Hilt、Room、Retrofit + OkHttp、kotlinx.serialization、CameraX、Media3 ExoPlayer；測試用 JUnit、kotlinx-coroutines-test、MockWebServer。
 - 模擬後端：Go（標準庫 `net/http`）、PostgreSQL（pgx）、Docker Compose。
-
-### 實作計畫
-
-排程與砍項順序見 `spec.md` 第 13 節。
