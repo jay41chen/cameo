@@ -354,13 +354,37 @@ class ViewModelTest {
     // ---- refreshLedger ----
 
     @Test
-    fun refreshLedger_whenIdle_replacesFirstPageAndCursor() = runTest {
+    fun refreshLedger_whenIdle_mergesFirstPageAndKeepsLoadedItemsAndCursor() = runTest {
         val fake = FakePoints(
             ArrayDeque(listOf(DomainResult.Success(Points(1, 0)))),
             ArrayDeque(
                 listOf(
-                    DomainResult.Success(LedgerPage(listOf(entry("l1")), "cur1")),
-                    DomainResult.Success(LedgerPage(listOf(entry("l2"), entry("l1")), "cur2")),
+                    DomainResult.Success(LedgerPage(listOf(entry("l3"), entry("l2")), "cur1")),
+                    DomainResult.Success(LedgerPage(listOf(entry("l1")), "cur2")),
+                    DomainResult.Success(LedgerPage(listOf(entry("l4"), entry("l3")), "curX")),
+                ),
+            ),
+        )
+        val vm = pointsVm(fake)
+        advanceUntilIdle()
+        vm.loadMore()
+        advanceUntilIdle()
+        vm.refreshLedger()
+        advanceUntilIdle()
+        assertEquals(listOf("l4", "l3", "l2", "l1"), vm.ledger.value.items.map { it.id })
+        assertEquals("cur2", vm.ledger.value.nextCursor)
+        assertEquals(PagePhase.Idle, vm.ledger.value.phase)
+        assertEquals(listOf<String?>(null, "cur1", null), fake.cursors)
+    }
+
+    @Test
+    fun refreshLedger_noOverlap_replacesWholeListAndCursor() = runTest {
+        val fake = FakePoints(
+            ArrayDeque(listOf(DomainResult.Success(Points(1, 0)))),
+            ArrayDeque(
+                listOf(
+                    DomainResult.Success(LedgerPage(listOf(entry("l2"), entry("l1")), "cur1")),
+                    DomainResult.Success(LedgerPage(listOf(entry("n1")), "curN")),
                 ),
             ),
         )
@@ -368,10 +392,8 @@ class ViewModelTest {
         advanceUntilIdle()
         vm.refreshLedger()
         advanceUntilIdle()
-        assertEquals(listOf("l2", "l1"), vm.ledger.value.items.map { it.id })
-        assertEquals("cur2", vm.ledger.value.nextCursor)
-        assertEquals(PagePhase.Idle, vm.ledger.value.phase)
-        assertEquals(listOf<String?>(null, null), fake.cursors)
+        assertEquals(listOf("n1"), vm.ledger.value.items.map { it.id })
+        assertEquals("curN", vm.ledger.value.nextCursor)
     }
 
     @Test

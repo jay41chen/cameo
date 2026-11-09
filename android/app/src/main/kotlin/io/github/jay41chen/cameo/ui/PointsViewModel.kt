@@ -22,7 +22,7 @@ class PointsViewModel @Inject constructor(
     private val _points = MutableStateFlow<Load<Points>>(Load.Loading)
     val points: StateFlow<Load<Points>> = _points
 
-    private val ledgerList = PagedList<LedgerEntry>(viewModelScope) { getLedgerPage(it) }
+    private val ledgerList = PagedList<LedgerEntry>(viewModelScope, idOf = { it.id }) { getLedgerPage(it) }
     val ledger: StateFlow<PagedUiState<LedgerEntry>> = ledgerList.state
 
     private var pointsJob: Job? = null
@@ -59,7 +59,7 @@ class PointsViewModel @Inject constructor(
 
     fun loadFirstPage() = ledgerList.loadFirstPage()
 
-    /** 回到畫面時靜默刷新明細第一頁（扣點與退點會新增明細）；規則見 [PagedList.refresh]。點數頁忽略 refreshFailed。 */
+    /** 回到畫面時靜默刷新明細第一頁（扣點與退點會新增明細）；依 id 合併，規則見 [PagedList.refresh]。點數頁忽略 refreshFailed。 */
     fun refreshLedger() = ledgerList.refresh()
 
     /** 載入下一頁；沒有下一頁或正在載入時不做事。分頁失敗後呼叫即為重試。 */
