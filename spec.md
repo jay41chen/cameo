@@ -17,10 +17,9 @@
 - 不做取消訂單（可能被洗）。
 - 中斷後從步驟接續；照片整檔重傳（位元組續傳列 backlog，見 `BACKLOG.md`）。
 - 只有相機入口，上傳的是 JPEG 照片（影片不適用）；後端只收 JPEG，以內容前 3 bytes（`FF D8 FF`）判斷、不看 `Content-Type`，不驗證照片來源；裝置驗證（例如平台完整性檢查）只寫文件。
-- App 上傳成功後刪除本機照片；後端訂單結束後刪除自拍，只留浮水印成品。（App 端 4.3 已實作，只有單元測試，尚未在模擬器驗證。）
-- 範例影片（模擬環境）：repo 放一支固定的範例影片，所有 `SUCCEEDED` 訂單共用，App 由 `GET /v1/cameos/{id}/video` 取得，分享頁由免登入的 `GET /s/{token}/video` 取得，都播這一支（影片檔、`GET /v1/cameos/{id}/video` 與 `GET /s/{token}/video` 都已完成）；分享已取消或不存在時，後者回 JSON `404`。不轉檔、不加浮水印、不分訂單產生；範例影片檔案為 `backend/assets/sample.mp4`，畫面是程式產生的動態漸層和 `Cameo sample video` 字樣，沒有第三方素材；範例影片視為成品，正式環境的做法寫在 `ARCHITECTURE.md`。`vendor-sim` 回呼的 `video_url` 只是字串，不提供實際檔案。
-- 「我的客串」（PDF 第 4 點，必做）：列出所有生成過的短片與狀態（含 `display` 文字）。排在第 5.2b 階段（第 5.3 之前）：後端 `GET /v1/cameos?cursor=`、App「我的客串」頁、點通知開這一頁；第 7 輪在此頁加播放和分享入口。目前後端 `GET /v1/cameos?cursor=` 已實作（5.2b-1）；App「我的客串」頁已實作（5.2b-2；改版後是首頁，游標分頁、每次回到前景靜默刷新第一頁，`video_available` 為 true 的列可點進影片頁（第 7 輪已實作），見 `spec-mobile.md` 第 2 章）；點完成通知開此頁已實作（5.2b-3；改版後回首頁並刷新、不定位單筆）。回前景刷新（H2 已實作，單元測試涵蓋，模擬器實測見 `spec-mobile.md` 第 3、4 章）：依 id 合併第一頁，就地更新既有項目、新項目放最前、保留已載入項目與游標；第一頁和現有列表完全沒有重疊時整份取代，這時位置可能改變；刷新失敗不清空列表。已知代價：已載入但不在第一頁的項目不會被更新；不在前景的頁面不輪詢；回前景或資料更新時，若列表頂端在畫面上（只露出一部分也算），而且出現新訂單或待處理列增加，列表自動捲回頂端；列表頂端不在畫面上時不捲動、位置不變，並在底部置中顯示「回到頂端」（列表頂端離開畫面就出現、看得到就消失，點擊回到列表頂端），看到的是最近一次查詢結果。
-- 列表依 id 合併已實作（H2）；「我的客串」成為首頁的改版已完成，API 37 模擬器實測見 `spec-mobile.md` 第 8 章「H9 狀態」，畫面行為見 `spec-mobile.md` 第 2 章。
+- App 上傳成功後刪除本機照片；後端訂單結束後刪除自拍，只留浮水印成品。
+- 範例影片（模擬環境）：repo 放一支固定的範例影片，所有 `SUCCEEDED` 訂單共用，App 由 `GET /v1/cameos/{id}/video` 取得，分享頁由免登入的 `GET /s/{token}/video` 取得，都播這一支；分享已取消或不存在時，後者回 JSON `404`。不轉檔、不加浮水印、不分訂單產生；範例影片檔案為 `backend/assets/sample.mp4`，畫面是程式產生的動態漸層和 `Cameo sample video` 字樣，沒有第三方素材；範例影片視為成品，正式環境的做法寫在 `ARCHITECTURE.md`。`vendor-sim` 回呼的 `video_url` 只是字串，不提供實際檔案。
+- 「我的客串」（PDF 第 4 點，必做）：是 App 首頁，列出所有生成過的短片與狀態（含 `display` 文字），後端 `GET /v1/cameos?cursor=` 游標分頁；`video_available` 為 true 的列可點進影片頁播放與分享；點完成通知回首頁並刷新、不定位單筆。回前景刷新：依 id 合併第一頁，就地更新既有項目、新項目放最前、保留已載入項目與游標；第一頁和現有列表完全沒有重疊時整份取代，這時位置可能改變；刷新失敗不清空列表。已知代價：已載入但不在第一頁的項目不會被更新；不在前景的頁面不輪詢；回前景或資料更新時，若列表頂端在畫面上（只露出一部分也算），而且出現新訂單或待處理列增加，列表自動捲回頂端；列表頂端不在畫面上時不捲動、位置不變，並在底部置中顯示「回到頂端」（列表頂端離開畫面就出現、看得到就消失，點擊回到列表頂端），看到的是最近一次查詢結果。
 - 登入與使用者：假設已用一個測試帳號登入。片段清單與初始點數由模擬後端提供，App 沒有假資料層。
 
 ## 3. 額度
@@ -42,7 +41,7 @@ App 行為：
 - `remaining = 0`：清單上方顯示已用完與重置時間；片段仍可點，點了跳提示，不進確認支付、不建單；未完成的客串不受影響。
 - 建單遇 `429`：顯示後端 `message` 並重新查詢 quota。
 - 與訂單同步時機一起查（開啟 App、回前景），建單後也查。
-- 改版後這些額度顯示在選片段流程頁，重新客串也做同樣檢查（已實作）。
+- 額度顯示在選片段頁，重新客串也做同樣檢查。
 
 測試項目：建單減少、失敗／過期恢復、內容拒絕不恢復、台北午夜重置。
 
@@ -58,7 +57,7 @@ App 行為：
 - 訂單回傳 `points_state`：`HELD`、`CHARGED`、`REFUNDED`、`RELEASED`。
 - 轉為終態、寫入退點／釋放占用、退還額度，都在同一個資料庫交易內完成。
 
-金流要特別測的情境（第 3、4 輪實作）：送出和過期排程同時發生、重複送出只扣一次、占用中不能超額建單。
+金流要特別測的情境：送出和過期排程同時發生、重複送出只扣一次、占用中不能超額建單。
 
 ## 5. 狀態與顯示文字
 
@@ -113,15 +112,14 @@ stateDiagram-v2
 ## 7. 背景完成通知
 
 - 承諾：盡力在 App 位於背景時通知，沒辦法百分之百保證。前景服務不保證存活：強制停止、程序被殺時服務會消失（已實測），廠牌省電與低記憶體未測，也未在真機驗證。服務消失時收不到通知，回到 App 會查詢並補發。上傳或送出還沒成功就被中斷時，訂單不會自己繼續。回到 App 後，還原到進度頁會自動接續，失敗時按「重試」；從待處理列則按「繼續」；只扣一次。一直沒回來時不會生成、不會扣款，已建單的點數占到上傳期限才釋放（到期釋放未實測）；例外是送出請求已到後端、只是 App 沒收到回應，這時訂單仍會生成並扣款（API 37 模擬器實測 1 次：App 顯示錯誤，沒有重試，訂單照樣生成並扣款 1 次）。
-- App 被終止：開啟（回到前景）時補發，且只發一次（已實作，單元測試涵蓋，模擬器實測見 `spec-mobile.md` 第 3、4 章）。對所有有 `cameoId` 的草稿查一次訂單：`SUCCEEDED`／`FAILED` 先刪本機草稿（原子，刪到才算認領）、認領成功就立刻發通知（每筆各自「認領＋通知」，包在不可取消的區塊內）；`QUEUED`／`GENERATING` 重新啟動前景服務追蹤；其他狀態與查詢失敗不動。前景服務到結束狀態也走同一個「先刪草稿、刪成功才發通知」流程，這是「只發一次」的唯一機制。
+- App 被終止：開啟（回到前景）時補發，且只發一次。對所有有 `cameoId` 的草稿查一次訂單：`SUCCEEDED`／`FAILED` 先刪本機草稿（原子，刪到才算認領）、認領成功就立刻發通知（每筆各自「認領＋通知」，包在不可取消的區塊內）；`QUEUED`／`GENERATING` 重新啟動前景服務追蹤；其他狀態與查詢失敗不動。前景服務到結束狀態也走同一個「先刪草稿、刪成功才發通知」流程，這是「只發一次」的唯一機制。
 - 取捨：先刪再發。不會補發（少發，不重發）的情況：認領之後、發通知之前程序被殺（進程中止）；另有回前景判斷「通知可用」到實際認領之間使用者剛好關掉通知的極窄窗口，這時草稿已刪、不補發（讀碼推論，未實測）；協程取消不會少發，因為認領與通知在同一個不可取消區塊。通知不可用（見下方通知權限）時不刪草稿、不通知，等通知可用後開啟 App 再補發。
-- 首頁入口的權限判斷不存持久的「已請求過」旗標：權限沒開時每次先向系統請求；收到拒絕後，依 `shouldShowRequestPermissionRationale` 決定說明原因或提供「前往設定」（Android 行為的模擬器觀察見 `spec-mobile.md` 第 4 章「通知權限」）。
-- 未完成清單與結果入口：已送出的訂單在草稿刪除前就不列在未完成清單（條件見 `spec-mobile.md` 未完成列規則），結果由「我的客串」頁提供（5.2b-2 已實作）；點完成通知會回首頁（5.2b-3 已實作，改版後改為回首頁）：不定位單筆；已在首頁時留在此頁並刷新。點通知一律開「我的客串」（使用者決定）。前景在相機、確認、進度頁時，這些流程頁會結束，等同離開該頁，進行中的上傳或建單會中止，之後從未完成列接續（接續部分驗證，見 `spec-mobile.md` 第 3 章）。改版後：提交執行者會繼續完成，不再中止（已實作；API 37 模擬器實測 2/2：點通知時另一筆提交照樣送出並通知，每筆只扣一次點）。
-- 做法已定案：前景服務（`dataSync`）。App 在使用者按「確認支付」時（建單前）就啟動前景服務，提交成功後每 10 秒查訂單，完成時發本機通知；細節見 `spec-mobile.md` 第 2 章「提交期間的前景服務」（已實作，`9ca3e50`；取捨見 `ARCHITECTURE.md` 第 8 節）。
-- 通知權限（已實作，單元測試涵蓋，模擬器實測見 `spec-mobile.md` 第 3、4 章）：按 FAB、重新客串或尚未建單的「繼續」時，先檢查「通知可用」，再檢查相機。「通知可用」：`areNotificationsEnabled()` 為 true，**且**「生成結果」頻道的 importance 不是 `IMPORTANCE_NONE`（API 26+；頻道還沒建立視為可用）。首頁入口、回前景補發、前景服務發通知前都用同一個判斷。頻道被關（App 通知開著）時一律顯示「前往設定」提示、不跳權限對話框，`ACTION_APP_NOTIFICATION_SETTINGS` 導到 App 通知設定；其餘不可用時，API 33 以上每次先向系統請求，同意後繼續檢查，拒絕時留在首頁，系統還能詢問就說明原因，不能再詢問就顯示「前往設定」與「取消」，從設定回來要再按一次；API 32 以下直接顯示「前往設定」與「取消」。App 開啟時不主動請求；確認頁和進度頁不請求。
-- 有 `cameoId` 的訂單（未完成清單的繼續、重試）不擋；還不確定是否建單的 `CREATE` 草稿（建單請求可能已到伺服器）在首頁按「繼續」時檢查，確認頁不再檢查。代價：通知關著時，這筆可能要等上傳期限才釋放點數。訂單進行中才關通知也不擋，這時收不到通知，草稿保留，開啟 App 時補發。通知關閉時保留的草稿，若訂單已送出（`QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED`）或查不到狀態但步驟是 `TRACK`，不在未完成清單上（H1 已實作，單元測試涵蓋，模擬器實測見 `spec-mobile.md` 第 3、4 章）；這時也無法從首頁開始新客串，不會累積。查不到狀態且步驟不是 `TRACK` 時仍會列出，顯示「暫時無法取得狀態」，沒有按鈕，查到狀態後依狀態決定是否列出。
+- 首頁入口的權限判斷不存持久的「已請求過」旗標：權限沒開時每次先向系統請求；收到拒絕後，依 `shouldShowRequestPermissionRationale` 決定說明原因或提供「前往設定」（Android 行為的模擬器觀察見 `spec-mobile.md` 第 3 章「通知權限」）。
+- 未完成清單與結果入口：已送出的訂單在草稿刪除前就不列在未完成清單（條件見 `spec-mobile.md` 未完成列規則），結果在首頁「我的客串」。點完成通知一律回首頁（使用者決定）：不定位單筆；已在首頁時留在此頁並刷新。點通知時若正在相機、確認或進度頁，這些流程頁會結束；已按「確認支付」的提交由提交執行者繼續完成，不會中止，尚未提交的草稿從待處理區接續。
+- 做法已定案：前景服務（`dataSync`）。App 在使用者按「確認支付」時（建單前）就啟動前景服務，提交成功後每 10 秒查訂單，完成時發本機通知；細節見 `spec-mobile.md` 第 2 章「提交期間的前景服務」（取捨見 `ARCHITECTURE.md` 第 8 節）。
+- 通知權限：按 FAB、重新客串或尚未建單的「繼續」時，先檢查「通知可用」，再檢查相機。「通知可用」：`areNotificationsEnabled()` 為 true，**且**「生成結果」頻道的 importance 不是 `IMPORTANCE_NONE`（API 26+；頻道還沒建立視為可用）。首頁入口、回前景補發、前景服務發通知前都用同一個判斷。頻道被關（App 通知開著）時一律顯示「前往設定」提示、不跳權限對話框，`ACTION_APP_NOTIFICATION_SETTINGS` 導到 App 通知設定；其餘不可用時，API 33 以上每次先向系統請求，同意後繼續檢查，拒絕時留在首頁，系統還能詢問就說明原因，不能再詢問就顯示「前往設定」與「取消」，從設定回來要再按一次；API 32 以下直接顯示「前往設定」與「取消」。App 開啟時不主動請求；確認頁和進度頁不請求。
+- 有 `cameoId` 的訂單（未完成清單的繼續、重試）不擋；還不確定是否建單的 `CREATE` 草稿（建單請求可能已到伺服器）在首頁按「繼續」時檢查，確認頁不再檢查。代價：通知關著時，這筆可能要等上傳期限才釋放點數。訂單進行中才關通知也不擋，這時收不到通知，草稿保留，開啟 App 時補發。通知關閉時保留的草稿，若訂單已送出（`QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED`）或查不到狀態但步驟是 `TRACK`，不在未完成清單上；這時也無法從首頁開始新客串，不會累積。查不到狀態且步驟不是 `TRACK` 時仍會列出，顯示「暫時無法取得狀態」，沒有按鈕，查到狀態後依狀態決定是否列出。
 - 代價：拒絕通知的人完全不能用客串功能。原因：讓進度頁「完成後會通知你」與本節承諾成立（使用者決定）。
-- 確認頁已不再檢查通知（已實作，單元測試涵蓋，模擬器實測見 `spec-mobile.md` 第 3、4 章）。
 - 後端靠廠商 webhook 得知結果；正式推播服務只寫文件，不實作。
 
 ## 8. 異常
@@ -139,110 +137,8 @@ stateDiagram-v2
 
 只寫文件、不實作（7 種）：`socket_event_lost`、`upgrade_required`、`server_error`、`slow_network`、`vendor_dispatch_error`、`vendor_out_of_order`、`unknown_status`。
 
-registry 放 adapter 層，提供 debug API。異常用 `GET/POST/DELETE /debug/faults` 設定；`backend/faults/*.json` 每種異常一個檔案，只當 `curl -d @...` 的 body，後端不載入，檔名是異常名稱把底線改成連字號再加 `.json`（例如 `backend/faults/response-lost-after-commit.json`）；另提供 `POST /debug/reset`（清空訂單與異常，重設點數與額度）；另有網頁控制台 `GET /debug/console`（登記、清空、重設異常與看狀態；只在 `DEBUG_API_ENABLED=true` 時開放）。登記、重設、開關、`POST /debug/faults/consume` 和 6 種異常的實際觸發都已實作，細節見 `API.md`「Debug 異常 API」與 spec-server.md 第 7 節。
+registry 放 adapter 層，提供 debug API。異常用 `GET/POST/DELETE /debug/faults` 設定；`backend/faults/*.json` 每種異常一個檔案，只當 `curl -d @...` 的 body，後端不載入，檔名是異常名稱把底線改成連字號再加 `.json`（例如 `backend/faults/response-lost-after-commit.json`）；另提供 `POST /debug/reset`（清空訂單與異常，重設點數與額度）；另有網頁控制台 `GET /debug/console`（登記、清空、重設異常與看狀態；只在 `DEBUG_API_ENABLED=true` 時開放）。細節見 `API.md`「Debug 異常 API」與 spec-server.md 第 7 節。
 
-## 9. 技術基礎
-
-- 後端：Go、Docker、Postgres、`vendor-sim`（模擬廠商）。
-- Android：Kotlin、Jetpack Compose、Hilt、Room、KSP、OkHttp／Retrofit、CameraX（`1.6.2`，`camera-core`、`camera-camera2`、`camera-lifecycle`、`camera-view`）、Media3。
-- App 與後端都走 Clean Architecture。
-- 廠商 webhook 以 HMAC 驗簽；所有會重送的操作做冪等。
-
-硬性限制：
-
-- 乾淨電腦用一行指令啟動後端，照 README 在模擬器上執行 App。
-- 不依賴個人帳號、金鑰或 Firebase。
-- 設定值（後端網址等）不寫死在畫面。
-- 關鍵邏輯的測試不需啟動 App。
-- 實作一個平台（Android），設計涵蓋 iOS 與 Android。
-
-## 10. App 架構
-
-模組 `:domain` / `:data` / `:app`：
-
-- `:domain`：視為未來可獨立成 repo 的 submodule。只依賴 Kotlin 標準庫和 coroutines，放 usecase、repository 介面與模型；無 `@Inject`；可獨立建置與測試；不用 `java.*`。
-- `:data`：實作預設 `internal`，依功能分資料夾。
-- `:app`：只放 View／ViewModel、組裝（Hilt）、平台實作。
-
-工具鏈（iteration 2 已建置並跑過單元測試與 API 37 模擬器）：Gradle 9.5.0、AGP 9.3.1、Kotlin 2.2.10、Compose BOM 2026.06.01、compileSdk 37、targetSdk 36（多個 AndroidX／OkHttp 依賴要求 compileSdk 至少 37；targetSdk 用 36 的原因見 `ARCHITECTURE.md` 第 8 節）、minSdk 26、JDK 21 toolchain（foojay 自動下載）。Hilt 2.60.1、Room 2.8.5、KSP 2.3.13 可與上述版本一起建置。`kotlinx-serialization` 用 1.9.0：1.12.0 的 metadata 版本高於 Kotlin 2.2.10 編譯器可讀，無法編譯。`kotlin-stdlib` 實際由依賴解析到 2.3.21，`kotlinx-serialization` 維持 1.9.0。
-
-驗收：`:domain` 能獨立建置與測試；`:app` 無法直接使用 `:data` 的實作；Hilt 綁定可建置。
-
-做法：模組邊界、純模型、規則集中、狀態機測試、手動驗證。
-
-### Room `pending_cameos`
-
-每次客串一列：
-
-| 欄位 | 說明 |
-|---|---|
-| `client_request_id` | 主鍵／冪等鍵 |
-| `clip_id` | 片段 |
-| `cameo_id` | 建單後取得 |
-| `step` | `CREATE`、`UPLOAD`、`SUBMIT`、`TRACK` |
-| `photo_path` | 照片在私有目錄；上傳成功刪檔並清空；查到訂單為 `EXPIRED` 時也刪檔並清空（資料列保留，讓使用者看到過期並選擇重新客串或移除） |
-| `last_error` | 最近一次錯誤 |
-| `updated_at` | 更新時間 |
-
-訂單結束（`SUCCEEDED`／`FAILED`）時先以單一 `DELETE ... WHERE cameo_id` 刪除該列（刪到 1 列才算認領），認領成功才發通知；刪列時一併刪本機照片。不是同一交易：通知發出前程序被殺，這則就不會補發。點數、額度、訂單狀態、片段、明細不放 Room。
-
-建單失敗時草稿的處理：
-
-| 錯誤 | 此 key 有訂單嗎 | 草稿 | 畫面 |
-|---|---|---|---|
-| `402`、`429`、`404 CLIP_NOT_FOUND` | 確定沒有（後端查過冪等鍵才回） | 刪除 | 顯示訊息，回片段清單 |
-| `5xx`、網路錯誤、回應遺失 | 不確定 | 保留 | 顯示「重試」，用同一個 key |
-| 其他 `retryable=false`（`400`、`401`、`409`、`426`、非 JSON 4xx） | 不確定 | 保留並記錄錯誤 | 顯示訊息，不顯示重試；未完成列可「繼續」（同一個 key）或「移除」 |
-
-移除後，如果該 key 其實已建單，訂單只占用點數與當日額度、沒有扣款，由後端在上傳期限後釋放。
-
-### App 畫面行為
-
-見 `spec-mobile.md` 第 2 章，已完成，API 37 模擬器實測見 `spec-mobile.md` 第 8 章「H9 狀態」。畫面行為只維護在那份文件。畫面行為有衝突時以該章為準。
-
-## 11. 後端架構
-
-目錄：`backend/internal/{domain,usecase,adapter/{http,postgres,filestore,vendor,realtime},app}`（`realtime` 只寫文件、不實作），`cmd` 負責組裝；測試用的整合測試與資料庫工具在 `backend/test`。以 Go 測試檢查 import 方向。`vendor-sim` 不套分層。
-
-Port 定義在 `usecase`：`TxRunner`、`Tx`、`Queries`、`FileStore`、`VendorClient`、`EventPublisher`、`Clock`（`VendorClient` 已實作於 `adapter/vendor`；`EventPublisher` 只寫文件、不實作）。
-
-```go
-type TxRunner interface {
-    Run(ctx context.Context, fn func(tx Tx) error) error
-}
-```
-
-`FileStore`（自拍檔案）已實作於 `adapter/filestore`（存本機目錄 `SELFIE_DIR`，Docker 以 named volume 掛載；暫存檔與正式檔在同一個檔案系統，用 rename 原子覆蓋）：
-
-```go
-type FileStore interface {
-    WriteTemp(ctx context.Context, r io.Reader) (tempName string, err error)
-    Commit(tempName, cameoID string) error // 原子 rename，覆蓋舊檔
-    Discard(tempName string) error
-    Delete(cameoID string) error           // 不存在不算錯
-}
-```
-
-上傳流程：先查訂單擋掉明顯不能上傳的 → 串流寫暫存檔 → 交易內鎖列、重查狀態與期限、更新狀態並 rename → commit；訂單轉終態的交易 commit 後才刪檔，刪除失敗只記 log。送出同一交易內固定先鎖點數帳戶、再鎖訂單列。逾期判斷（`upload_expires_at <= now`）掃描、上傳、送出共用同一條 SQL 規則。
-
-測試：金流用真實 Postgres；domain 用純 Go 測試；廠商用 fake。
-
-## 12. Backlog
+## 9. Backlog
 
 見 `BACKLOG.md`。
-
-## 13. 開發輪次
-
-每輪都做後端與 App（第 6 輪只做 App）。
-
-| # | 內容 |
-|---|---|
-| 1 | 規格、架構骨架、API 文件 |
-| 2 | Docker、分層骨架、Hilt、片段／點數／明細 |
-| 3 | 建單占用、冪等、上限、額度、確認支付、本機草稿 |
-| 4 | 拍照上傳、送出扣點、接續 |
-| 5 | 回呼退點、進度、背景通知；5.2b「我的客串」、5.3 模擬器實測 |
-| 6 | App 首頁改版 |
-| 7 | 播放、分享 |
-| 8 | 6 種異常的 App 驗證、README |
-| 9 | 文件定稿、全新 clone 總驗收 |

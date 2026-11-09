@@ -1,8 +1,8 @@
 # 客串短劇：後端規格
 
-> 從 `spec.md` 提煉，只含 server side；有衝突時以 `spec.md` 為準。`ARCHITECTURE.md`、`API.md` 仍寫 WebSocket，第 8、9 輪才同步；不一致時以規格為準。App 行為只列會影響後端的部分。`[待確認]` 沿用原標記。
+> 從 `spec.md` 提煉，只含 server side；有衝突時以 `spec.md` 為準。App 行為只列會影響後端的部分。
 
-## 1. 目標與範圍（§1、§2、§9）
+## 1. 目標與範圍（§1、§2）
 
 - **目標：** 網路、App 或廠商出事時，點數不會算錯，結果拿得到，是否分享由觀眾決定。
 - **責任：** 每日上限、浮水印、分享權限都由後端負責，不能交給 App。
@@ -53,7 +53,7 @@
 
 - `SUCCEEDED`、`FAILED`、`EXPIRED` 是終態，先到的為準；晚到或矛盾的回呼只記 log。
 - 逾時後才收到成功回呼：維持 `FAILED`，只記 log。
-- 上傳期限 1 小時，生成期限程式預設 30 分鐘，compose 預設 2 分鐘（8.3 已實作）。
+- 上傳期限 1 小時，生成期限程式預設 30 分鐘，compose 預設 2 分鐘。
 - `failure_reason` 的值：
   - `CONTENT_REJECTED`：退點，不退額度。
   - `VENDOR_FAILED`：廠商回報失敗且原因不是 `CONTENT_REJECTED`；退點也退額度。
@@ -84,7 +84,7 @@
 | `GET /v1/quota` | 額度 | 已實作 |
 | `POST /v1/cameos` | 建單，以 `client_request_id` 作冪等鍵，透過 `Idempotency-Key` header 傳遞（API.md） | 已實作 |
 | `GET /v1/cameos?cursor=` | 只列 `QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED`，每筆含 `display` 文字 | 已實作 |
-| `GET /v1/cameos/{id}` | App 改版後，已送出區可視的 `QUEUED`、`GENERATING` 每 3 秒查一次；背景服務每 10 秒查一次 | 已實作 |
+| `GET /v1/cameos/{id}` | App 已送出區可視的 `QUEUED`、`GENERATING` 每 3 秒查一次；背景服務每 10 秒查一次 | 已實作 |
 | `PUT /v1/cameos/{id}/selfie`（API.md） | 上傳自拍 | 已實作 |
 | `POST /v1/cameos/{id}/submit`（API.md） | 送出 | 已實作 |
 | `POST /webhooks/vendor`（API.md） | 廠商回呼，HMAC 驗簽 | 已實作 |
@@ -94,7 +94,7 @@
 | `GET /s/{token}/video` | 分享頁播放，免登入，回固定範例影片；分享已取消或不存在維持 JSON `404` | 已實作（7.2）。Range `206`、HEAD、免登入；已取消或不存在回 JSON `404`；`sha256` 與範例影片相同 |
 | `GET`、`POST`、`DELETE /debug/faults`、`POST /debug/reset`、`POST /debug/faults/consume`（內部） | 異常觸發與重設；consume 供 vendor-sim 取得異常 | 已實作（8.1 登記與重設、8.2 三種 API 異常、8.3 三種 `vendor_*` 異常與 `POST /debug/faults/consume`）：`DEBUG_API_ENABLED=true` 才註冊（其他值回一般 `404`），需 Bearer token；6 種異常都會真的觸發；`POST /debug/faults/consume` 回 `200`，有 `vendor_*` 異常時扣 1 次並回 `{"fault":{"name","params"}}`，沒有時回 `{"fault":null}`；vendor-sim 由 `VENDOR_FAULTS_URL` 指定端點，逾時 2 秒；`vendor_duplicate_callback` 的 `params.status` 為 `null` 回 `400 INVALID_FAULT`；`vendor_failed` 的 `params.reason` 含 NUL 回 `400 INVALID_FAULT`；`after_bytes` 小於 3 時生效值是 3（內容超過 3 bytes 才中斷），確保內容檢查先執行；固定長度內容要超過生效值才中斷，長度相等會成功且不消耗；同名重複設定為覆蓋（新的排到最後），同時只允許一種 `vendor_*`（另一種回 `400 INVALID_FAULT`，要換先 `DELETE`）；`POST /debug/reset` 清空訂單、明細、廠商事件、自拍與異常，餘額回 `seed_balance`（migration `0007`）。輸入驗證：尾端內容、多個 JSON 值、超過 64 KB、非法 UTF-8、頂層非物件回 `400 INVALID_REQUEST`，`name`／`times`／`target` 型別錯誤回 `400 INVALID_FAULT`，字串但未知的名稱回 `UNKNOWN_FAULT`。實測：rebase 後整合測試（真實 Postgres）與單元測試 186 個 PASS、0 失敗；Docker 確認 reset 後 `remaining` 3、`available` 100，互斥回 `400 INVALID_FAULT`，`vendor_failed` 與 `upload_expired` 可並存，尾端內容 `INVALID_REQUEST`、`times: 1.5` `INVALID_FAULT`、未知名稱 `UNKNOWN_FAULT`，沒 token `401`，consume `404`（8.1 當時尚未實作）。8.2 實測：整合測試（真實 Postgres，連線中斷用 `httptest.NewServer` 真實連線並在伺服器端確認只收到 1 次請求）與單元測試全數 PASS，8 個 mutation 都被測試擋下；Docker 冒煙：`response_lost_after_commit` 的 `create`、`submit` 與 `upload_interrupted` 的 curl 都回 exit 52（連線中斷，無回應），訂單已建立／已扣款，同 `Idempotency-Key` 重送 `200`、點數只占用／扣一次、明細 1 筆 `CHARGE`，中斷的上傳訂單仍 `AWAITING_UPLOAD`、重傳成功；`upload_expired` 先送不合法內容回 `400` 且異常仍在，合法內容回 `410`，訂單 `EXPIRED`／`RELEASED`，`available` 100、`remaining` 3；`after_bytes` 1、2、3 配 3 bytes 內容回 `200`、不消耗，`after_bytes` 3 配 4 bytes 回 exit 52、已消耗，`after_bytes` 100 配 100 bytes 回 `200`、配 101 bytes 回 exit 52。`DEBUG_API_ENABLED=false` 時 `/debug/reset`、`/debug/faults` 回 `404` 且資料不變（8.2 修正後實測）。8.3 實測：單元與整合測試全數 PASS，12 次 mutation 都被測試擋下（其中 `count` 不是 3 時的 `event_id`、consume 逾時、並行重送這 3 次是首審存活後補測試才擋下；consume 完全沒逾時時約 5 秒內斷言失敗）。Docker 冒煙（`VENDOR_DELAY_SEC=1`、TTL 用 compose 預設）：`vendor_failed` 預設轉 `FAILED`／`VENDOR_FAILED`，`available` 100、`remaining` 3；原因設 `CONTENT_REJECTED` 時 `available` 100、`remaining` 2；`vendor_duplicate_callback` 預設 `count` 3 的 `SUCCEEDED` 維持 `SUCCEEDED`，`vendor_events` 2 筆、明細 1 筆 `CHARGE`；`status: FAILED` 轉 `FAILED`，`vendor_events` 2 筆、明細 1 筆 `REFUND`；`vendor_failed` 的 `times: 2` 依序讓兩筆失敗，第三筆成功；`vendor_no_callback` 不回呼，送出後約 121 秒轉 `FAILED`／`TIMEOUT`，`available` 100、`remaining` 3；`DEBUG_API_ENABLED=false` 時 consume 回 `404`，vendor-sim 記 log 後仍正常回呼，訂單 `SUCCEEDED`。consume 逾時只有單元測試涵蓋，Docker 沒有驗。較早的 Docker 冒煙：額度已用完的 volume reset 後 `remaining` 0→3、`available` 70→100 |
 
-**影片與分享約定（已定案；約定都已實作；App 的播放與分享入口已實作，見 `spec-mobile.md` 第 2、8 章）：**
+**影片與分享約定：**
 
 1. `GET /v1/cameos/{id}/video`：訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
 2. `PUT /v1/cameos/{id}/share`：取消後再分享發新 token，舊連結永久失效；分享中重複 PUT 回同一個 URL。成功一律回 `200`。非 `SUCCEEDED` 維持 `409 NOT_SHAREABLE`；訂單不存在回 `404 CAMEO_NOT_FOUND`。`debug_base_url`（query，選用）：只在 `DEBUG_API_ENABLED=true` 時驗證並套用到這次回應的 `share.url`；只接受有 host 的 `http`／`https`，不可帶路徑（尾端只有 `/` 可以）、query、fragment、帳密，空字串也不合格；不合格先回 `400 INVALID_REQUEST`（「debug_base_url 必須是 http 或 https 的 origin」，`retryable=false`），不建立分享。未開啟時完全忽略、不驗證。base 不存進資料庫，token 不受影響，重複 `PUT` 照舊冪等；`GET` 的 `share.url` 維持用 `PUBLIC_BASE_URL`。同一請求帶多個 `debug_base_url` 也回 400；debug 開啟時，query 只要有語法錯誤（例如不合法的 `%` 編碼 `%zz`、用 `;` 分隔）也回 400，即使和這個參數無關，因為解析失敗時無法確定有沒有帶它。debug 關閉時完全不解析 query。base 結尾的 `/` 會去掉；`PUBLIC_BASE_URL` 結尾的 `/` 也會去掉。
@@ -103,9 +103,9 @@
 5. token 以 Go 標準庫 `crypto/rand.Text()` 產生，存在 `cameos.share_token`，`NULL` 代表未分享。
 6. 範例影片：`backend/assets/sample.mp4`（265429 bytes、H.264 Main、yuv420p、無音軌、faststart），15 秒、640×360、30 fps；畫面是程式產生的動態漸層和 `Cameo sample video` 字樣，沒有第三方素材。產生指令見 commit `9f5cbeb`。換影片的做法：換掉這個檔案，並更新測試裡的 sha256 和長度；`gradients` 沒有固定 seed，重新產生也會得到不同檔案，同樣要更新測試。舊檔仍會留在 git 歷史。
 7. 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。debug 開啟時，`PUT` 可用 `debug_base_url` 覆寫這次回應的網址（見第 2 點）。
-8. 第 7 輪起，訂單資料的 `video_available` 在 `SUCCEEDED` 時為 true；`share` 反映實際分享狀態（`{"active":true,"url":"..."}`／`{"active":false,"url":null}`）。App 的播放和分享入口依這兩個欄位判斷。
+8. 訂單資料的 `video_available` 在 `SUCCEEDED` 時為 true；`share` 反映實際分享狀態（`{"active":true,"url":"..."}`／`{"active":false,"url":null}`）。App 的播放和分享入口依這兩個欄位判斷。
 
-**建單錯誤契約（§10，App 依此處理草稿）：**
+**建單錯誤契約（App 依此處理草稿）：**
 
 - `402`、`429`、`404 CLIP_NOT_FOUND`：後端查過冪等鍵才回，保證這個 key 沒有訂單。
 - `5xx`、網路錯誤、回應遺失：不確定是否已建單，App 保留草稿、顯示「重試」，用同一個 key。
@@ -114,14 +114,14 @@
 
 ### WebSocket（§6，只寫文件、不實作）
 
-已決定不實作（見第 9 節第 1 點），以下內容只寫文件。
+已決定不實作，以下內容只寫文件。
 
 - 端點 `GET /v1/events`，只有一種事件：`{"type":"cameo_updated","cameo_id":"..."}`。
 - 交易提交後才發出事件；連線清單放 `api` 記憶體。
 - 事件只是提示，狀態一律以 API 為準。
 - 建議使用 `github.com/coder/websocket`，實作前再確認，引入前須經專案負責人同意。
 
-## 6. 上傳與自拍（§2、§11）
+## 6. 上傳與自拍（§2）
 
 - 只收 JPEG，看內容前 3 bytes（`FF D8 FF`），不看 `Content-Type`，整檔重傳。
 - 上傳流程：
@@ -130,7 +130,7 @@
   3. 在交易內鎖列，重查狀態與期限，更新狀態並 rename。
   4. commit。
 - `FileStore` 存在 `SELFIE_DIR`，以 Docker named volume 掛載，用 rename 原子覆蓋。
-- 訂單結束後刪自拍，只留浮水印成品；訂單轉終態的交易 commit 後才刪，刪除失敗只記 log。
+- 訂單結束後刪自拍，只留浮水印成品（模擬環境不加浮水印，範例影片視為成品）；訂單轉終態的交易 commit 後才刪，刪除失敗只記 log。
 - 送出在同一交易內固定先鎖點數帳戶，再鎖訂單列。
 - 掃描、上傳、送出共用同一條逾期規則：`upload_expires_at <= now`。
 
@@ -144,7 +144,7 @@
   - `vendor_duplicate_callback`
   - `vendor_no_callback`
 - **只寫文件：** `socket_event_lost`、`upgrade_required`、`server_error`、`slow_network`、`vendor_dispatch_error`、`vendor_out_of_order`、`unknown_status`。
-- **做法（已實作）：** 登記（`GET`／`POST`／`DELETE /debug/faults`）、重設（`POST /debug/reset`）、開關（`DEBUG_API_ENABLED`）、`POST /debug/faults/consume` 和 6 種異常的實際觸發都已實作。`docker-compose.yml` 的 `GENERATION_TTL` 預設已改為 `2m`（8.3）。
+- **做法：**
   - 生成期限：程式預設 `GENERATION_TTL` 維持 30 分鐘；`docker-compose.yml` 預設 `2m`；期限在送出時寫入訂單，改設定只影響新訂單；`VENDOR_DELAY_SEC` 接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時。
   - registry 放 adapter 層。
   - 開關：`/debug/*` 由 `DEBUG_API_ENABLED` 控制，程式預設關閉，未開啟回 `404`；`docker-compose.yml` 預設開啟；同時需要 Bearer token（`GET /debug/console` 頁面本身除外）。
@@ -156,18 +156,10 @@
   - vendor-sim 收到新工作時呼叫一次內部端點 `POST /debug/faults/consume`，重送的同一 `job_id` 不再呼叫；查詢失敗當沒有異常、正常回呼並記 log；異常綁定下一個被接受的工作。
   - 六種異常行為：`response_lost_after_commit` 交易提交後中斷連線、不送回應；`upload_interrupted` 的 `params.after_bytes`（預設 1024）：內容超過生效值才中斷連線，暫存檔丟棄、狀態不變，App 看到網路錯誤而非 `408`；登記時接受任何正整數，`GET /debug/faults` 顯示原設定值；小於 3 時生效值是 3，因為要先讀前 3 bytes 檢查是不是 JPEG，內容不合法才能回 `400` 且不消耗異常（取捨：設定 1、2 時，設定值和實際斷線位置有落差；沒選登記時拒絕，是為了不改 API）；固定長度內容超過生效值才中斷，長度相等回 `200` 且不消耗；chunked 不在保證內：最後一段和結尾標記分開抵達（結尾延後 50ms）時，3 bytes（`after_bytes` 3）和 100 bytes（`after_bytes` 100）一次性探針實測（repo 內沒有對應測試）都會中斷並消耗，同時抵達未測；`upload_expired` 作用在下一次上傳或送出請求所指的訂單，把該訂單的上傳期限（`upload_expires_at`）設為現在，走真實的 `410` 與釋放，訂單已不是 `AWAITING_UPLOAD`／`UPLOADED` 時不消耗這次異常，內容檢查仍先於逾期判斷（內容不合法回 `400`／`413`，不是 `410`）；`vendor_failed` 的 `params.reason` 預設空值（記為 `VENDOR_FAILED`），可設 `CONTENT_REJECTED`；`vendor_duplicate_callback` 的 `params.count` 預設 3、`params.status` 預設 `SUCCEEDED`，前 count-1 次同一 `event_id`、最後一次新 `event_id`，預設值會走到兩條去重路徑；`vendor_no_callback` 不回呼，靠 `GENERATION_TTL` 逾時。
 
-## 8. 架構與測試（§9、§11）
+## 8. 架構與測試
 
-- **目錄：** `backend/internal/{domain,usecase,adapter/{http,postgres,filestore,vendor},app}`（`spec.md` 的 `realtime` 不實作，見第 9 節第 1 點），`cmd` 負責組裝，整合測試放 `backend/test`，用 Go 測試檢查 import 方向；`vendor-sim` 不套分層。
+- **目錄：** `backend/internal/{domain,usecase,adapter/{http,postgres,filestore,vendor},app}`（`realtime` 不實作），`cmd` 負責組裝，整合測試放 `backend/test`，用 Go 測試檢查 import 方向；`vendor-sim` 不套分層。
 - **Port：** 定義在 `usecase`，包括 `TxRunner`、`Tx`、`Queries`、`FileStore`、`VendorClient`、`EventPublisher`（不實作）、`Clock`。
 - **冪等：** 所有會重送的操作都要冪等。
 - **測試：** 金流用真實 Postgres，domain 用純 Go 測試，廠商用 fake。
-- **Backlog：** 位元組續傳、自拍 checksum、access／refresh token、自拍鏡射、自拍儲存的崩潰一致性。
-
-## 9. 已解決的規格衝突
-
-1. **WebSocket：** 不實作，只寫文件。
-2. **強制更新：** 不實作，只寫文件。
-3. **輪次：** 第 6 輪是 App 首頁改版，第 7 輪是播放與分享。
-4. **自拍刪除：** 訂單結束（`SUCCEEDED`、`FAILED`、`EXPIRED`）就刪，與 `spec.md` §2 一致。
-5. **浮水印：** 模擬環境不處理浮水印，範例影片視為成品。
+- **Backlog：** 見 `BACKLOG.md`。
