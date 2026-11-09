@@ -14,6 +14,6 @@ internal data class PendingCameoEntity(
     val step: String,
     @ColumnInfo(name = "photo_path") val photoPath: String?,
     @ColumnInfo(name = "last_error") val lastError: String?,
-    /** epoch millis `[待確認]` */
+    /** epoch millis（`System.currentTimeMillis()`，見 [PendingCameoRepositoryImpl]） */
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
 )
