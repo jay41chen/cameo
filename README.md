@@ -101,8 +101,7 @@ curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
 | [`API.md`](API.md) | 後端 API、Debug 異常 API 與異常觸發方式 |
 | [`VERIFICATION.md`](VERIFICATION.md) | 已驗證與未涵蓋的項目 |
 | [`BACKLOG.md`](BACKLOG.md) | MVP 之後的待做項目 |
-| [`spec.md`](spec.md) | 規格 |
-| [`spec-server.md`](spec-server.md) | 後端規格與實作狀態 |
-| [`spec-mobile.md`](spec-mobile.md) | App 規格與實作狀態 |
+| [`spec-server.md`](spec-server.md) | 後端開發規格與實作紀錄 |
+| [`spec-mobile.md`](spec-mobile.md) | App 開發規格與實作紀錄 |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 架構與取捨 |
 | [`AI-LOG.md`](AI-LOG.md) | AI 協作紀錄 |

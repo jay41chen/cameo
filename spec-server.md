@@ -1,10 +1,10 @@
 # 客串短劇：後端規格
 
-> 從 `spec.md` 提煉，只含 server side；有衝突時以 `spec.md` 為準。App 行為只列會影響後端的部分。
+> Server 端規格與實作紀錄，只含後端；App 行為只列會影響後端的部分。設計與取捨見 `ARCHITECTURE.md`，API 欄位見 `API.md`；有衝突時以這兩份為準。
 
-## 1. 目標與範圍（§1、§2）
+## 1. 目標與範圍
 
-- **目標：** 網路、App 或廠商出事時，點數不會算錯，結果拿得到，是否分享由觀眾決定。
+- **目標：** 見 `ARCHITECTURE.md` 第 1 節。
 - **責任：** 每日上限、浮水印、分享權限都由後端負責，不能交給 App。
 - **技術：** Go、Docker、Postgres、`vendor-sim`。
 - **限制：** 乾淨電腦一行指令啟動；不依賴個人帳號、金鑰或 Firebase。
@@ -15,7 +15,7 @@
   - 正式推播服務
   - 登入（使用固定測試帳號與 token）
 
-## 2. 額度（§3）
+## 2. 額度
 
 - 每人每日上限預設 3，由設定值 `DAILY_LIMIT` 決定，以台北時間計算，建單時占用。
 - 失敗或過期都退額度；只有 `CONTENT_REJECTED` 退點不退額度。
@@ -24,7 +24,7 @@
 - 超過上限時建單回 `429`。
 - 必測：建單減少、失敗或過期恢復、內容拒絕不恢復、台北午夜重置。
 
-## 3. 點數（§4）
+## 3. 點數
 
 | 時機 | 點數 | 明細 |
 |---|---|---|
@@ -39,7 +39,7 @@
 - 轉終態、退點或釋放、退額度必須在同一個資料庫交易內完成。
 - 必測：送出與過期排程同時發生、重複送出只扣一次、占用中不能超額建單。
 
-## 4. 訂單狀態（§5）
+## 4. 訂單狀態
 
 | 從 | 到 | 觸發 |
 |---|---|---|
@@ -88,7 +88,7 @@
 | `PUT /v1/cameos/{id}/selfie`（API.md） | 上傳自拍 | 已實作 |
 | `POST /v1/cameos/{id}/submit`（API.md） | 送出 | 已實作 |
 | `POST /webhooks/vendor`（API.md） | 廠商回呼，HMAC 驗簽 | 已實作 |
-| `GET /v1/cameos/{id}/video`（API.md） | 播放，回傳固定範例影片（`spec.md` §2）；訂單不存在或不屬於該使用者回 `404 CAMEO_NOT_FOUND`，存在但非 `SUCCEEDED` 回 `404 VIDEO_NOT_READY` | 已實作（7.1）：SUCCEEDED 回 200／206（Range）、HEAD、`video/mp4`；其他狀態 `404 VIDEO_NOT_READY`；實測（Docker）下載 sha256 與 `sample.mp4` 相符，`Range: bytes=0-99` 回 206、超出檔尾回 416；`video_available` 同步為 true |
+| `GET /v1/cameos/{id}/video`（API.md） | 播放，回傳固定範例影片；訂單不存在或不屬於該使用者回 `404 CAMEO_NOT_FOUND`，存在但非 `SUCCEEDED` 回 `404 VIDEO_NOT_READY` | 已實作（7.1）：SUCCEEDED 回 200／206（Range）、HEAD、`video/mp4`；其他狀態 `404 VIDEO_NOT_READY`；實測（Docker）下載 sha256 與 `sample.mp4` 相符，`Range: bytes=0-99` 回 206、超出檔尾回 416；`video_available` 同步為 true |
 | `PUT`、`DELETE /v1/cameos/{id}/share`（API.md） | 建立與取消分享；`PUT` 成功一律 `200`，非 `SUCCEEDED` 回 `409 NOT_SHAREABLE`；`DELETE` 冪等回 `204`；訂單不存在回 `404 CAMEO_NOT_FOUND`（見下方「影片與分享約定」）；debug 時可帶 query `debug_base_url` 指定分享網址的 base（見下方第 2 點） | 已實作（7.2）。整合測試與 Docker 冒煙通過：非 `SUCCEEDED` 回 `409`、重複 `PUT` 同一網址、`DELETE` 冪等、取消後再分享發新 token。`debug_base_url` 已實作（`51b8dcd`）：整合測試新增 6 個（合法 base 含 IPv6 與尾端 `/`；切換 base 時 token 不變；不合格值 11 筆；多值、`%zz`、`;`；debug 關時一律忽略），`go test -count=1 ./...` 全過；沒有跑 Docker 冒煙。App 端的模擬器結果見 `spec-mobile.md` 第 8 章（分享網址為 `10.0.2.2`，再按一次相同） |
 | `GET /s/{token}`（API.md） | 分享網頁，免登入；已取消或不存在回簡短 HTML 404（通用錯誤格式的例外） | 已實作（7.2）。有效回 `200 text/html`；已取消、不存在、含 NUL 回 HTML `404`；查詢錯誤回 HTML `500` |
 | `GET /s/{token}/video` | 分享頁播放，免登入，回固定範例影片；分享已取消或不存在維持 JSON `404` | 已實作（7.2）。Range `206`、HEAD、免登入；已取消或不存在回 JSON `404`；`sha256` 與範例影片相同 |
@@ -112,7 +112,7 @@
 - 其他 `retryable=false`（`400`、`401`、`409`、`426`、非 JSON 4xx）：不確定是否已建單，App 保留草稿並記錄錯誤、不顯示重試；未完成列可「繼續」（同一個 key）或「移除」。
 - 建單遇 `429` 時 App 顯示後端的 `message`，所以後端錯誤回應要帶 `message` 與 `retryable`。
 
-### WebSocket（§6，只寫文件、不實作）
+### WebSocket（只寫文件、不實作）
 
 已決定不實作，以下內容只寫文件。
 
@@ -121,7 +121,7 @@
 - 事件只是提示，狀態一律以 API 為準。
 - 建議使用 `github.com/coder/websocket`，實作前再確認，引入前須經專案負責人同意。
 
-## 6. 上傳與自拍（§2）
+## 6. 上傳與自拍
 
 - 只收 JPEG，看內容前 3 bytes（`FF D8 FF`），不看 `Content-Type`，整檔重傳。
 - 上傳流程：
@@ -134,7 +134,7 @@
 - 送出在同一交易內固定先鎖點數帳戶，再鎖訂單列。
 - 掃描、上傳、送出共用同一條逾期規則：`upload_expires_at <= now`。
 
-## 7. 異常（§8）
+## 7. 異常
 
 - **要實作（由 debug API 觸發）：**
   - `response_lost_after_commit`
