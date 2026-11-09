@@ -1,6 +1,6 @@
 # 客串短劇：後端規格
 
-> Server 端規格與實作紀錄，只含後端；App 行為只列會影響後端的部分。設計與取捨見 `ARCHITECTURE.md`，API 欄位見 `API.md`；有衝突時以這兩份為準。
+> Server 端規格，只含後端；App 行為只列會影響後端的部分。設計與取捨見 `ARCHITECTURE.md`，API 欄位見 `API.md`；有衝突時以這兩份為準。
 
 ## 1. 目標與範圍
 
@@ -17,11 +17,7 @@
 
 ## 2. 額度
 
-- 每人每日上限預設 3，由設定值 `DAILY_LIMIT` 決定，以台北時間計算，建單時占用。
-- 失敗或過期都退額度；只有 `CONTENT_REJECTED` 退點不退額度。
-- `GET /v1/quota` 回應：
-  `{"remaining":2,"resets_at":"2026-11-07T00:00:00+08:00","display":"今日還可客串 2 次"}`
-- 超過上限時建單回 `429`。
+- 規則見 `ARCHITECTURE.md` 第 3、8 節，API 見 `API.md`「額度」。
 - 必測：建單減少、失敗或過期恢復、內容拒絕不恢復、台北午夜重置。
 
 ## 3. 點數
@@ -34,76 +30,20 @@
 | 送出後失敗 | 退點 | `REFUND` |
 | 送出晚於期限 | 回 `410`，不扣款 | 不寫 |
 
-- `GET /v1/points` 回 `{available, held}`，`available = balance - held`。
-- `points_state` 的值：`HELD`、`CHARGED`、`REFUNDED`、`RELEASED`。
 - 轉終態、退點或釋放、退額度必須在同一個資料庫交易內完成。
 - 必測：送出與過期排程同時發生、重複送出只扣一次、占用中不能超額建單。
 
 ## 4. 訂單狀態
 
-| 從 | 到 | 觸發 |
-|---|---|---|
-| 無 | `AWAITING_UPLOAD` | 建單（占用點數與額度） |
-| `AWAITING_UPLOAD` | `UPLOADED` | 上傳自拍 |
-| `UPLOADED` | `QUEUED` | 送出（扣點） |
-| `QUEUED` | `GENERATING` | 廠商接受工作 |
-| `QUEUED`／`GENERATING` | `SUCCEEDED` | 成功回呼（回呼可能先於「接受」寫入） |
-| `QUEUED`／`GENERATING` | `FAILED` | 失敗回呼或逾時（退點） |
-| `AWAITING_UPLOAD`／`UPLOADED` | `EXPIRED` | 逾時（釋放，無明細） |
-
-- `SUCCEEDED`、`FAILED`、`EXPIRED` 是終態，先到的為準；晚到或矛盾的回呼只記 log。
-- 逾時後才收到成功回呼：維持 `FAILED`，只記 log。
-- 上傳期限 1 小時，生成期限程式預設 30 分鐘，compose 預設 2 分鐘。
-- `failure_reason` 的值：
-  - `CONTENT_REJECTED`：退點，不退額度。
-  - `VENDOR_FAILED`：廠商回報失敗且原因不是 `CONTENT_REJECTED`；退點也退額度。
-  - `TIMEOUT`：生成期限到仍無結果；退點也退額度。
-- 分享狀態獨立於狀態機，只有 `SUCCEEDED` 能分享。
-
-`display` 文字：
-
-| 狀態 | 標題 | 說明 |
-|---|---|---|
-| `AWAITING_UPLOAD` | 等待上傳 | 已占用 N 點，送出後才扣款 |
-| `UPLOADED` | 送出中 | 照片已上傳，尚未扣款 |
-| `QUEUED` | 排隊中 | 完成後會通知你 |
-| `GENERATING` | 生成中 | 完成後會通知你 |
-| `SUCCEEDED` | 已完成 | 你的客串短片完成了 |
-| `FAILED`（`CONTENT_REJECTED`） | 無法生成 | 照片未通過審核，點數已退還，今日次數不退還 |
-| `FAILED`（其他原因） | 生成失敗 | 點數已退還 |
-| `EXPIRED` | 已過期 | 上傳期限已過，點數沒有扣款，請重新客串。 |
-
-不向使用者提示廠商故障。未知狀態用通用文字「處理中」。
+狀態圖與終態規則見 [`ARCHITECTURE.md`](ARCHITECTURE.md) 第 5 節；`failure_reason`、`display` 文字見 [`API.md`](API.md)「訂單資料格式」。
 
 ## 5. API
 
-| 端點 | 需求 | 現況 |
-|---|---|---|
-| `GET /v1/clips`（API.md） | 片段清單由後端提供 | 已實作 |
-| `GET /v1/points`、`GET /v1/points/ledger`（路徑見 API.md） | 點數與明細；初始點數由模擬後端提供 | 已實作 |
-| `GET /v1/quota` | 額度 | 已實作 |
-| `POST /v1/cameos` | 建單，以 `client_request_id` 作冪等鍵，透過 `Idempotency-Key` header 傳遞（API.md） | 已實作 |
-| `GET /v1/cameos?cursor=` | 只列 `QUEUED`、`GENERATING`、`SUCCEEDED`、`FAILED`，每筆含 `display` 文字 | 已實作 |
-| `GET /v1/cameos/{id}` | App 已送出區可視的 `QUEUED`、`GENERATING` 每 3 秒查一次；背景服務每 10 秒查一次 | 已實作 |
-| `PUT /v1/cameos/{id}/selfie`（API.md） | 上傳自拍 | 已實作 |
-| `POST /v1/cameos/{id}/submit`（API.md） | 送出 | 已實作 |
-| `POST /webhooks/vendor`（API.md） | 廠商回呼，HMAC 驗簽 | 已實作 |
-| `GET /v1/cameos/{id}/video`（API.md） | 播放，回傳固定範例影片；訂單不存在或不屬於該使用者回 `404 CAMEO_NOT_FOUND`，存在但非 `SUCCEEDED` 回 `404 VIDEO_NOT_READY` | 已實作（7.1）：SUCCEEDED 回 200／206（Range）、HEAD、`video/mp4`；其他狀態 `404 VIDEO_NOT_READY`；實測（Docker）下載 sha256 與 `sample.mp4` 相符，`Range: bytes=0-99` 回 206、超出檔尾回 416；`video_available` 同步為 true |
-| `PUT`、`DELETE /v1/cameos/{id}/share`（API.md） | 建立與取消分享；`PUT` 成功一律 `200`，非 `SUCCEEDED` 回 `409 NOT_SHAREABLE`；`DELETE` 冪等回 `204`；訂單不存在回 `404 CAMEO_NOT_FOUND`（見下方「影片與分享約定」）；debug 時可帶 query `debug_base_url` 指定分享網址的 base（見下方第 2 點） | 已實作（7.2）。整合測試與 Docker 冒煙通過：非 `SUCCEEDED` 回 `409`、重複 `PUT` 同一網址、`DELETE` 冪等、取消後再分享發新 token。`debug_base_url` 已實作（`51b8dcd`）：整合測試新增 6 個（合法 base 含 IPv6 與尾端 `/`；切換 base 時 token 不變；不合格值 11 筆；多值、`%zz`、`;`；debug 關時一律忽略），`go test -count=1 ./...` 全過；沒有跑 Docker 冒煙。App 端的模擬器結果見 `spec-mobile.md` 第 8 章（分享網址為 `10.0.2.2`，再按一次相同） |
-| `GET /s/{token}`（API.md） | 分享網頁，免登入；已取消或不存在回簡短 HTML 404（通用錯誤格式的例外） | 已實作（7.2）。有效回 `200 text/html`；已取消、不存在、含 NUL 回 HTML `404`；查詢錯誤回 HTML `500` |
-| `GET /s/{token}/video` | 分享頁播放，免登入，回固定範例影片；分享已取消或不存在維持 JSON `404` | 已實作（7.2）。Range `206`、HEAD、免登入；已取消或不存在回 JSON `404`；`sha256` 與範例影片相同 |
-| `GET`、`POST`、`DELETE /debug/faults`、`POST /debug/reset`、`POST /debug/faults/consume`（內部） | 異常觸發與重設；consume 供 vendor-sim 取得異常 | 已實作（8.1 登記與重設、8.2 三種 API 異常、8.3 三種 `vendor_*` 異常與 `POST /debug/faults/consume`）：`DEBUG_API_ENABLED=true` 才註冊（其他值回一般 `404`），需 Bearer token；6 種異常都會真的觸發；`POST /debug/faults/consume` 回 `200`，有 `vendor_*` 異常時扣 1 次並回 `{"fault":{"name","params"}}`，沒有時回 `{"fault":null}`；vendor-sim 由 `VENDOR_FAULTS_URL` 指定端點，逾時 2 秒；`vendor_duplicate_callback` 的 `params.status` 為 `null` 回 `400 INVALID_FAULT`；`vendor_failed` 的 `params.reason` 含 NUL 回 `400 INVALID_FAULT`；`after_bytes` 小於 3 時生效值是 3（內容超過 3 bytes 才中斷），確保內容檢查先執行；固定長度內容要超過生效值才中斷，長度相等會成功且不消耗；同名重複設定為覆蓋（新的排到最後），同時只允許一種 `vendor_*`（另一種回 `400 INVALID_FAULT`，要換先 `DELETE`）；`POST /debug/reset` 清空訂單、明細、廠商事件、自拍與異常，餘額回 `seed_balance`（migration `0007`）。輸入驗證：尾端內容、多個 JSON 值、超過 64 KB、非法 UTF-8、頂層非物件回 `400 INVALID_REQUEST`，`name`／`times`／`target` 型別錯誤回 `400 INVALID_FAULT`，字串但未知的名稱回 `UNKNOWN_FAULT`。實測：rebase 後整合測試（真實 Postgres）與單元測試 186 個 PASS、0 失敗；Docker 確認 reset 後 `remaining` 3、`available` 100，互斥回 `400 INVALID_FAULT`，`vendor_failed` 與 `upload_expired` 可並存，尾端內容 `INVALID_REQUEST`、`times: 1.5` `INVALID_FAULT`、未知名稱 `UNKNOWN_FAULT`，沒 token `401`，consume `404`（8.1 當時尚未實作）。8.2 實測：整合測試（真實 Postgres，連線中斷用 `httptest.NewServer` 真實連線並在伺服器端確認只收到 1 次請求）與單元測試全數 PASS，8 個 mutation 都被測試擋下；Docker 冒煙：`response_lost_after_commit` 的 `create`、`submit` 與 `upload_interrupted` 的 curl 都回 exit 52（連線中斷，無回應），訂單已建立／已扣款，同 `Idempotency-Key` 重送 `200`、點數只占用／扣一次、明細 1 筆 `CHARGE`，中斷的上傳訂單仍 `AWAITING_UPLOAD`、重傳成功；`upload_expired` 先送不合法內容回 `400` 且異常仍在，合法內容回 `410`，訂單 `EXPIRED`／`RELEASED`，`available` 100、`remaining` 3；`after_bytes` 1、2、3 配 3 bytes 內容回 `200`、不消耗，`after_bytes` 3 配 4 bytes 回 exit 52、已消耗，`after_bytes` 100 配 100 bytes 回 `200`、配 101 bytes 回 exit 52。`DEBUG_API_ENABLED=false` 時 `/debug/reset`、`/debug/faults` 回 `404` 且資料不變（8.2 修正後實測）。8.3 實測：單元與整合測試全數 PASS，12 次 mutation 都被測試擋下（其中 `count` 不是 3 時的 `event_id`、consume 逾時、並行重送這 3 次是首審存活後補測試才擋下；consume 完全沒逾時時約 5 秒內斷言失敗）。Docker 冒煙（`VENDOR_DELAY_SEC=1`、TTL 用 compose 預設）：`vendor_failed` 預設轉 `FAILED`／`VENDOR_FAILED`，`available` 100、`remaining` 3；原因設 `CONTENT_REJECTED` 時 `available` 100、`remaining` 2；`vendor_duplicate_callback` 預設 `count` 3 的 `SUCCEEDED` 維持 `SUCCEEDED`，`vendor_events` 2 筆、明細 1 筆 `CHARGE`；`status: FAILED` 轉 `FAILED`，`vendor_events` 2 筆、明細 1 筆 `REFUND`；`vendor_failed` 的 `times: 2` 依序讓兩筆失敗，第三筆成功；`vendor_no_callback` 不回呼，送出後約 121 秒轉 `FAILED`／`TIMEOUT`，`available` 100、`remaining` 3；`DEBUG_API_ENABLED=false` 時 consume 回 `404`，vendor-sim 記 log 後仍正常回呼，訂單 `SUCCEEDED`。consume 逾時只有單元測試涵蓋，Docker 沒有驗。較早的 Docker 冒煙：額度已用完的 volume reset 後 `remaining` 0→3、`available` 70→100 |
+端點、欄位與錯誤碼見 [`API.md`](API.md)，全部已實作；驗證說明見 API.md 各段。
 
 **影片與分享約定：**
 
-1. `GET /v1/cameos/{id}/video`：訂單不存在（或不屬於該使用者）回 `404 CAMEO_NOT_FOUND`；存在但不是 `SUCCEEDED` 回 `404 VIDEO_NOT_READY`。
-2. `PUT /v1/cameos/{id}/share`：取消後再分享發新 token，舊連結永久失效；分享中重複 PUT 回同一個 URL。成功一律回 `200`。非 `SUCCEEDED` 維持 `409 NOT_SHAREABLE`；訂單不存在回 `404 CAMEO_NOT_FOUND`。`debug_base_url`（query，選用）：只在 `DEBUG_API_ENABLED=true` 時驗證並套用到這次回應的 `share.url`；只接受有 host 的 `http`／`https`，不可帶路徑（尾端只有 `/` 可以）、query、fragment、帳密，空字串也不合格；不合格先回 `400 INVALID_REQUEST`（「debug_base_url 必須是 http 或 https 的 origin」，`retryable=false`），不建立分享。未開啟時完全忽略、不驗證。base 不存進資料庫，token 不受影響，重複 `PUT` 照舊冪等；`GET` 的 `share.url` 維持用 `PUBLIC_BASE_URL`。同一請求帶多個 `debug_base_url` 也回 400；debug 開啟時，query 只要有語法錯誤（例如不合法的 `%` 編碼 `%zz`、用 `;` 分隔）也回 400，即使和這個參數無關，因為解析失敗時無法確定有沒有帶它。debug 關閉時完全不解析 query。base 結尾的 `/` 會去掉；`PUBLIC_BASE_URL` 結尾的 `/` 也會去掉。
-3. `DELETE /v1/cameos/{id}/share`：未分享或非 `SUCCEEDED` 的訂單也回 `204`（冪等）；訂單不存在回 `404 CAMEO_NOT_FOUND`。
-4. `GET /s/{token}`：已取消或不存在時回簡短 HTML 404、查詢錯誤時回簡短 HTML 500（都是 API.md 通用錯誤格式的例外）。`GET /s/{token}/video`：已取消或不存在時維持 JSON 404。兩者免登入。`GET`／`HEAD /s/{token}` 與 `/s/{token}/video` 的回應都帶 `Cache-Control: no-store`、`X-Robots-Tag: noindex`、`Referrer-Policy: no-referrer`；例外：`405` 與 `/s/{token}/` 這類未註冊路徑的通用 JSON `404` 不帶，`/s/{token}/video` 的 `416` 不帶 `Cache-Control`，body 是標準庫純文字。
-5. token 以 Go 標準庫 `crypto/rand.Text()` 產生，存在 `cameos.share_token`，`NULL` 代表未分享。
-6. 範例影片：`backend/assets/sample.mp4`（265429 bytes、H.264 Main、yuv420p、無音軌、faststart），15 秒、640×360、30 fps；畫面是程式產生的動態漸層和 `Cameo sample video` 字樣，沒有第三方素材。產生指令見 commit `9f5cbeb`。換影片的做法：換掉這個檔案，並更新測試裡的 sha256 和長度；`gradients` 沒有固定 seed，重新產生也會得到不同檔案，同樣要更新測試。舊檔仍會留在 git 歷史。
-7. 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。debug 開啟時，`PUT` 可用 `debug_base_url` 覆寫這次回應的網址（見第 2 點）。
-8. 訂單資料的 `video_available` 在 `SUCCEEDED` 時為 true；`share` 反映實際分享狀態（`{"active":true,"url":"..."}`／`{"active":false,"url":null}`）。App 的播放和分享入口依這兩個欄位判斷。
+- 範例影片：`backend/assets/sample.mp4`（265429 bytes、H.264 Main、yuv420p、無音軌、faststart），15 秒、640×360、30 fps；畫面是程式產生的動態漸層和 `Cameo sample video` 字樣，沒有第三方素材。產生指令見 commit `9f5cbeb`。換影片的做法：換掉這個檔案，並更新測試裡的 sha256 和長度；`gradients` 沒有固定 seed，重新產生也會得到不同檔案，同樣要更新測試。舊檔仍會留在 git 歷史。
 
 **建單錯誤契約（App 依此處理草稿）：**
 
@@ -136,24 +76,10 @@
 
 ## 7. 異常
 
-- **要實作（由 debug API 觸發）：**
-  - `response_lost_after_commit`
-  - `upload_interrupted`
-  - `upload_expired`
-  - `vendor_failed`
-  - `vendor_duplicate_callback`
-  - `vendor_no_callback`
-- **只寫文件：** `socket_event_lost`、`upgrade_required`、`server_error`、`slow_network`、`vendor_dispatch_error`、`vendor_out_of_order`、`unknown_status`。
+- 異常清單與取捨見 `ARCHITECTURE.md` 第 8 節；觸發方式見 `API.md`「異常觸發方式」。
 - **做法：**
   - 生成期限：程式預設 `GENERATION_TTL` 維持 30 分鐘；`docker-compose.yml` 預設 `2m`；期限在送出時寫入訂單，改設定只影響新訂單；`VENDOR_DELAY_SEC` 接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時。
   - registry 放 adapter 層。
-  - 開關：`/debug/*` 由 `DEBUG_API_ENABLED` 控制，程式預設關閉，未開啟回 `404`；`docker-compose.yml` 預設開啟；同時需要 Bearer token（`GET /debug/console` 頁面本身除外）。
-  - `POST /debug/reset` 回 `204`：清空訂單、點數明細、廠商事件、自拍檔案和異常；餘額回到 seed 的值（不寫死）；片段保留；額度因訂單清空而恢復。重設後才到的廠商回呼照未知 `job_id` 處理（`404 CAMEO_NOT_FOUND`、事件不留），訂單不會復活。自拍檔案只刪被清除訂單對應的檔案，刪除失敗只記 log，仍回 `204`。
-  - `GET`／`POST`／`DELETE /debug/faults`：`POST` body `{"name","target","times","params"}`，成功回 `200` 和目前清單；body 是空的、JSON 語法錯誤、尾端有多餘內容、含多個 JSON 值、超過 64 KB、不是合法 UTF-8、或頂層不是物件回 `400 INVALID_REQUEST`，`name`、`times`、`target` 型別錯誤回 `400 INVALID_FAULT`；未知名稱 `400 UNKNOWN_FAULT`，其他參數錯誤 `400 INVALID_FAULT`；`times` 預設 1；`target` 只用於 `response_lost_after_commit`，必填，`create` 或 `submit`；同名覆蓋；`vendor_*` 異常同一時間只允許一種，已有另一種 `vendor_*` 時設定新的回 `400 INVALID_FAULT`，要換就先 `DELETE`，其他異常可並存；`params` 帶不認得的 key，或 `response_lost_after_commit` 以外的異常帶了 `target`，都回 `400 INVALID_FAULT`；`GET` 回 `{"active":[{"name","target","times","params"}],"available":["名稱"]}`（`times` 為剩餘次數），沒有異常時 `active` 為空陣列；`available` 是名稱字串陣列，永遠列出 6 種名稱；`DELETE` 回 `204`；異常存記憶體，重啟清空。
-  - 情境檔 `backend/faults/*.json` 每種異常一個，只當 `curl -d @...` 的 body，後端不載入；檔名是異常名稱把底線改成連字號再加 `.json`，例如 `backend/faults/response-lost-after-commit.json`。
-  - `vendor_*` 異常的 `times`：每個被接受的工作扣 1，連續套用到接下來 N 個工作，和 `vendor_duplicate_callback` 的 `count` 無關。
-  - `POST /debug/faults/consume` 和其他 `/debug/*` 一樣受 `DEBUG_API_ENABLED` 與 Bearer token 保護，只給 vendor-sim 用。
-  - vendor-sim 收到新工作時呼叫一次內部端點 `POST /debug/faults/consume`，重送的同一 `job_id` 不再呼叫；查詢失敗當沒有異常、正常回呼並記 log；異常綁定下一個被接受的工作。
   - 六種異常行為：`response_lost_after_commit` 交易提交後中斷連線、不送回應；`upload_interrupted` 的 `params.after_bytes`（預設 1024）：內容超過生效值才中斷連線，暫存檔丟棄、狀態不變，App 看到網路錯誤而非 `408`；登記時接受任何正整數，`GET /debug/faults` 顯示原設定值；小於 3 時生效值是 3，因為要先讀前 3 bytes 檢查是不是 JPEG，內容不合法才能回 `400` 且不消耗異常（取捨：設定 1、2 時，設定值和實際斷線位置有落差；沒選登記時拒絕，是為了不改 API）；固定長度內容超過生效值才中斷，長度相等回 `200` 且不消耗；chunked 不在保證內：最後一段和結尾標記分開抵達（結尾延後 50ms）時，3 bytes（`after_bytes` 3）和 100 bytes（`after_bytes` 100）一次性探針實測（repo 內沒有對應測試）都會中斷並消耗，同時抵達未測；`upload_expired` 作用在下一次上傳或送出請求所指的訂單，把該訂單的上傳期限（`upload_expires_at`）設為現在，走真實的 `410` 與釋放，訂單已不是 `AWAITING_UPLOAD`／`UPLOADED` 時不消耗這次異常，內容檢查仍先於逾期判斷（內容不合法回 `400`／`413`，不是 `410`）；`vendor_failed` 的 `params.reason` 預設空值（記為 `VENDOR_FAILED`），可設 `CONTENT_REJECTED`；`vendor_duplicate_callback` 的 `params.count` 預設 3、`params.status` 預設 `SUCCEEDED`，前 count-1 次同一 `event_id`、最後一次新 `event_id`，預設值會走到兩條去重路徑；`vendor_no_callback` 不回呼，靠 `GENERATION_TTL` 逾時。
 
 ## 8. 架構與測試
