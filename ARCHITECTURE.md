@@ -22,7 +22,7 @@
 flowchart LR
   OS[作業系統: 權限/推播/背景執行] <--> App[Android App]
   App -- "REST /v1（作業環境 HTTP／正式環境 HTTPS）" --> API[api 後端]
-  API -- "WebSocket /v1/events 僅提示" --> App
+  API -. "WebSocket /v1/events（僅提示，未實作）" .-> App
   API <--> DB[(Postgres)]
   API -- "交付工作" --> Vendor[外部影片生成廠商 / vendor-sim]
   Vendor -- "HMAC 簽章 webhook" --> API
@@ -55,16 +55,100 @@ flowchart LR
 | 點數使用明細 | 後端提供明細（`CHARGE`、`REFUND`）；App 顯示 | 明細與點數同一交易寫入，避免不一致 `[待確認]` |
 | 照片隱私 | App 上傳成功刪本機照片；後端訂單結束後刪自拍 | 兩邊各自在持有端清理 `[待確認]`。後端在訂單進入終態（`EXPIRED`、`SUCCEEDED`、`FAILED`）的交易提交後刪自拍；送出後到終態之前檔案保留 |
 
+以下時序圖畫主流程：從選片段、確認支付，到完成通知、觀看與分享。
+
+```mermaid
+sequenceDiagram
+  actor U as 使用者
+  participant App as Android App
+  participant API as 後端 api
+  participant DB as Postgres
+  participant V as 廠商 vendor-sim
+  participant F as 朋友的瀏覽器
+
+  U->>App: 選片段、拍照、按確認支付
+  App->>App: 啟動前景服務（建單前）
+  App->>API: POST /v1/cameos（Idempotency-Key）
+  API->>DB: 同一交易建立訂單 AWAITING_UPLOAD 並占用點數
+  API-->>App: 201 訂單
+  App->>API: PUT /v1/cameos/{id}/selfie
+  API->>DB: 交易內更新為 UPLOADED
+  App->>API: POST /v1/cameos/{id}/submit
+  API->>DB: 同一交易扣款 寫 CHARGE 轉 QUEUED
+  API-->>App: 訂單 QUEUED
+  API->>V: POST /jobs（背景掃描派工）
+  V-->>API: 2xx
+  API->>DB: 仍是 QUEUED 才轉 GENERATING
+  loop 前景服務每 10 秒（輪詢到終態才發通知，後端不推送）
+    App->>API: GET /v1/cameos/{id}
+    API-->>App: 訂單狀態
+  end
+  alt 生成成功
+    V->>API: POST /webhooks/vendor（X-Signature，HMAC）
+    API->>DB: 同一交易寫 vendor_events 並轉 SUCCEEDED
+    App->>API: GET /v1/cameos/{id}（前景服務輪詢）
+    API-->>App: SUCCEEDED
+    App->>U: 本機完成通知
+    App->>API: GET /v1/cameos/{id}/video
+    API-->>App: 影片
+    App->>API: PUT /v1/cameos/{id}/share
+    API-->>App: share.url（含 token）
+    U->>F: 把分享連結給朋友
+    F->>API: GET /s/{token}
+    API-->>F: 分享網頁（只播放）
+    F->>API: GET /s/{token}/video
+    API-->>F: 影片
+  else 廠商回報失敗或生成逾時
+    alt 廠商回報失敗
+      V->>API: POST /webhooks/vendor（FAILED，X-Signature）
+    else 生成逾時
+      API->>API: 背景掃描發現逾時
+    end
+    API->>DB: 同一交易寫 REFUND 退點 轉 FAILED
+    App->>API: GET /v1/cameos/{id}（前景服務輪詢）
+    API-->>App: FAILED
+    App->>U: 本機完成通知（例如：生成失敗，點數已退還，文字取自後端 display）
+  end
+```
+
 ## 4. App 內部架構
 
 > 原題：模組怎麼切、依賴方向為何；如果明年要做另一個平台，哪些部分可以不用重新設計。
 
-模組 `:domain` / `:data` / `:app`，依賴方向 `:app` → `:data` → `:domain`（`:app` 只能透過 `:domain` 介面使用資料層）。
+模組 `:domain` / `:data` / `:app`，依賴方向 `:app` → `:data` → `:domain`（`:app` 只能透過 `:domain` 介面使用資料層；例外：影片播放由 `:app` 直接用 `:data` 的連線設定與 OkHttp 串流影片）。
 
 - `:domain`：純 Kotlin（只依賴 Kotlin 標準庫與 coroutines），放 usecase、repository 介面與模型；視為可獨立成 repo 的 submodule；無 `@Inject`；不用 `java.*`。
 - `:data`：repository 實作，預設 `internal`，依功能分資料夾。
 - `:app`：View／ViewModel、Hilt 組裝、平台實作（相機、通知、前景服務等）。
 - 後端同樣走 Clean Architecture：`backend/internal/{domain,usecase,adapter/...,app}`（`app` 提供服務啟動與逾期掃描，`backend/cmd` 負責組裝）與 `backend/test`（整合測試、測試用資料庫工具），Port 在 `usecase`，由 Go 測試檢查 import 方向。
+
+以下分層圖畫 App 各層的呼叫方向與所在模組。
+
+```mermaid
+flowchart TB
+  subgraph APP[":app"]
+    UI["畫面（Compose）"] --> VM[ViewModel]
+    VM --> Runner["提交執行者（程序層級）"]
+    Runner -- "啟動" --> FGS["前景服務 dataSync（追蹤、通知）"]
+    FGS --> Notify[本機通知]
+  end
+  subgraph DOMAIN[":domain"]
+    Iface["usecase 與 repository 介面"]
+  end
+  subgraph DATA[":data"]
+    Repo["Repository 實作"]
+    Client["API client（Retrofit／OkHttp）"]
+    Room[("Room pending_cameos")]
+    Repo --> Client
+    Repo --> Room
+  end
+  VM --> Iface
+  Runner --> Iface
+  FGS --> Iface
+  Repo -. "實作" .-> Iface
+  Client -- "REST /v1" --> Backend[後端 api]
+  VM -. "影片串流（OkHttp，直接用 :data 的連線設定）" .-> Backend
+```
 
 **明年做另一個平台（iOS）可不用重新設計的部分：** 後端與 API 契約、狀態機與點數／額度規則、`:domain` 的規則與模型概念（以 Swift 重新表達）。需重寫的是 View、平台實作（相機、推播、背景任務）。`[待確認]`（iOS 實際重用程度）
 
@@ -77,6 +161,25 @@ flowchart LR
 > 原題：一次客串在整個系統裡的狀態機；App 怎麼拿到最新狀態、多個畫面怎麼保持一致、App 被系統終止後怎麼恢復。
 
 **狀態機：** 見 `spec.md` 第 5 節（`AWAITING_UPLOAD` → `UPLOADED` → `QUEUED` → `GENERATING` → `SUCCEEDED`／`FAILED`；`EXPIRED`）。終態先到為準；轉為終態與點數處理在同一交易。
+
+以下狀態圖畫訂單狀態機與各轉移的點數變化。
+
+```mermaid
+stateDiagram-v2
+  [*] --> AWAITING_UPLOAD: 建單（占用點數與額度）
+  AWAITING_UPLOAD --> UPLOADED: 上傳自拍
+  UPLOADED --> QUEUED: 送出（扣點 CHARGE）
+  QUEUED --> GENERATING: 廠商接受工作
+  GENERATING --> SUCCEEDED: 成功回呼
+  QUEUED --> SUCCEEDED: 成功回呼先於「接受」寫入
+  QUEUED --> FAILED: 失敗回呼／逾時（退點 REFUND）
+  GENERATING --> FAILED: 失敗回呼／逾時（退點 REFUND）
+  AWAITING_UPLOAD --> EXPIRED: 上傳逾時（釋放，無明細）
+  UPLOADED --> EXPIRED: 未送出逾時（釋放，無明細）
+  SUCCEEDED --> [*]
+  FAILED --> [*]
+  EXPIRED --> [*]
+```
 
 **點數狀態：** `points_state` 為 `HELD`（建單占用）、`CHARGED`（送出扣點）、`REFUNDED`（送出後失敗退點）、`RELEASED`（上傳階段過期釋放）。
 
