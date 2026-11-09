@@ -88,6 +88,8 @@ func Handler(svc *usecase.Service, opts ...Option) http.Handler {
 		handleMethods(mux, "/debug/faults", map[string]http.HandlerFunc{http.MethodGet: s.debugListFaults, http.MethodPost: s.debugAddFault, http.MethodDelete: s.debugClearFaults})
 		handleMethods(mux, "/debug/faults/consume", map[string]http.HandlerFunc{http.MethodPost: s.debugConsumeFault})
 		handleMethods(mux, "/debug/reset", map[string]http.HandlerFunc{http.MethodPost: s.debugReset})
+		// 控制台頁免 token（瀏覽器直接開網址不會帶 Authorization）；頁面內的 fetch 自帶 token。
+		handlePublic(mux, "/debug/console", map[string]http.HandlerFunc{http.MethodGet: s.debugConsole})
 	}
 	if len(s.webhookSecret) > 0 {
 		mux.HandleFunc("POST /webhooks/vendor", s.vendorWebhook)

@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cameo 除錯控制台</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; margin: 0; padding: 12px; background: #f5f5f7; color: #222; max-width: 960px; margin-inline: auto; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  section { background: #fff; border-radius: 8px; padding: 12px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  button { font: inherit; padding: 6px 10px; margin: 2px 4px 2px 0; border: 1px solid #888; border-radius: 6px; background: #fafafa; cursor: pointer; }
+  button.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  button.danger { background: #d93025; color: #fff; border-color: #d93025; }
+  textarea { width: 100%; min-height: 90px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  pre { background: #f0f0f0; padding: 8px; border-radius: 6px; white-space: pre-wrap; word-break: break-all; margin: 6px 0; font-size: 13px; }
+  .scenario { margin: 4px 0; }
+  .scenario small { color: #555; display: block; margin-left: 2px; }
+  .err { color: #d93025; font-weight: bold; }
+  .ok { color: #188038; font-weight: bold; }
+  .muted { color: #666; font-size: 13px; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border-bottom: 1px solid #ddd; padding: 4px 6px; text-align: left; white-space: nowrap; }
+  .kv span { display: inline-block; margin-right: 16px; }
+</style>
+</head>
+<body>
+<h1>Cameo 除錯控制台</h1>
+<p class="muted">僅限 DEBUG_API_ENABLED=true。最後更新：<span id="updated">尚未更新</span></p>
+
+<section>
+  <h2>狀態（每 3 秒更新）</h2>
+  <div id="statusErr" class="err"></div>
+  <div class="kv"><span>點數可用：<b id="pAvail">-</b></span><span>凍結：<b id="pHeld">-</b></span><span>額度剩餘：<b id="qRemain">-</b></span><span id="qDisplay" class="muted"></span></div>
+  <h2 style="margin-top:10px">最近已送出的訂單（最多 10 筆）</h2>
+  <div class="muted">未上傳或已過期的訂單不會列出（upload-expired、upload-interrupted 觸發後請看 API 回應）</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>id</th><th>片段</th><th>status</th><th>points_state</th><th>failure_reason</th><th>更新時間</th></tr></thead>
+      <tbody id="cameos"></tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>異常登記</h2>
+  <div id="scenarioList"></div>
+  <textarea id="faultBody" spellcheck="false" placeholder="按上方情境按鈕填入範例，可再編輯"></textarea>
+  <div>
+    <button class="primary" id="btnRegister">登記</button>
+    <button id="btnClear">清空異常</button>
+  </div>
+  <div id="faultResult"></div>
+  <h2 style="margin-top:10px">目前已登記的異常</h2>
+  <pre id="activeFaults">（載入中）</pre>
+</section>
+
+<section>
+  <h2>重設</h2>
+  <button class="danger" id="btnReset">重設環境</button>
+  <div id="resetResult"></div>
+</section>
+
+<script type="application/json" id="scenarios">
+[
+{"name":"response-lost-after-commit","desc":"下一次「建立訂單」寫入成功後不回應（連線中斷，模擬回應遺失），用同一個 Idempotency-Key 重試應拿到同一筆","example":{"name":"response_lost_after_commit","target":"create","times":1}},
+{"name":"upload-interrupted","desc":"下一次上傳自拍，內容超過 1024 bytes 後連線中斷（訂單狀態不變）","example":{"name":"upload_interrupted","times":1,"params":{"after_bytes":1024}}},
+{"name":"upload-expired","desc":"下一次上傳自拍（或送出）時，該訂單的上傳期限視為已到（回 410，訂單 EXPIRED、釋放點數）","example":{"name":"upload_expired","times":1}},
+{"name":"vendor-failed","desc":"下一個生成工作失敗（FAILED / VENDOR_FAILED），退點","example":{"name":"vendor_failed","times":1}},
+{"name":"vendor-duplicate-callback","desc":"下一個工作的完成回呼重複送 3 次 SUCCEEDED（驗冪等）","example":{"name":"vendor_duplicate_callback","times":1,"params":{"count":3,"status":"SUCCEEDED"}}},
+{"name":"vendor-no-callback","desc":"下一個工作不回呼，等 GENERATION_TTL（compose 預設 2m）逾時轉 FAILED / TIMEOUT，退點","example":{"name":"vendor_no_callback","times":1}}
+]
+</script>
+<script>
+(function () {
+  'use strict';
+  var AUTH = { 'Authorization': 'Bearer test-token' };
+
+  function $(id) { return document.getElementById(id); }
+  function el(tag, text) { var e = document.createElement(tag); if (text !== undefined) e.textContent = text; return e; }
+
+  function api(method, path, body) {
+    var headers = { 'Authorization': AUTH.Authorization };
+    var opts = { method: method, headers: headers, cache: 'no-store' };
+    if (body !== undefined) { headers['Content-Type'] = 'application/json'; opts.body = body; }
+    return fetch(path, opts).then(function (r) {
+      return r.text().then(function (t) { return { status: r.status, ok: r.ok, text: t }; });
+    });
+  }
+
+  function parseJSON(t) { try { return JSON.parse(t); } catch (e) { return null; } }
+
+  function showResult(id, res) {
+    var box = $(id);
+    box.textContent = '';
+    var head = el('div', 'HTTP ' + res.status);
+    head.className = res.ok ? 'ok' : 'err';
+    box.appendChild(head);
+    if (res.text) box.appendChild(el('pre', res.text));
+  }
+  function showFailure(id, e) {
+    var box = $(id);
+    box.textContent = '';
+    var d = el('div', '請求失敗：' + e);
+    d.className = 'err';
+    box.appendChild(d);
+  }
+
+  // 情境按鈕
+  // 情境資料在上方 JSON 區塊；example 序列化後須與 backend/faults/<name>.json 逐字相同（Go 測試比對）。
+  var SCENARIOS = JSON.parse($('scenarios').textContent);
+  SCENARIOS.forEach(function (s) {
+    var row = el('div'); row.className = 'scenario';
+    var b = el('button', s.name);
+    b.addEventListener('click', function () { $('faultBody').value = JSON.stringify(s.example); });
+    row.appendChild(b);
+    row.appendChild(el('small', s.desc));
+    $('scenarioList').appendChild(row);
+  });
+
+  $('btnRegister').addEventListener('click', function () {
+    api('POST', '/debug/faults', $('faultBody').value).then(function (r) {
+      showResult('faultResult', r); refresh();
+    }, function (e) { showFailure('faultResult', e); });
+  });
+  $('btnClear').addEventListener('click', function () {
+    api('DELETE', '/debug/faults').then(function (r) {
+      showResult('faultResult', r); refresh();
+    }, function (e) { showFailure('faultResult', e); });
+  });
+  $('btnReset').addEventListener('click', function () {
+    if (!window.confirm('確定要重設環境？會清空訂單、明細、廠商事件、自拍與異常，餘額回初始值。')) return;
+    api('POST', '/debug/reset').then(function (r) {
+      showResult('resetResult', r); refresh();
+    }, function (e) { showFailure('resetResult', e); });
+  });
+
+  function renderCameos(items) {
+    var tb = $('cameos');
+    tb.textContent = '';
+    items.slice(0, 10).forEach(function (c) {
+      var tr = el('tr');
+      var cells = [
+        String(c.id || '').slice(0, 8),
+        c.clip ? c.clip.title : '',
+        c.status,
+        c.points_state,
+        c.failure_reason === null || c.failure_reason === undefined ? '' : c.failure_reason,
+        c.updated_at
+      ];
+      cells.forEach(function (v) { tr.appendChild(el('td', String(v === undefined ? '' : v))); });
+      tb.appendChild(tr);
+    });
+  }
+
+  function getJSON(path) {
+    return api('GET', path).then(function (r) {
+      if (!r.ok) throw new Error(path + ' → HTTP ' + r.status);
+      var j = parseJSON(r.text);
+      if (j === null) throw new Error(path + ' → 回應不是 JSON');
+      return j;
+    });
+  }
+
+  var busy = false, pending = false;
+  function refresh(fromTimer) {
+    if (busy) { if (!fromTimer) pending = true; return; }
+    busy = true;
+    Promise.all([getJSON('/v1/points'), getJSON('/v1/quota'), getJSON('/v1/cameos'), getJSON('/debug/faults')])
+      .then(function (a) {
+        $('pAvail').textContent = a[0].available;
+        $('pHeld').textContent = a[0].held;
+        $('qRemain').textContent = a[1].remaining;
+        $('qDisplay').textContent = a[1].display || '';
+        renderCameos(a[2].items || []);
+        var act = a[3].active || [];
+        $('activeFaults').textContent = act.length ? act.map(function (x) { return JSON.stringify(x); }).join('\n') : '（無）';
+        $('statusErr').textContent = '';
+        $('updated').textContent = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+      })
+      .catch(function (e) { $('statusErr').textContent = '更新失敗：' + e.message; })
+      .then(function () {
+        busy = false;
+        if (pending) { pending = false; refresh(); }
+      });
+  }
+
+  refresh();
+  setInterval(function () { refresh(true); }, 3000);
+})();
+</script>
+</body>
+</html>
