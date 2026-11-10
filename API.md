@@ -363,7 +363,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 | 異常 | 情境檔與觸發 | 後端結果 | App 端結果（API 37 模擬器） |
 |---|---|---|---|
 | `response_lost_after_commit` | `response-lost-after-commit.json`（`target` 為 `create`，測送出時改成 `submit`），建單或送出 | 連線中斷、沒有回應；建單用同一個 key 重送、送出對同一筆訂單重送，都回 `200`，點數只占用或扣一次；送出情境明細只有 1 筆 `CHARGE` | `times` 1–3 共 7 輪（建單 4、送出 3）都被 App 吸收，App 不顯示錯誤，每輪 1 張單、1 筆扣款；`times` 5–8 結果不固定。看到錯誤時：建單頁顯示錯誤加「重試」，重試後接回同一張單，只扣 1 次；送出頁顯示錯誤加「重試」「回我的客串」，重試後只扣 1 次並有通知。送出回應遺失時 App 沒有重試，訂單照樣生成並扣款（1 次） |
-| `upload_interrupted` | `upload-interrupted.json`，上傳超過 1024 bytes 的 JPEG | 連線中斷；訂單仍是 `AWAITING_UPLOAD`，重傳成功 | 2/2：顯示通用錯誤加「重試」，重試後成功，只扣 1 次 |
+| `upload_interrupted` | `upload-interrupted.json`，上傳超過 1024 bytes 的 JPEG | 連線中斷；訂單仍是 `AWAITING_UPLOAD`，重傳成功 | 修正前（`d4fa507`）2/2 沒出現錯誤：一次確認會上傳 2 次，第二次把中斷吸收，要連續中斷 2 次才看到錯誤。`736dfba` 修正後重測（`times` 1、5 各 1 輪）：兩輪都顯示通用錯誤加「重試」；`times` 5 那輪清除異常後重試成功、只扣 1 次（`times` 1 那輪記錄為 1→0，20 秒後仍停在錯誤與「重試」） |
 | `upload_expired` | `upload-expired.json`，上傳合法內容 | `410`；訂單 `EXPIRED`，available 100、remaining 3。內容不合法時回 `400`，異常仍在 | 2/2：顯示「已過期」與「上傳期限已過，點數沒有扣款，請重新客串。」，只有「回首頁重新客串」；不扣款 |
 | `vendor_failed` | `vendor-failed.json`，送出 | `FAILED`／`VENDOR_FAILED`；available 100、remaining 3；明細 `CHARGE`、`REFUND` | 2/2（前景 1 次、送出後進背景 1 次）：顯示「生成失敗」「點數已退還」，餘額退回；背景也收到失敗通知，沒有重複 |
 | `vendor_failed`（`reason` 為 `CONTENT_REJECTED`） | 同上，`params` 加 `reason`，送出 | `FAILED`／`CONTENT_REJECTED`；available 100、remaining 2；明細 `CHARGE`、`REFUND` | 1/1（送出後進背景）：背景收到 1 則通知，顯示「無法生成」「照片未通過審核，點數已退還，今日次數不退還」；退點有證據，額度不退沒有原始證據 |
