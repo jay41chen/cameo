@@ -46,6 +46,15 @@ type Service struct {
 	// uploadExpiryFault 是 debug 用的 hook：回傳 true 表示這次請求要讓訂單逾期。usecase 不知道異常登記，
 	// 只在組裝時由 adapter 注入；nil 表示沒有。
 	uploadExpiryFault func() bool
+	// rc 是 debug 用的執行期設定：非 nil 時 dailyLimit、generationTTL 讀它，nil 時讀 cfg。
+	// 只在組裝時由 adapter 注入。
+	rc RuntimeConfig
+}
+
+// RuntimeConfig 提供可在執行期調整的業務設定（debug 用）。實作要能同時讀寫。
+type RuntimeConfig interface {
+	DailyLimit() int
+	GenerationTTL() time.Duration
 }
 
 func NewService(q Queries, tx TxRunner, clock Clock, cfg Config, files FileStore) *Service {
@@ -74,6 +83,26 @@ func (s *Service) WithVendor(v VendorClient) *Service {
 // hook 只在上傳或送出的訂單狀態允許時才會被呼叫；回傳 true 就把該訂單的 upload_expires_at 設為現在，
 // 之後走真實的逾期釋放流程。
 func (s *Service) SetUploadExpiryFault(fn func() bool) { s.uploadExpiryFault = fn }
+
+// SetRuntimeConfig 設定執行期設定，只在組裝時呼叫（比照 SetUploadExpiryFault）；不呼叫就一律讀建立時的 Config。
+func (s *Service) SetRuntimeConfig(rc RuntimeConfig) { s.rc = rc }
+
+// BaseConfig 回傳正規化後的 Config 副本（預設值已補上），給 adapter 當執行期設定的初始值。
+func (s *Service) BaseConfig() Config { return s.cfg }
+
+func (s *Service) dailyLimit() int {
+	if s.rc != nil {
+		return s.rc.DailyLimit()
+	}
+	return s.cfg.DailyLimit
+}
+
+func (s *Service) generationTTL() time.Duration {
+	if s.rc != nil {
+		return s.rc.GenerationTTL()
+	}
+	return s.cfg.GenerationTTL
+}
 
 // applyUploadExpiryFault 在交易內、狀態確認可上傳之後、ExpireCameo 之前呼叫。
 func (s *Service) applyUploadExpiryFault(ctx context.Context, tx Tx, id string, now time.Time) error {

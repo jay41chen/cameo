@@ -320,7 +320,7 @@ func register(t *testing.T, h http.Handler, body string) {
 
 func TestConsumeWithoutFaultIsNull(t *testing.T) {
 	h := debugHandler(apihttp.WithDebugAPI())
-	if got := consume(t, h); !reflect.DeepEqual(got, map[string]any{"fault": nil}) {
+	if got := consume(t, h); !reflect.DeepEqual(got, map[string]any{"fault": nil, "vendor_delay_sec": nil}) {
 		t.Fatalf("consume = %v", got)
 	}
 }
@@ -339,7 +339,7 @@ func TestConsumeReturnsNameAndParams(t *testing.T) {
 	} {
 		h := debugHandler(apihttp.WithDebugAPI())
 		register(t, h, c.body)
-		want := map[string]any{"fault": map[string]any{"name": c.name, "params": c.params}}
+		want := map[string]any{"fault": map[string]any{"name": c.name, "params": c.params}, "vendor_delay_sec": nil}
 		if got := consume(t, h); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: consume = %v, want %v", c.body, got, want)
 		}

@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"unicode/utf8"
 
 	"cameo/backend/internal/domain"
 	"cameo/backend/internal/usecase"
@@ -321,9 +320,8 @@ func (s *server) debugListFaults(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) debugAddFault(w http.ResponseWriter, r *http.Request) {
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<16))
-	if err != nil || !utf8.Valid(raw) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "請求內容無效", false)
+	raw, ok := readJSONObject(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -332,8 +330,8 @@ func (s *server) debugAddFault(w http.ResponseWriter, r *http.Request) {
 		Times  json.RawMessage `json:"times"`
 		Params json.RawMessage `json:"params"`
 	}
-	// Unmarshal 會拒絕語法錯誤、尾端內容與多個值；頂層必須是物件（null 與陣列不行）。
-	if t := bytes.TrimSpace(raw); len(t) == 0 || t[0] != '{' || json.Unmarshal(raw, &body) != nil {
+	// 語法與頂層物件已由 readJSONObject 驗過；欄位都是 RawMessage，這裡不會失敗，保留當防線。
+	if json.Unmarshal(raw, &body) != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "請求內容無效", false)
 		return
 	}
@@ -354,15 +352,17 @@ func (s *server) debugAddFault(w http.ResponseWriter, r *http.Request) {
 }
 
 // debugConsumeFault 給 vendor-sim 用：依序嘗試三種 vendor_*（同時只會登記一種），取到就扣 1 次並回傳；
-// 沒有回 {"fault":null}。不讀 body，不動非 vendor 的異常。
+// 沒有回 {"fault":null}。兩種回應最外層（和 fault 同層）都帶 "vendor_delay_sec"（數字或 null，取自執行期設定），
+// 讓 vendor-sim 對新工作用這個延遲。不讀 body，不動非 vendor 的異常。
 func (s *server) debugConsumeFault(w http.ResponseWriter, _ *http.Request) {
+	delay := s.rc.VendorDelaySec()
 	for _, name := range []string{faultVendorFailed, faultVendorDuplicateCB, faultVendorNoCallback} {
 		if params, ok := s.faults.take(name, ""); ok {
-			writeJSON(w, http.StatusOK, map[string]any{"fault": map[string]any{"name": name, "params": params}})
+			writeJSON(w, http.StatusOK, map[string]any{"fault": map[string]any{"name": name, "params": params}, "vendor_delay_sec": delay})
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"fault": nil})
+	writeJSON(w, http.StatusOK, map[string]any{"fault": nil, "vendor_delay_sec": delay})
 }
 
 func (s *server) debugClearFaults(w http.ResponseWriter, _ *http.Request) {

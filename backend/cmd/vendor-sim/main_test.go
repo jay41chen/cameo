@@ -495,3 +495,108 @@ func TestConcurrentResendConsumesOnce(t *testing.T) {
 		t.Fatalf("callbacks = %d, want 1", c)
 	}
 }
+
+// runJob 送一個新工作並等回呼送完，回傳花費時間與收到的回呼。
+func runJob(t *testing.T, f *fakeAPI, cfgDelay time.Duration) (time.Duration, []received) {
+	t.Helper()
+	s := f.sim(cfgDelay)
+	start := time.Now()
+	if rec := post(s.handler(), `{"job_id":"job-d"}`); rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d", rec.Code)
+	}
+	s.wg.Wait()
+	return time.Since(start), f.callbacks()
+}
+
+func TestConsumeDelayOverridesConfigDelay(t *testing.T) {
+	for name, body := range map[string]string{
+		"with fault null": `{"fault":null,"vendor_delay_sec":0.02}`,
+		"zero":            `{"fault":null,"vendor_delay_sec":0}`,
+		"with fault":      `{"fault":{"name":"vendor_failed","params":{}},"vendor_delay_sec":0.02}`,
+		"unknown fault":   `{"fault":{"name":"nope","params":{}},"vendor_delay_sec":0.02}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeAPI(t, consumeReply{http.StatusOK, body})
+			elapsed, got := runJob(t, f, 800*time.Millisecond)
+			if elapsed >= 400*time.Millisecond {
+				t.Fatalf("elapsed = %v, want the 0.02s override not the 800ms config delay", elapsed)
+			}
+			if len(got) != 1 {
+				t.Fatalf("callbacks = %d", len(got))
+			}
+			wantStatus := "SUCCEEDED"
+			if name == "with fault" {
+				wantStatus = "FAILED"
+			}
+			if st := decode(t, got[0])["status"]; st != wantStatus {
+				t.Fatalf("status = %v, want %s", st, wantStatus)
+			}
+		})
+	}
+}
+
+func TestConsumeDelayInvalidFallsBackToConfigDelay(t *testing.T) {
+	const cfgDelay = 150 * time.Millisecond
+	for name, reply := range map[string]consumeReply{
+		"missing":         {http.StatusOK, `{"fault":null}`},
+		"null":            {http.StatusOK, `{"fault":null,"vendor_delay_sec":null}`},
+		"above range":     {http.StatusOK, `{"fault":null,"vendor_delay_sec":601}`},
+		"negative":        {http.StatusOK, `{"fault":null,"vendor_delay_sec":-1}`},
+		"string":          {http.StatusOK, `{"fault":null,"vendor_delay_sec":"0.01"}`},
+		"bool":            {http.StatusOK, `{"fault":null,"vendor_delay_sec":true}`},
+		"object":          {http.StatusOK, `{"fault":null,"vendor_delay_sec":{}}`},
+		"non-200":         {http.StatusInternalServerError, `{"fault":null,"vendor_delay_sec":0}`},
+		"whole json bad":  {http.StatusOK, `{"fault":null,"vendor_delay_sec":0`},
+		"valid unknown f": {http.StatusOK, `{"fault":{"name":"nope"},"vendor_delay_sec":null}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeAPI(t, reply)
+			elapsed, got := runJob(t, f, cfgDelay)
+			if elapsed < cfgDelay {
+				t.Fatalf("elapsed = %v, want >= config delay %v", elapsed, cfgDelay)
+			}
+			if len(got) != 1 {
+				t.Fatalf("callbacks = %d", len(got))
+			}
+		})
+	}
+}
+
+func TestConsumeUnreachableUsesConfigDelay(t *testing.T) {
+	const cfgDelay = 150 * time.Millisecond
+	s := newSim(config{Delay: cfgDelay, CallbackURL: "http://127.0.0.1:1/x", FaultsURL: "http://127.0.0.1:1/consume", Secret: "s", PublicURL: "http://x"})
+	start := time.Now()
+	post(s.handler(), `{"job_id":"j"}`)
+	s.wg.Wait()
+	if elapsed := time.Since(start); elapsed < cfgDelay {
+		t.Fatalf("elapsed = %v, want >= %v", elapsed, cfgDelay)
+	}
+}
+
+func TestBadDelayDoesNotAffectFault(t *testing.T) {
+	for _, d := range []string{`601`, `"x"`, `null`} {
+		f := newFakeAPI(t, consumeReply{http.StatusOK, `{"fault":{"name":"vendor_failed","params":{"reason":"boom"}},"vendor_delay_sec":` + d + `}`})
+		_, got := runJob(t, f, 20*time.Millisecond)
+		if len(got) != 1 {
+			t.Fatalf("delay %s: callbacks = %d", d, len(got))
+		}
+		m := decode(t, got[0])
+		if m["status"] != "FAILED" || m["reason"] != "boom" {
+			t.Fatalf("delay %s: body = %v", d, m)
+		}
+	}
+}
+
+func TestResendDoesNotReapplyDelay(t *testing.T) {
+	f := newFakeAPI(t, consumeReply{http.StatusOK, `{"fault":null,"vendor_delay_sec":0.02}`})
+	s := f.sim(800 * time.Millisecond)
+	post(s.handler(), `{"job_id":"j"}`)
+	post(s.handler(), `{"job_id":"j"}`)
+	s.wg.Wait()
+	if n := f.consumeCalls(); n != 1 {
+		t.Fatalf("consume calls = %d, want 1", n)
+	}
+	if n := len(f.callbacks()); n != 1 {
+		t.Fatalf("callbacks = %d", n)
+	}
+}

@@ -1,6 +1,8 @@
 // Command vendor-sim 是模擬的影片生成廠商：收工作、等一段時間後對 api 送回呼。
 // 每收到新工作會向 api 的 POST /debug/faults/consume 取一次異常（vendor_failed、vendor_duplicate_callback、
 // vendor_no_callback）並照辦；取不到或查詢失敗就當沒有異常，送一次成功回呼。
+// 同一個回應最外層的 vendor_delay_sec（0–600 的數字）是這個新工作的延遲；null、缺少、不合法或查詢失敗時
+// 用自己的 VENDOR_DELAY_SEC。
 // 僅供模擬：不接收照片、不提供影片檔。
 package main
 
@@ -14,6 +16,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -71,9 +74,13 @@ func (s *sim) postJob(w http.ResponseWriter, r *http.Request) {
 	s.seen[body.JobID] = true
 	s.mu.Unlock()
 	if !dup {
-		f := s.consumeFault(body.JobID)
+		f, d := s.consumeFault(body.JobID)
+		delay := s.cfg.Delay
+		if d != nil {
+			delay = *d
+		}
 		s.wg.Add(1)
-		time.AfterFunc(s.cfg.Delay, func() {
+		time.AfterFunc(delay, func() {
 			defer s.wg.Done()
 			s.dispatch(body.JobID, f)
 		})
@@ -109,45 +116,70 @@ type fault struct {
 	Params map[string]any `json:"params"`
 }
 
-// consumeFault 向 api 取一次異常；任何失敗（連線、逾時、非 200、壞 JSON、未知名稱）都回 nil 並記 log。
-func (s *sim) consumeFault(jobID string) *fault {
+// maxVendorDelaySec 是 consume 回應中 vendor_delay_sec 可接受的上限（秒），與 API 的範圍一致。
+const maxVendorDelaySec = 600
+
+// consumeFault 向 api 取一次異常與這個工作的延遲覆寫。
+// 任何 consume 失敗（連線、逾時、非 200、整體 JSON 壞掉）兩者都回 nil 並記 log。
+// fault 未知名稱時回 nil；延遲欄位缺少、null、非數字或不在 0–600 時回 nil，兩者互不影響。
+func (s *sim) consumeFault(jobID string) (*fault, *time.Duration) {
 	req, err := http.NewRequest(http.MethodPost, s.cfg.FaultsURL, nil)
 	if err != nil {
 		slog.Warn("consume fault: build request", "job_id", jobID, "err", err)
-		return nil
+		return nil, nil
 	}
 	req.Header.Set("Authorization", debugToken)
 	resp, err := s.fc.Do(req)
 	if err != nil {
 		slog.Warn("consume fault failed", "job_id", jobID, "err", err)
-		return nil
+		return nil, nil
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if err != nil {
 		slog.Warn("consume fault: read body", "job_id", jobID, "err", err)
-		return nil
+		return nil, nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		slog.Warn("consume fault rejected", "job_id", jobID, "status", resp.StatusCode)
-		return nil
+		return nil, nil
 	}
 	var out struct {
-		Fault *fault `json:"fault"`
+		Fault *fault          `json:"fault"`
+		Delay json.RawMessage `json:"vendor_delay_sec"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		slog.Warn("consume fault: bad json", "job_id", jobID, "err", err)
+		return nil, nil
+	}
+	return knownFault(jobID, out.Fault), parseDelay(jobID, out.Delay)
+}
+
+// knownFault 只放行已知的異常名稱。
+func knownFault(jobID string, f *fault) *fault {
+	if f == nil {
 		return nil
 	}
-	if out.Fault == nil {
-		return nil
-	}
-	switch out.Fault.Name {
+	switch f.Name {
 	case faultFailed, faultDuplicate, faultNoCallback:
-		return out.Fault
+		return f
 	}
-	slog.Warn("consume fault: unknown fault", "job_id", jobID, "name", out.Fault.Name)
+	slog.Warn("consume fault: unknown fault", "job_id", jobID, "name", f.Name)
 	return nil
+}
+
+// parseDelay 解析 vendor_delay_sec；缺少或 null 靜默回 nil，非數字或超出 0–600 記 log 後回 nil。
+func parseDelay(jobID string, raw json.RawMessage) *time.Duration {
+	if t := bytes.TrimSpace(raw); len(t) == 0 || bytes.Equal(t, []byte("null")) {
+		return nil
+	}
+	var sec float64
+	if err := json.Unmarshal(raw, &sec); err != nil || math.IsNaN(sec) || sec < 0 || sec > maxVendorDelaySec {
+		slog.Warn("consume fault: invalid vendor_delay_sec", "job_id", jobID, "value", string(raw))
+		return nil
+	}
+	d := time.Duration(sec * float64(time.Second))
+	return &d
 }
 
 // defaultDuplicateCount 是 vendor_duplicate_callback 缺 count 或不合法時的次數；

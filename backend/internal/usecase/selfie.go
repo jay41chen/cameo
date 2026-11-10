@@ -202,7 +202,7 @@ func (s *Service) SubmitCameo(ctx context.Context, id string) (domain.Cameo, err
 		}); err != nil {
 			return err
 		}
-		expiresAt := now.Add(s.cfg.GenerationTTL)
+		expiresAt := now.Add(s.generationTTL())
 		if err := tx.MarkQueued(ctx, id, now, expiresAt); err != nil {
 			return err
 		}

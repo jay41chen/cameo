@@ -50,7 +50,7 @@ func (s *Service) CreateCameo(ctx context.Context, key, clipID string) (CreateRe
 		if err != nil {
 			return err
 		}
-		if used >= s.cfg.DailyLimit {
+		if used >= s.dailyLimit() {
 			return domain.ErrDailyLimitReached
 		}
 		held, err := tx.HeldPoints(ctx)
@@ -175,7 +175,7 @@ func (s *Service) Quota(ctx context.Context) (domain.Quota, error) {
 	if err != nil {
 		return domain.Quota{}, err
 	}
-	return domain.NewQuota(s.cfg.DailyLimit, used, to), nil
+	return domain.NewQuota(s.dailyLimit(), used, to), nil
 }
 
 // ExpireDue 釋放已逾期的訂單（不寫明細），可重複執行；回傳本次轉換的訂單 id。
