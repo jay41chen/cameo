@@ -5,6 +5,22 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+fun resolveBaseUrl(raw: String?): String {
+    if (raw == null) return "http://10.0.2.2:8080"
+    val match = Regex("""^http://10\.0\.2\.2:([1-9][0-9]{0,4})/?$""").matchEntire(raw)
+    val port = match?.groupValues?.get(1)?.toInt()
+    if (port == null || port > 65535) {
+        throw GradleException(
+            """
+            cameoBaseUrl 格式錯誤：收到 "$raw"。
+            格式：http://10.0.2.2:<port>（port 為 1–65535，不可有前導零，結尾可有一個 /）
+            範例：./gradlew :app:assembleDebug -PcameoBaseUrl=http://10.0.2.2:9090
+            """.trimIndent(),
+        )
+    }
+    return "http://10.0.2.2:$port"
+}
+
 android {
     namespace = "io.github.jay41chen.cameo"
     compileSdk {
@@ -18,8 +34,9 @@ android {
         versionCode = 1
         versionName = "0.2"
 
-        // 模擬器連宿主機後端；測試帳號 token 為模擬環境值。
-        buildConfigField("String", "BASE_URL", "\"http://10.0.2.2:8080\"")
+        // 後端網址預設 http://10.0.2.2:8080，用 -PcameoBaseUrl 覆蓋；
+        // 格式與規則詳見 spec-mobile.md 第 6 章「後端網址」。測試帳號 token 為模擬環境值。
+        buildConfigField("String", "BASE_URL", "\"${resolveBaseUrl(providers.gradleProperty("cameoBaseUrl").orNull)}\"")
         buildConfigField("String", "API_TOKEN", "\"test-token\"")
     }
 
