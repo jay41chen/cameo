@@ -1,0 +1,7 @@
+response-lost-after-commit	下一次「建立訂單」寫入成功後不回應（連線中斷，模擬回應遺失），用同一個 Idempotency-Key 重試應拿到同一筆
+upload-interrupted	下一次上傳自拍，內容超過 1024 bytes 後連線中斷（訂單狀態不變）
+upload-expired	下一次上傳自拍（或送出）時，該訂單的上傳期限視為已到（回 410，訂單 EXPIRED、釋放點數）
+vendor-failed	下一個生成工作失敗（FAILED / VENDOR_FAILED），退點
+vendor-duplicate-callback	下一個工作的完成回呼重複送 3 次 SUCCEEDED（驗冪等）
+vendor-no-callback	下一個工作不回呼，等 GENERATION_TTL（compose 預設 2m）逾時轉 FAILED / TIMEOUT，退點
+content-rejected	下一個生成工作被內容審核拒絕（FAILED / CONTENT_REJECTED），退點、今日次數不退

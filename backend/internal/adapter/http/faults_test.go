@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
+	"cameo/backend/faults"
 	apihttp "cameo/backend/internal/adapter/http"
 	"cameo/backend/internal/usecase"
 )
@@ -237,39 +237,62 @@ func TestDebugRoutesNeedTokenAndMethods(t *testing.T) {
 	}
 }
 
-// backend/faults/*.json 逐一用真實 handler 登記，且恰好涵蓋 6 種異常。
+// faults.Load() 的每個情境 example 逐一用真實 handler 登記，結果要與 example 一致，且涵蓋所有異常種類。
 func TestFaultScenarioFiles(t *testing.T) {
-	files, err := filepath.Glob("../../../faults/*.json")
-	if err != nil || len(files) != 6 {
-		t.Fatalf("files = %v err = %v, want 6", files, err)
+	list, err := faults.Load()
+	if err != nil || len(list) == 0 {
+		t.Fatalf("faults.Load() = %d scenarios, err %v", len(list), err)
 	}
-	seen := []string{}
-	for _, f := range files {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
+	names := map[string]bool{}
+	for _, sc := range list {
+		var ex struct {
+			Name   string         `json:"name"`
+			Target *string        `json:"target"`
+			Times  *float64       `json:"times"`
+			Params map[string]any `json:"params"`
+		}
+		if err := json.Unmarshal(sc.Example, &ex); err != nil {
+			t.Errorf("%s: %v", sc.Name, err)
+			continue
 		}
 		h := debugHandler(apihttp.WithDebugAPI())
-		rec, body := hit(h, http.MethodPost, "/debug/faults", string(b), true)
+		rec, body := hit(h, http.MethodPost, "/debug/faults", string(sc.Example), true)
 		if rec.Code != 200 {
-			t.Errorf("%s: %d %s", f, rec.Code, rec.Body.String())
+			t.Errorf("%s: %d %s", sc.Name, rec.Code, rec.Body.String())
 			continue
 		}
 		active := body["active"].([]any)
 		if len(active) != 1 {
-			t.Errorf("%s: active = %v, want exactly 1 fault", f, active)
+			t.Errorf("%s: active = %v, want exactly 1 fault", sc.Name, active)
 			continue
 		}
-		seen = append(seen, active[0].(map[string]any)["name"].(string))
-		if entry := active[0].(map[string]any); entry["name"] == "vendor_failed" {
-			if reason, present := entry["params"].(map[string]any)["reason"]; !present || reason != nil {
-				t.Errorf("%s: reason = %v, want null", f, reason)
+		entry := active[0].(map[string]any)
+		if entry["name"] != ex.Name {
+			t.Errorf("%s: active name = %v, want %s", sc.Name, entry["name"], ex.Name)
+		}
+		names[ex.Name] = true
+		if ex.Target != nil && entry["target"] != *ex.Target {
+			t.Errorf("%s: active target = %v, want %s", sc.Name, entry["target"], *ex.Target)
+		}
+		if ex.Times != nil && entry["times"] != *ex.Times {
+			t.Errorf("%s: active times = %v, want %v", sc.Name, entry["times"], *ex.Times)
+		}
+		params, _ := entry["params"].(map[string]any)
+		for k, v := range ex.Params {
+			if got, ok := params[k]; !ok || !reflect.DeepEqual(got, v) {
+				t.Errorf("%s: active params[%s] = %v (present %v), want %v", sc.Name, k, got, ok, v)
 			}
 		}
 	}
-	sort.Strings(seen)
-	if !reflect.DeepEqual(seen, allFaultNames) {
-		t.Fatalf("scenario names = %v, want %v", seen, allFaultNames)
+	for _, n := range allFaultNames {
+		if !names[n] {
+			t.Errorf("no scenario registers fault %q", n)
+		}
+	}
+	for n := range names {
+		if !slices.Contains(allFaultNames, n) {
+			t.Errorf("scenario registers unknown fault %q", n)
+		}
 	}
 }
 

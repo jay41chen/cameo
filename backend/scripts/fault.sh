@@ -10,16 +10,10 @@
 #   fault.sh reset                清空訂單、明細、廠商事件、自拍與異常，餘額回初始值
 #                                 （POST /debug/reset，不會再問確認）
 #
-# 情境（都是登記後「下一次」相關動作才觸發，預設只觸發 1 次）：
-#   response-lost-after-commit  下一次「建立訂單」寫入成功後不回應（連線中斷，模擬回應遺失），
-#                               用同一個 Idempotency-Key 重試應拿到同一筆
-#   upload-interrupted          下一次上傳自拍，內容超過 1024 bytes 後連線中斷（訂單狀態不變）
-#   upload-expired              下一次上傳自拍（或送出）時，該訂單的上傳期限視為已到（回 410，訂單 EXPIRED、釋放點數）
-#   vendor-failed               下一個生成工作失敗（FAILED / VENDOR_FAILED），退點
-#   vendor-duplicate-callback   下一個工作的完成回呼重複送 3 次 SUCCEEDED（驗冪等）
-#   vendor-no-callback          下一個工作不回呼，等 GENERATION_TTL（compose 預設 2m）
-#                               逾時轉 FAILED / TIMEOUT，退點
-#   注意：vendor-* 同時只能登記一種，要換先 clear；其他情境可並存。
+# 情境都是登記後「下一次」相關動作才觸發，預設只觸發 1 次。
+# 注意：vendor-* 與 content-rejected 都是廠商類異常，同時只能登記一種，要換先 clear
+#       （例外：vendor-failed 與 content-rejected 同為 vendor_failed，後登記的直接取代前一筆）；
+#       其他情境可並存。
 #
 # 環境變數：
 #   API_PORT   後端 port，預設 8080（base URL 為 http://localhost:$API_PORT）
@@ -30,9 +24,7 @@
 #   ./backend/scripts/fault.sh list
 #   API_PORT=18080 ./backend/scripts/fault.sh reset
 #   API_BASE=http://localhost:18080 ./backend/scripts/fault.sh clear
-#   自訂檔案：存成 reject.json，內容為
-#     {"name":"vendor_failed","params":{"reason":"CONTENT_REJECTED"}}
-#   然後 ./backend/scripts/fault.sh ./reject.json
+#   ./backend/scripts/fault.sh content-rejected   # 內容審核拒絕
 #
 # 需要後端以 DEBUG_API_ENABLED=true 啟動（compose 預設為 true）；關閉時 /debug/* 回 404。
 # 送出的 token 固定為 Authorization: Bearer test-token。
@@ -52,6 +44,9 @@ fi
 usage() {
   # 印出檔頭註解：從第 2 行起，連續以 # 開頭的行；遇到第一個非 # 開頭的行就停
   awk 'NR >= 2 { if ($0 !~ /^#/) exit; print }' "$0" | sed 's/^# \{0,1\}//'
+  echo
+  echo "情境："
+  list_scenarios
 }
 
 # 不認得的指令或情境：stderr 錯誤＋情境清單，結束碼 1
@@ -63,13 +58,10 @@ unknown_cmd() {
   exit 1
 }
 
+# 情境清單讀 backend/faults/scenarios.tsv（情境名<TAB>說明），不在這裡手抄
 list_scenarios() {
-  local f
-  for f in "$FAULTS_DIR"/*.json; do
-    [ -e "$f" ] || continue
-    f="$(basename "$f")"
-    echo "  ${f%.json}"
-  done
+  # 去掉行尾 \r、略過空行；名稱欄 27 字元後固定一個空格，長名稱也不會黏住說明
+  awk -F '\t' '{ sub(/\r$/, "") } NF >= 2 { printf "  %-27s %s\n", $1, $2 }' "$FAULTS_DIR/scenarios.tsv"
 }
 
 # send METHOD PATH [JSON檔]

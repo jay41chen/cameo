@@ -1,13 +1,13 @@
 package http_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"cameo/backend/faults"
 	apihttp "cameo/backend/internal/adapter/http"
 )
 
@@ -48,16 +48,17 @@ func TestDebugConsoleMethodNotAllowed(t *testing.T) {
 	}
 }
 
-// 頁面 id="scenarios" 的 JSON 區塊必須與 backend/faults/*.json 一一對應、內容逐字一致（防止兩邊漂移）。
-// 頁面以 JSON.stringify(example) 填入 textarea；example 為無空白緊湊 JSON，key 順序保留，
-// 故用 RawMessage 比對原始位元組即等同 textarea 顯示的字串。
-func TestDebugConsoleEmbedsFaultFiles(t *testing.T) {
-	files, err := filepath.Glob("../../../faults/*.json")
-	if err != nil || len(files) != 6 {
-		t.Fatalf("files = %v err = %v, want 6", files, err)
+// 頁面 id="scenarios" 的 JSON 區塊必須與 faults.Load() 一致（順序、name、desc、example 語意）。
+func TestDebugConsoleScenarios(t *testing.T) {
+	want, err := faults.Load()
+	if err != nil || len(want) == 0 {
+		t.Fatalf("faults.Load() = %d scenarios, err %v", len(want), err)
 	}
 	rec, _ := hit(debugHandler(apihttp.WithDebugAPI()), http.MethodGet, "/debug/console", "", false)
 	page := rec.Body.String()
+	if strings.Contains(page, "__SCENARIOS__") {
+		t.Fatal("page still contains placeholder __SCENARIOS__")
+	}
 	const open = `<script type="application/json" id="scenarios">`
 	i := strings.Index(page, open)
 	if i < 0 {
@@ -68,43 +69,26 @@ func TestDebugConsoleEmbedsFaultFiles(t *testing.T) {
 	if j < 0 {
 		t.Fatal("scenarios block not closed")
 	}
-	var list []struct {
-		Name    string          `json:"name"`
-		Example json.RawMessage `json:"example"`
-	}
-	if err := json.Unmarshal([]byte(rest[:j]), &list); err != nil {
+	var got []faults.Scenario
+	if err := json.Unmarshal([]byte(rest[:j]), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 6 {
-		t.Fatalf("scenarios = %d, want 6", len(list))
+	if len(got) != len(want) {
+		t.Fatalf("page has %d scenarios, faults.Load() has %d", len(got), len(want))
 	}
-	byName := map[string]string{}
-	for _, s := range list {
-		if _, dup := byName[s.Name]; dup {
-			t.Errorf("duplicate scenario name %q", s.Name)
+	compact := func(raw json.RawMessage) string {
+		var buf bytes.Buffer
+		if err := json.Compact(&buf, raw); err != nil {
+			t.Fatalf("compact %s: %v", raw, err)
 		}
-		byName[s.Name] = string(s.Example)
+		return buf.String()
 	}
-	fileNames := map[string]bool{}
-	for _, f := range files {
-		name := strings.TrimSuffix(filepath.Base(f), ".json")
-		fileNames[name] = true
-		got, ok := byName[name]
-		if !ok {
-			t.Errorf("%s: no scenario named %q in console page", f, name)
-			continue
+	for k := range want {
+		if got[k].Name != want[k].Name || got[k].Desc != want[k].Desc {
+			t.Errorf("#%d: page (%q, %q) != faults (%q, %q)", k, got[k].Name, got[k].Desc, want[k].Name, want[k].Desc)
 		}
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if want := strings.TrimSpace(string(b)); got != want {
-			t.Errorf("%s: page example %q != file %q", f, got, want)
-		}
-	}
-	for name := range byName {
-		if !fileNames[name] {
-			t.Errorf("scenario %q has no faults/%s.json", name, name)
+		if g, w := compact(got[k].Example), compact(want[k].Example); g != w {
+			t.Errorf("%s: page example %s != file %s", want[k].Name, g, w)
 		}
 	}
 }

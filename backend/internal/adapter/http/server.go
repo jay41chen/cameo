@@ -92,6 +92,7 @@ func Handler(svc *usecase.Service, opts ...Option) http.Handler {
 		handleMethods(mux, "/debug/config", map[string]http.HandlerFunc{http.MethodGet: s.debugGetConfig, http.MethodPut: s.debugPutConfig})
 		handleMethods(mux, "/debug/reset", map[string]http.HandlerFunc{http.MethodPost: s.debugReset})
 		// 控制台頁免 token（瀏覽器直接開網址不會帶 Authorization）；頁面內的 fetch 自帶 token。
+		s.consolePage = mustRenderConsole(consoleHTML)
 		handlePublic(mux, "/debug/console", map[string]http.HandlerFunc{http.MethodGet: s.debugConsole})
 	}
 	if len(s.webhookSecret) > 0 {
@@ -157,6 +158,7 @@ type server struct {
 	debug         bool
 	faults        faultRegistry
 	rc            *runtimeConfig // 只在 debug 開啟時非 nil
+	consolePage   string         // /debug/console 的頁面，只在 debug 開啟時產生
 }
 
 func (s *server) clips(w http.ResponseWriter, r *http.Request) {

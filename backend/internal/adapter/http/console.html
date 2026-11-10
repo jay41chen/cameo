@@ -78,16 +78,7 @@
   <div id="resetResult"></div>
 </section>
 
-<script type="application/json" id="scenarios">
-[
-{"name":"response-lost-after-commit","desc":"下一次「建立訂單」寫入成功後不回應（連線中斷，模擬回應遺失），用同一個 Idempotency-Key 重試應拿到同一筆","example":{"name":"response_lost_after_commit","target":"create","times":1}},
-{"name":"upload-interrupted","desc":"下一次上傳自拍，內容超過 1024 bytes 後連線中斷（訂單狀態不變）","example":{"name":"upload_interrupted","times":1,"params":{"after_bytes":1024}}},
-{"name":"upload-expired","desc":"下一次上傳自拍（或送出）時，該訂單的上傳期限視為已到（回 410，訂單 EXPIRED、釋放點數）","example":{"name":"upload_expired","times":1}},
-{"name":"vendor-failed","desc":"下一個生成工作失敗（FAILED / VENDOR_FAILED），退點","example":{"name":"vendor_failed","times":1}},
-{"name":"vendor-duplicate-callback","desc":"下一個工作的完成回呼重複送 3 次 SUCCEEDED（驗冪等）","example":{"name":"vendor_duplicate_callback","times":1,"params":{"count":3,"status":"SUCCEEDED"}}},
-{"name":"vendor-no-callback","desc":"下一個工作不回呼，等 GENERATION_TTL（compose 預設 2m）逾時轉 FAILED / TIMEOUT，退點","example":{"name":"vendor_no_callback","times":1}}
-]
-</script>
+<script type="application/json" id="scenarios">__SCENARIOS__</script>
 <script>
 (function () {
   'use strict';
@@ -124,7 +115,7 @@
   }
 
   // 情境按鈕
-  // 情境資料在上方 JSON 區塊；example 序列化後須與 backend/faults/<name>.json 逐字相同（Go 測試比對）。
+  // 情境資料在上方 JSON 區塊，由後端從 backend/faults 產生（見 console.go），這裡不手寫。
   var SCENARIOS = JSON.parse($('scenarios').textContent);
   SCENARIOS.forEach(function (s) {
     var row = el('div'); row.className = 'scenario';
