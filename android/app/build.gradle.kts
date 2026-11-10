@@ -7,7 +7,7 @@ plugins {
 
 fun resolveBaseUrl(raw: String?): String {
     if (raw == null) return "http://10.0.2.2:8080"
-    val match = Regex("""^http://10\.0\.2\.2:([1-9][0-9]{0,4})/?$""").matchEntire(raw)
+    val match = Regex("""http://10\.0\.2\.2:([1-9][0-9]{0,4})/?""").matchEntire(raw)
     val port = match?.groupValues?.get(1)?.toInt()
     if (port == null || port > 65535) {
         throw GradleException(
