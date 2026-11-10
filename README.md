@@ -46,6 +46,22 @@ MVP 已完成。Android App 只在 API 37 模擬器驗證，沒有真機；已�
 
    細節見 [`android/README.md`](android/README.md)。
 
+**8080 被占用時**：後端的 port、分享網址與 App 的網址要一起改。後端：
+
+```
+API_PORT=9090 PUBLIC_BASE_URL=http://localhost:9090 docker compose up --build
+```
+
+Postgres 的 5433 也被占用時，再加 `POSTGRES_HOST_PORT=<新 port>`；這時 [`backend/README.md`](backend/README.md) 的整合測試連線字串也要改成同一個 port。
+
+App 在 `android/` 目錄重新 build 並安裝時帶同樣的 port（只支援模擬器）：
+
+```
+./gradlew :app:assembleDebug -PcameoBaseUrl=http://10.0.2.2:9090
+```
+
+細節見 [`backend/README.md`](backend/README.md)、[`android/README.md`](android/README.md)。
+
 ## API 一覽
 
 所有 `/v1` 請求都要帶 `Authorization: Bearer test-token`。參數、回應格式與錯誤碼見 [`API.md`](API.md)。

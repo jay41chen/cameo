@@ -193,7 +193,7 @@ App 行為：
 
 ### 後端網址
 
-- 後端網址由 Gradle 參數 `cameoBaseUrl` 設定，寫進 `:app` 的 `BuildConfig.BASE_URL`，例如 `./gradlew :app:assembleDebug -PcameoBaseUrl=http://10.0.2.2:9090`；沒帶參數時用 `http://10.0.2.2:8080`，和原本相同。參數也可以放在 `~/.gradle/gradle.properties` 或環境變數 `ORG_GRADLE_PROJECT_cameoBaseUrl`（Gradle 內建行為）。debug、release 用同一個值，release 不另外處理。
+- 後端網址由 Gradle 參數 `cameoBaseUrl` 設定，寫進 `:app` 的 `BuildConfig.BASE_URL`，例如 `./gradlew :app:assembleDebug -PcameoBaseUrl=http://10.0.2.2:9090`；沒帶參數時用 `http://10.0.2.2:8080`，和原本相同。參數也可以放在 `~/.gradle/gradle.properties` 或環境變數 `ORG_GRADLE_PROJECT_cameoBaseUrl`（Gradle 內建行為，未實測）。debug、release 用同一個值，release 不另外處理。
 - 格式：`http://10.0.2.2:<port>`，scheme 只收小寫 `http`（後端沒有 TLS，不收 `https`）；port 必填，是 1–65535 的十進位整數，不可有前導零；結尾最多去掉一個 `/` 後才寫入。主機不是 `10.0.2.2`、缺 port、帶路徑（包括 `//` 結尾）、query、fragment 或帳密、前後有空白、空字串，都讓 build 失敗，錯誤訊息寫出正確格式與範例。只接受 `10.0.2.2`，因為 debug build 只對它開放明文 HTTP（`network_security_config` 不改）；真機與區網 IP 不支援。
 - 分享連結的 debug base（`shareDebugBaseUrl`）沿用同一個值，不用另外設定。
 - 換 port 時後端也要一起改 `API_PORT`、`PUBLIC_BASE_URL`（見 `backend/README.md`）。
