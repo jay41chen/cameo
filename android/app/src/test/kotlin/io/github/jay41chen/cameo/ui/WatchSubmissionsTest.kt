@@ -71,7 +71,8 @@ class WatchSubmissionsTest {
 
     private fun TestScope.finishOneSubmission(runner: SubmissionRunner) {
         cameos.creates += DomainResult.Failure(DomainError(message = "壞了", retryable = true))
-        runner.confirm("c1", "/cache/captures/a.jpg")
+        pending.delegate.seedDraftWithPhoto("c1")
+        runner.confirm("c1")
         advanceUntilIdle()
         assertTrue(runner.confirmState("c1").value is ConfirmRun.Finished)
     }

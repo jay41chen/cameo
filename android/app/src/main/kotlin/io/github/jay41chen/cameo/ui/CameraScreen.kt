@@ -75,7 +75,7 @@ internal fun hasCameraPermission(context: Context) =
     ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
 @Composable
-fun CameraScreen(onUsePhoto: (String) -> Unit, viewModel: CameraViewModel = hiltViewModel()) {
+fun CameraScreen(onUsePhoto: () -> Unit, viewModel: CameraViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsState()
     var granted by remember { mutableStateOf(hasCameraPermission(context)) }
@@ -90,12 +90,13 @@ fun CameraScreen(onUsePhoto: (String) -> Unit, viewModel: CameraViewModel = hilt
     LaunchedEffect(Unit) {
         if (!granted && !asked) launcher.launch(Manifest.permission.CAMERA)
     }
+    // 導頁只在照片已交給草稿之後；事件是一次性的
+    LaunchedEffect(viewModel) { viewModel.usePhotoDone.collect { onUsePhoto() } }
 
     val s = state
     when {
         s is CameraUiState.Preview -> PhotoPreview(s.path, onRetake = viewModel::retake, onUse = {
             viewModel.onUsePhoto(s.path)
-            onUsePhoto(s.path)
         })
         !granted -> Column(
             Modifier.fillMaxSize().padding(16.dp),

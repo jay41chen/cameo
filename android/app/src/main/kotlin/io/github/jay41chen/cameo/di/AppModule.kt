@@ -10,6 +10,7 @@ import io.github.jay41chen.cameo.domain.repository.PointsRepository
 import io.github.jay41chen.cameo.domain.repository.QuotaRepository
 import io.github.jay41chen.cameo.domain.usecase.AdvanceCameoUseCase
 import io.github.jay41chen.cameo.domain.usecase.AttachCameoPhotoUseCase
+import io.github.jay41chen.cameo.domain.usecase.AttachDraftPhotoUseCase
 import io.github.jay41chen.cameo.domain.usecase.ClaimFinishedCameoUseCase
 import io.github.jay41chen.cameo.domain.usecase.ConfirmCameoUseCase
 import io.github.jay41chen.cameo.domain.usecase.DeletePendingCameoUseCase
@@ -113,6 +114,9 @@ object AppModule {
 
     @Provides
     fun provideAttachCameoPhoto(pending: PendingCameoRepository) = AttachCameoPhotoUseCase(pending)
+
+    @Provides
+    fun provideAttachDraftPhoto(pending: PendingCameoRepository) = AttachDraftPhotoUseCase(pending)
 
     @Provides
     fun provideClaimFinishedCameo(pending: PendingCameoRepository) = ClaimFinishedCameoUseCase(pending)

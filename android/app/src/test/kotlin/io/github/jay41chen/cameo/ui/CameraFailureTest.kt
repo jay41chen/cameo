@@ -34,8 +34,8 @@ class CameraCatchingTest {
 }
 
 class PendingNoOrderTextTest {
-    private fun p(photo: String?, err: String?) =
-        PendingCameo("k", "c", null, PendingStep.CREATE, err, photo)
+    private fun p(photo: String?, err: String?, step: PendingStep = PendingStep.CREATE) =
+        PendingCameo("k", "c", null, step, err, photo)
 
     @Test
     fun noPhotoNoError_saysPhotoMissing() = assertEquals("照片無法使用，請重新拍照", pendingNoOrderText(p(null, null)))
@@ -49,4 +49,14 @@ class PendingNoOrderTextTest {
     @Test
     fun photoNoError_saysUnconfirmed() =
         assertEquals("尚未確認是否建立成功", pendingNoOrderText(p("/p.jpg", null)))
+
+    @Test
+    fun draftWithPhoto_saysNotYetPaid() =
+        assertEquals("尚未確認支付", pendingNoOrderText(p("/p.jpg", null, PendingStep.DRAFT)))
+
+    @Test
+    fun draft_errorAndNoPhotoWinOverDraftText() {
+        assertEquals("網路錯誤", pendingNoOrderText(p("/p.jpg", "網路錯誤", PendingStep.DRAFT)))
+        assertEquals("照片無法使用，請重新拍照", pendingNoOrderText(p(null, null, PendingStep.DRAFT)))
+    }
 }

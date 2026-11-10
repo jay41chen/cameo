@@ -9,7 +9,7 @@ internal const val ROUTE_CLIPS = "clips"
 internal const val ROUTE_POINTS = "points"
 internal const val ROUTE_MY_CAMEOS = "my_cameos"
 internal const val ROUTE_CAMERA = "camera/{clipId}?request={request}"
-internal const val ROUTE_CONFIRM = "confirm/{clipId}?photo={photo}"
+internal const val ROUTE_CONFIRM = "confirm/{clipId}"
 internal const val ROUTE_VIDEO = "video/{cameoId}"
 internal const val ROUTE_CAMEO = "cameo/{clientRequestId}"
 
@@ -19,9 +19,8 @@ internal fun videoRoute(cameoId: String): String = "video/$cameoId"
 internal fun cameraRoute(clipId: String, request: String? = null): String =
     if (request == null) "camera/$clipId" else "camera/$clipId?request=${urlEncode(request)}"
 
-/** [photo] 為相機暫存檔路徑（URL 編碼）；沒帶表示用草稿已有的照片。 */
-internal fun confirmRoute(clipId: String, photo: String? = null): String =
-    if (photo == null) "confirm/$clipId" else "confirm/$clipId?photo=${urlEncode(photo)}"
+/** 確認頁一律使用草稿已有的照片。 */
+internal fun confirmRoute(clipId: String): String = "confirm/$clipId"
 
 /** 進度畫面（上傳、送出）。只觀察，推進由使用者動作在導頁前交給 runner。 */
 internal fun cameoRoute(clientRequestId: String): String = "cameo/$clientRequestId"

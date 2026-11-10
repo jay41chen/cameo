@@ -57,9 +57,9 @@ class GetQuotaUseCase(private val repository: QuotaRepository) {
 }
 
 /**
- * 確認支付並建單。順序固定：先寫本機草稿，再附上照片，才送 POST。
- * - [photoSourcePath] 不為 null 時先 attachPhoto；失敗，或沒帶路徑且草稿沒有照片，
- *   回 [PHOTO_MISSING]、不送 POST、保留草稿。
+ * 確認支付並建單。照片在相機頁「使用這張」時就已附到草稿，這裡只用草稿的照片。
+ * 順序固定：取得草稿，確認有照片，把草稿標記為確認中（DRAFT 變 CREATE），才送 POST。
+ * - 草稿沒有照片：回 [PHOTO_MISSING]、不送 POST、保留草稿。
  * - 成功且 EXPIRED：後端不會再接受這張單，刪草稿。
  * - 成功其他狀態：草稿標記為已建立（等待上傳）。
  * - 失敗且 code 屬於 [NO_ORDER_CODES]：確定沒有建單，刪草稿，下次用新 key。
@@ -70,13 +70,10 @@ class ConfirmCameoUseCase(
     private val cameos: CameoRepository,
     private val pending: PendingCameoRepository,
 ) {
-    suspend operator fun invoke(clipId: String, photoSourcePath: String?): DomainResult<CreatedCameo> {
+    suspend operator fun invoke(clipId: String): DomainResult<CreatedCameo> {
         val draft = pending.getOrCreateDraft(clipId)
-        if (photoSourcePath != null) {
-            if (!pending.attachPhoto(draft.clientRequestId, photoSourcePath)) return photoMissing()
-        } else if (draft.photoPath == null) {
-            return photoMissing()
-        }
+        if (draft.photoPath == null) return photoMissing()
+        pending.markConfirming(draft.clientRequestId)
         val result = cameos.createCameo(draft.clientRequestId, clipId)
         when (result) {
             is DomainResult.Success ->

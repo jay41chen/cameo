@@ -441,6 +441,10 @@ private class FakeDao : PendingCameoDao {
     }
     override suspend fun markCreated(id: String, cameoId: String, now: Long) =
         update(id) { it.copy(step = "UPLOAD", cameoId = cameoId, lastError = null, updatedAt = now) }
+    override suspend fun markConfirming(id: String, now: Long): Int {
+        if (rows[id]?.step != "DRAFT") return 0
+        return update(id) { it.copy(step = "CREATE", updatedAt = now) }
+    }
     override suspend fun updateError(id: String, message: String?, now: Long) =
         update(id) { it.copy(lastError = message, updatedAt = now) }
     override suspend fun updatePhotoPath(id: String, path: String?, now: Long) =
@@ -454,7 +458,7 @@ private class FakeDao : PendingCameoDao {
     override suspend fun markSubmitted(id: String, now: Long) =
         update(id) { it.copy(step = "TRACK", lastError = null, updatedAt = now) }
     override suspend fun findDraft(clipId: String) =
-        rows.values.filter { it.step == "CREATE" && it.clipId == clipId }.maxByOrNull { it.updatedAt }
+        rows.values.filter { (it.step == "DRAFT" || it.step == "CREATE") && it.clipId == clipId }.maxByOrNull { it.updatedAt }
     override suspend fun list() = rows.values.sortedByDescending { it.updatedAt }
 }
 
@@ -472,12 +476,36 @@ class PendingCameoRepositoryTest {
         File(tmp.newFolder(), name).apply { writeText(content) }
 
     @Test
-    fun reusesCreateDraftForSameClip() = runTest {
+    fun reusesDraftForSameClip_newDraftIsDraftStep() = runTest {
         val a = repo.getOrCreateDraft("c1")
         val b = repo.getOrCreateDraft("c1")
         assertEquals(a.clientRequestId, b.clientRequestId)
-        assertEquals(PendingStep.CREATE, a.step)
+        assertEquals(PendingStep.DRAFT, a.step)
+        assertEquals(PendingStep.DRAFT, b.step)
         assertEquals(1, dao.rows.size)
+    }
+
+    @Test
+    fun markConfirming_turnsDraftIntoCreate_andReuseKeepsCreate() = runTest {
+        val a = repo.getOrCreateDraft("c1")
+        repo.markConfirming(a.clientRequestId)
+        assertEquals(PendingStep.CREATE, repo.get(a.clientRequestId)!!.step)
+        val b = repo.getOrCreateDraft("c1") // CREATE 草稿也會被找到並沿用，step 不變
+        assertEquals(a.clientRequestId, b.clientRequestId)
+        assertEquals(PendingStep.CREATE, b.step)
+        assertEquals(1, dao.rows.size)
+    }
+
+    @Test
+    fun markConfirming_onlyTouchesDraftRows() = runTest {
+        dao.upsert(PendingCameoEntity("u", "c1", "o1", "UPLOAD", null, null, 1))
+        dao.upsert(PendingCameoEntity("t", "c2", "o2", "TRACK", null, null, 2))
+        repo.markConfirming("u")
+        repo.markConfirming("t")
+        repo.markConfirming("ghost")
+        assertEquals(PendingStep.UPLOAD, repo.get("u")!!.step)
+        assertEquals(PendingStep.TRACK, repo.get("t")!!.step)
+        assertEquals(2, dao.rows.size)
     }
 
     @Test

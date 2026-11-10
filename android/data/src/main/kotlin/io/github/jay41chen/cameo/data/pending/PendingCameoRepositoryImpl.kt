@@ -23,12 +23,16 @@ internal class PendingCameoRepositoryImpl(
                 clientRequestId = newId(),
                 clipId = clipId,
                 cameoId = null,
-                step = PendingStep.CREATE.name,
+                step = PendingStep.DRAFT.name,
                 photoPath = null,
                 lastError = null,
                 updatedAt = now(),
             ),
         ).toDomain()
+
+    override suspend fun markConfirming(clientRequestId: String) {
+        dao.markConfirming(clientRequestId, now())
+    }
 
     override suspend fun markCreated(clientRequestId: String, cameoId: String) {
         dao.markCreated(clientRequestId, cameoId, now())

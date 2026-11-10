@@ -275,13 +275,17 @@ class ConfirmViewModelTest {
     private fun vm(
         clips: DomainResult<List<Clip>> = clipsOk(),
         clipId: String = "c1",
-        photo: String? = "/cache/captures/a.jpg",
-        handle: SavedStateHandle = SavedStateHandle(mapOf("clipId" to clipId, "photo" to photo)),
-    ) = ConfirmViewModel(
-        handle,
-        GetClipsUseCase(FakeClips(ArrayDeque(listOf(clips, clips)))),
-        runner,
-    )
+        /** true：草稿已有照片（相機頁「使用這張」之後）；false：草稿沒有照片。 */
+        hasPhoto: Boolean = true,
+        handle: SavedStateHandle = SavedStateHandle(mapOf("clipId" to clipId)),
+    ): ConfirmViewModel {
+        if (hasPhoto) pending.seedDraftWithPhoto(clipId)
+        return ConfirmViewModel(
+            handle,
+            GetClipsUseCase(FakeClips(ArrayDeque(listOf(clips, clips)))),
+            runner,
+        )
+    }
 
     @Test
     fun confirm_runsInRunner_acquireTrackRelease_andIsNotAcquiredOnLoad() = runTest {
@@ -375,8 +379,7 @@ class ConfirmViewModelTest {
 
     @Test
     fun photoMissing_releases() = runTest {
-        pending.missingSources += "/cache/captures/a.jpg"
-        val vm = vm()
+        val vm = vm(hasPhoto = false)
         advanceUntilIdle()
         vm.confirm()
         advanceUntilIdle()
@@ -449,7 +452,8 @@ class ConfirmViewModelTest {
     @Test
     fun staleFinishedFromEarlierRun_isIgnoredByNewViewModel() = runTest {
         cameos.creates.addLast(DomainResult.Success(testOrder()))
-        runner.confirm("c1", "/cache/captures/a.jpg")
+        pending.seedDraftWithPhoto("c1")
+        runner.confirm("c1")
         advanceUntilIdle()
         assertTrue((runner.confirmState("c1").value as ConfirmRun.Finished).result is DomainResult.Success)
         val vm = vm()
@@ -493,7 +497,7 @@ class ConfirmViewModelTest {
     fun clipLoadFailure_isLoadError_andRetryWorks() = runTest {
         val failing = FakeClips(ArrayDeque(listOf(DomainResult.Failure(DomainError("x", true)), clipsOk())))
         val vm = ConfirmViewModel(
-            SavedStateHandle(mapOf("clipId" to "c1", "photo" to "/cache/captures/a.jpg")),
+            SavedStateHandle(mapOf("clipId" to "c1")),
             GetClipsUseCase(failing),
             runner,
         )
@@ -574,7 +578,7 @@ class ConfirmViewModelTest {
         val expired = vm.state.value as ConfirmUiState.Expired
         assertEquals("等待上傳", expired.title)
         assertTrue(pending.rows.isEmpty()) // 逾期後草稿已刪除，重新客串要走相機
-        val vm2 = vm(photo = "/cache/captures/b.jpg") // 相機 -> 確認頁
+        val vm2 = vm() // 相機 -> 確認頁（草稿已刪，重新有一份附照片的新草稿）
         advanceUntilIdle()
         vm2.confirm()
         advanceUntilIdle()
@@ -595,41 +599,34 @@ class ConfirmViewModelTest {
     }
 
     @Test
-    fun passesPhotoPathToUseCase() = runTest {
+    fun confirm_doesNotAttachAnyPhoto_usesDraftPhoto() = runTest {
         cameos.creates.addLast(DomainResult.Success(testOrder()))
-        val vm = vm(photo = "/cache/captures/x.jpg")
+        val vm = vm()
         advanceUntilIdle()
         vm.confirm()
         advanceUntilIdle()
-        assertEquals(listOf("key-1" to "/cache/captures/x.jpg"), pending.attached)
+        assertTrue(vm.state.value is ConfirmUiState.Created)
+        assertTrue(pending.attached.isEmpty())
     }
 
     @Test
-    fun retryAfterFailureUsesDraftPhoto_notTheMovedSource() = runTest {
+    fun retryAfterFailureReusesDraftPhotoAndKey() = runTest {
         cameos.creates.addLast(DomainResult.Failure(DomainError(null, true)))
         cameos.creates.addLast(DomainResult.Success(testOrder()))
-        val handle = SavedStateHandle(mapOf("clipId" to "c1", "photo" to "/cache/captures/a.jpg"))
-        val vm = ConfirmViewModel(
-            handle,
-            GetClipsUseCase(FakeClips(ArrayDeque(listOf(clipsOk())))),
-            runner,
-        )
+        val vm = vm()
         advanceUntilIdle()
         vm.confirm()
         advanceUntilIdle()
-        pending.missingSources += "/cache/captures/a.jpg" // 來源已被移走
         vm.confirm()
         advanceUntilIdle()
         assertTrue(vm.state.value is ConfirmUiState.Created)
         assertEquals(listOf("key-1", "key-1"), cameos.keys)
-        assertEquals(1, pending.attached.size)
-        assertNull(handle.get<String>("photo"))
+        assertTrue(pending.attached.isEmpty())
     }
 
     @Test
     fun missingPhoto_showsPhotoMissing_noPost() = runTest {
-        pending.missingSources += "/cache/captures/a.jpg"
-        val vm = vm()
+        val vm = vm(hasPhoto = false)
         advanceUntilIdle()
         vm.confirm()
         advanceUntilIdle()
@@ -639,20 +636,11 @@ class ConfirmViewModelTest {
     }
 
     @Test
-    fun noPhotoArgAndDraftWithoutPhoto_showsPhotoMissing() = runTest {
-        val vm = vm(photo = null)
-        advanceUntilIdle()
-        vm.confirm()
-        advanceUntilIdle()
-        assertEquals(ConfirmUiState.PhotoMissing, vm.state.value)
-        assertTrue(cameos.keys.isEmpty())
-    }
-
-    @Test
-    fun noPhotoArgButDraftHasPhoto_posts() = runTest {
-        pending.rows += PendingCameo("key-1", "c1", null, PendingStep.CREATE, null, "/photos/key-1.jpg")
+    fun draftHasPhoto_cameraTempFileGone_confirmStillPosts() = runTest {
+        // 本 bug：程序在搬檔與 POST 之間被殺，確認頁還原後相機暫存檔已不在；照片早已在草稿裡，不可回 PHOTO_MISSING
+        pending.missingSources += "/cache/captures/a.jpg"
         cameos.creates.addLast(DomainResult.Success(testOrder()))
-        val vm = vm(photo = null)
+        val vm = vm()
         advanceUntilIdle()
         vm.confirm()
         advanceUntilIdle()

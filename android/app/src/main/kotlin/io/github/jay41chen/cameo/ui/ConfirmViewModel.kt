@@ -42,17 +42,11 @@ sealed interface ConfirmUiState {
  */
 @HiltViewModel
 class ConfirmViewModel @Inject constructor(
-    private val savedStateHandle: SavedStateHandle,
+    savedStateHandle: SavedStateHandle,
     private val getClips: GetClipsUseCase,
     private val runner: SubmissionRunner,
 ) : ViewModel() {
     private val clipId: String = checkNotNull(savedStateHandle["clipId"])
-
-    /**
-     * 相機暫存檔路徑。第一次確認（PHOTO_MISSING 以外的結果）之後檔案已被移走，
-     * 之後的重試改用草稿已有的照片，所以清掉。
-     */
-    private var photo: String? = savedStateHandle[PHOTO_KEY]
 
     /** 這個 ViewModel 正在等 runner 的結果；沒等的時候，runner 留下的 Finished 是上一次的，不能套用。 */
     private var awaiting = runner.confirmState(clipId).value is ConfirmRun.Running
@@ -105,10 +99,6 @@ class ConfirmViewModel @Inject constructor(
         // 這裡不是 Ready 就沒有 clip 可對應，保留 awaiting 為 true 是防禦性寫法。
         val current = _state.value as? ConfirmUiState.Ready ?: return
         awaiting = false
-        if (!(result is DomainResult.Failure && result.error.code == PHOTO_MISSING)) {
-            photo = null
-            savedStateHandle[PHOTO_KEY] = null
-        }
         val expired = (result as? DomainResult.Success)?.value?.order?.cameo?.status == CameoStatus.EXPIRED
         _state.value = when (result) {
             is DomainResult.Success ->
@@ -137,8 +127,6 @@ class ConfirmViewModel @Inject constructor(
         val current = _state.value as? ConfirmUiState.Ready ?: return
         if (current.submitting) return
         awaiting = true
-        runner.confirm(clipId, photo)
+        runner.confirm(clipId)
     }
 }
-
-private const val PHOTO_KEY = "photo"

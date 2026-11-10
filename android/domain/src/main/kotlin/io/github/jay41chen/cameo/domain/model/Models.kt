@@ -49,7 +49,8 @@ data class CameoUpload(val url: String, val expiresAt: String)
 
 data class CameoOrder(val cameo: Cameo, val upload: CameoUpload?)
 
-enum class PendingStep { CREATE, UPLOAD, SUBMIT, TRACK }
+/** [DRAFT] 已拍照、尚未按確認支付；[CREATE] 已按確認、尚未確認建單是否成功。 */
+enum class PendingStep { DRAFT, CREATE, UPLOAD, SUBMIT, TRACK }
 
 /** 本機草稿。[clientRequestId] 即建單的 Idempotency-Key。 */
 data class PendingCameo(

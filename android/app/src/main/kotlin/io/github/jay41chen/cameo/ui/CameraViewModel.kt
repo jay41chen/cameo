@@ -2,11 +2,17 @@ package io.github.jay41chen.cameo.ui
 
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import io.github.jay41chen.cameo.domain.usecase.AttachDraftPhotoUseCase
 import io.github.jay41chen.cameo.submission.SubmissionRunner
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
 
 sealed interface CameraUiState {
     data object Viewfinder : CameraUiState
@@ -27,6 +33,7 @@ class CameraViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
     private val files: CaptureFiles,
     private val runner: SubmissionRunner,
+    private val attachDraftPhoto: AttachDraftPhotoUseCase,
 ) : ViewModel() {
     private val restored: String? = savedStateHandle.get<String>(PREVIEW_KEY)?.takeIf { files.exists(it) }
 
@@ -34,6 +41,11 @@ class CameraViewModel @Inject constructor(
         restored?.let { CameraUiState.Preview(it) } ?: CameraUiState.Viewfinder,
     )
     val state: StateFlow<CameraUiState> = _state
+
+    private val _usePhotoDone = Channel<Unit>(Channel.CONFLATED)
+
+    /** 照片已交給草稿（或 runner）後的一次性導頁事件。 */
+    val usePhotoDone: Flow<Unit> = _usePhotoDone.receiveAsFlow()
 
     private var capturingPath: String? = null
 
@@ -76,12 +88,30 @@ class CameraViewModel @Inject constructor(
         _state.value = CameraUiState.Viewfinder
     }
 
-    /** 重拍替既有草稿「使用這張」：把照片交給 runner 推進，只交一次。沒有 request 時不做事。 */
+    /**
+     * 「使用這張」，只處理一次（處理中連點無效，失敗後可再按）。
+     * 有 request：把照片交給 runner 推進，然後送導頁事件。
+     * 沒有 request（從選片段進來）：建立或沿用該片段的草稿並附上照片，成功才送導頁事件；失敗顯示錯誤、不導頁。
+     */
     fun onUsePhoto(path: String) {
-        val id = request ?: return
         if (photoHandedOff) return
         photoHandedOff = true
-        runner.advance(id, path)
+        val id = request
+        if (id != null) {
+            runner.advance(id, path)
+            _usePhotoDone.trySend(Unit)
+            return
+        }
+        val clipId = savedStateHandle.get<String>("clipId")
+        viewModelScope.launch {
+            val ok = clipId != null && cameraCatching { attachDraftPhoto(clipId, path) } == true
+            if (ok) {
+                _usePhotoDone.trySend(Unit)
+            } else {
+                photoHandedOff = false
+                _state.value = CameraUiState.Error(CAPTURE_FAILED_MESSAGE)
+            }
+        }
     }
 }
 

@@ -179,3 +179,11 @@ class AttachCameoPhotoUseCase(private val pending: PendingCameoRepository) {
         return if (pending.get(clientRequestId) == null) AttachResult.Gone else AttachResult.NeedPhoto(row.clipId)
     }
 }
+
+/** 相機頁「使用這張」：取得（或建立）該片段的草稿，把相機暫存檔附上去；成功回 true。 */
+class AttachDraftPhotoUseCase(private val pending: PendingCameoRepository) {
+    suspend operator fun invoke(clipId: String, sourcePath: String): Boolean {
+        val draft = pending.getOrCreateDraft(clipId)
+        return pending.attachPhoto(draft.clientRequestId, sourcePath)
+    }
+}

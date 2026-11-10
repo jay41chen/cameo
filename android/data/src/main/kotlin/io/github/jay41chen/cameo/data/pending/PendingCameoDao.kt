@@ -23,7 +23,7 @@ internal interface PendingCameoDao {
     @Query("DELETE FROM pending_cameos WHERE cameo_id = :cameoId")
     suspend fun deleteByCameoId(cameoId: String): Int
 
-    @Query("SELECT * FROM pending_cameos WHERE step = 'CREATE' AND clip_id = :clipId ORDER BY updated_at DESC LIMIT 1")
+    @Query("SELECT * FROM pending_cameos WHERE step IN ('DRAFT', 'CREATE') AND clip_id = :clipId ORDER BY updated_at DESC LIMIT 1")
     suspend fun findDraft(clipId: String): PendingCameoEntity?
 
     @Query("SELECT * FROM pending_cameos ORDER BY updated_at DESC")
@@ -36,6 +36,9 @@ internal interface PendingCameoDao {
             "WHERE client_request_id = :id",
     )
     suspend fun markCreated(id: String, cameoId: String, now: Long): Int
+
+    @Query("UPDATE pending_cameos SET step = 'CREATE', updated_at = :now WHERE client_request_id = :id AND step = 'DRAFT'")
+    suspend fun markConfirming(id: String, now: Long): Int
 
     @Query("UPDATE pending_cameos SET last_error = :message, updated_at = :now WHERE client_request_id = :id")
     suspend fun updateError(id: String, message: String?, now: Long): Int
@@ -59,7 +62,7 @@ internal interface PendingCameoDao {
     @Query("UPDATE pending_cameos SET step = 'TRACK', last_error = NULL, updated_at = :now WHERE client_request_id = :id")
     suspend fun markSubmitted(id: String, now: Long): Int
 
-    /** 同片段已有 CREATE 草稿就回傳它，否則寫入並回傳 [fresh]；在同一個交易內完成。 */
+    /** 同片段已有 DRAFT／CREATE 草稿就回傳它，否則寫入並回傳 [fresh]；在同一個交易內完成。 */
     @Transaction
     suspend fun getOrInsertDraft(fresh: PendingCameoEntity): PendingCameoEntity {
         findDraft(fresh.clipId)?.let { return it }

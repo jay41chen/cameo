@@ -82,7 +82,7 @@ class SubmissionRunner(
     private fun confirmFlow(clipId: String) = confirmFlows.getOrPut(clipId) { MutableStateFlow(null) }
     private fun advanceFlow(id: String) = advanceFlows.getOrPut(id) { MutableStateFlow(null) }
 
-    fun confirm(clipId: String, photoSourcePath: String?) {
+    fun confirm(clipId: String) {
         synchronized(lock) {
             if (clipId in confirmJobs) return
             // scope 已取消時 launch 不會執行 body、finally 也不會跑，所以不登記，直接寫可重試的失敗
@@ -100,7 +100,7 @@ class SubmissionRunner(
                 try {
                     keepAlive.acquire(key)
                     val r = runCatchingResult(
-                        { confirmCameo(clipId, photoSourcePath) },
+                        { confirmCameo(clipId) },
                         { retryableConfirmFailure() },
                     )
                     // 同一個鎖區塊：先登記推進，再寫 Finished，接著放掉片段登記並標記 confirmDone；觀察者看到 Finished(success) 時推進已登記

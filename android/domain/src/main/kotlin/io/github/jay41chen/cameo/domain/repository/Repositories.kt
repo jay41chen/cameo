@@ -45,8 +45,11 @@ interface CameoShareRepository {
 }
 
 interface PendingCameoRepository {
-    /** 同片段已有 CREATE 草稿就回傳它（重用同一個 key），否則建立新草稿。 */
+    /** 同片段已有尚未建單的草稿（DRAFT 或 CREATE）就回傳它（重用同一個 key，不改它的 step），否則建立新的 DRAFT 草稿。 */
     suspend fun getOrCreateDraft(clipId: String): PendingCameo
+
+    /** 按下確認支付：把 DRAFT 改成 CREATE；列不存在或已不是 DRAFT 時不寫。 */
+    suspend fun markConfirming(clientRequestId: String)
     suspend fun markCreated(clientRequestId: String, cameoId: String)
     suspend fun recordError(clientRequestId: String, message: String?)
     /** 同時刪除照片檔。 */

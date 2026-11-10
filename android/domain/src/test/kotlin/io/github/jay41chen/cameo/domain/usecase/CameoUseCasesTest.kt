@@ -26,8 +26,15 @@ internal class FakePending(val events: MutableList<String> = mutableListOf()) : 
 
     override suspend fun getOrCreateDraft(clipId: String): PendingCameo {
         events += "draft:$clipId"
-        rows.firstOrNull { it.clipId == clipId && it.step == PendingStep.CREATE }?.let { return it }
-        return PendingCameo("key-${next++}", clipId, null, PendingStep.CREATE, null).also { rows += it }
+        rows.firstOrNull { it.clipId == clipId && (it.step == PendingStep.DRAFT || it.step == PendingStep.CREATE) }
+            ?.let { return it }
+        return PendingCameo("key-${next++}", clipId, null, PendingStep.DRAFT, null).also { rows += it }
+    }
+
+    override suspend fun markConfirming(clientRequestId: String) {
+        events += "confirming:$clientRequestId"
+        val i = rows.indexOfFirst { it.clientRequestId == clientRequestId && it.step == PendingStep.DRAFT }
+        if (i >= 0) rows[i] = rows[i].copy(step = PendingStep.CREATE)
     }
 
     override suspend fun markCreated(clientRequestId: String, cameoId: String) {
@@ -94,6 +101,16 @@ internal class FakePending(val events: MutableList<String> = mutableListOf()) : 
 
 internal const val PHOTO = "/cache/captures/a.jpg"
 
+/** 照正式流程：相機頁先把照片附到草稿，再按確認支付。 */
+internal suspend fun ConfirmCameoUseCase.afterCamera(
+    pending: PendingCameoRepository,
+    clipId: String,
+    photo: String = PHOTO,
+): DomainResult<CreatedCameo> {
+    pending.attachPhoto(pending.getOrCreateDraft(clipId).clientRequestId, photo)
+    return invoke(clipId)
+}
+
 internal class FakeCameos(
     val events: MutableList<String>,
     val creates: ArrayDeque<() -> DomainResult<CameoOrder>> = ArrayDeque(),
@@ -146,20 +163,37 @@ class CameoUseCasesTest {
     private fun confirm(c: FakeCameos) = ConfirmCameoUseCase(c, pending)
 
     @Test
-    fun draftIsWrittenBeforePost() = runTest {
+    fun draftIsMarkedConfirmingBeforePost() = runTest {
         val c = cameos({ DomainResult.Success(order()) })
-        confirm(c)("c1", PHOTO)
-        assertEquals(listOf("draft:c1", "attach:key-1", "post:key-1", "created:key-1"), pending.events)
+        confirm(c).afterCamera(pending, "c1")
+        assertEquals(
+            listOf("draft:c1", "attach:key-1", "draft:c1", "confirming:key-1", "post:key-1", "created:key-1"),
+            pending.events,
+        )
+    }
+
+    @Test
+    fun draftWithPhotoBecomesCreateWhenConfirmed_andStaysCreateOnReuse() = runTest {
+        val c = cameos({ fail(true) }, { fail(true) })
+        val uc = confirm(c)
+        val draft = pending.getOrCreateDraft("c1")
+        assertEquals(PendingStep.DRAFT, draft.step)
+        pending.attachPhoto(draft.clientRequestId, PHOTO)
+        uc("c1")
+        assertEquals(PendingStep.CREATE, pending.rows[0].step)
+        uc("c1") // 沿用 CREATE 草稿：step 不變、key 不變
+        assertEquals(PendingStep.CREATE, pending.rows[0].step)
+        assertEquals(listOf("key-1", "key-1"), c.keys)
     }
 
     @Test
     fun retryableFailureKeepsDraftAndSecondAttemptReusesKey() = runTest {
         val c = cameos({ fail(true) }, { DomainResult.Success(order()) })
         val uc = confirm(c)
-        uc("c1", PHOTO)
+        uc.afterCamera(pending, "c1")
         assertEquals(1, pending.rows.size)
         assertEquals("訊息", pending.rows[0].lastError)
-        uc("c1", PHOTO)
+        uc.afterCamera(pending, "c1")
         assertEquals(listOf("key-1", "key-1"), c.keys)
     }
 
@@ -168,8 +202,8 @@ class CameoUseCasesTest {
         // 網路例外在 data 層表現為 retryable 且無 message
         val c = cameos({ DomainResult.Failure(DomainError(null, true)) }, { DomainResult.Success(order()) })
         val uc = confirm(c)
-        uc("c1", PHOTO)
-        uc("c1", PHOTO)
+        uc.afterCamera(pending, "c1")
+        uc.afterCamera(pending, "c1")
         assertEquals(listOf("key-1", "key-1"), c.keys)
     }
 
@@ -177,10 +211,10 @@ class CameoUseCasesTest {
     fun afterSuccessSameClipGetsNewKey() = runTest {
         val c = cameos({ DomainResult.Success(order()) }, { DomainResult.Success(order(id = "u2")) })
         val uc = confirm(c)
-        uc("c1", PHOTO)
+        uc.afterCamera(pending, "c1")
         assertEquals(PendingStep.UPLOAD, pending.rows[0].step)
         assertEquals("u1", pending.rows[0].cameoId)
-        uc("c1", PHOTO)
+        uc.afterCamera(pending, "c1")
         assertEquals(listOf("key-1", "key-2"), c.keys)
     }
 
@@ -190,7 +224,7 @@ class CameoUseCasesTest {
         val c = cameos(*codes.map { code -> { fail(false, code) } }.toTypedArray())
         val uc = confirm(c)
         for (code in codes) {
-            val r = uc("c1", PHOTO)
+            val r = uc.afterCamera(pending, "c1")
             assertTrue(code, r is DomainResult.Failure)
             assertTrue(code, pending.rows.isEmpty())
         }
@@ -203,10 +237,10 @@ class CameoUseCasesTest {
             val p = FakePending()
             val c = FakeCameos(p.events, ArrayDeque(listOf({ fail(false, code) }, { fail(false, code) })))
             val uc = ConfirmCameoUseCase(c, p)
-            uc("c1", PHOTO)
+            uc.afterCamera(p, "c1")
             assertEquals("$code", 1, p.rows.size)
             assertEquals("$code", "訊息", p.rows[0].lastError)
-            uc("c1", PHOTO)
+            uc.afterCamera(p, "c1")
             assertEquals("$code", listOf("key-1", "key-1"), c.keys)
             assertEquals("$code", 1, p.rows.size)
         }
@@ -220,9 +254,9 @@ class CameoUseCasesTest {
             { DomainResult.Success(order()) },
         )
         val uc = confirm(c)
-        uc("c1", PHOTO)
-        uc("c1", PHOTO)
-        uc("c1", PHOTO)
+        uc.afterCamera(pending, "c1")
+        uc.afterCamera(pending, "c1")
+        uc.afterCamera(pending, "c1")
         assertEquals(listOf("key-1", "key-1", "key-1"), c.keys)
     }
 
@@ -233,10 +267,10 @@ class CameoUseCasesTest {
             { DomainResult.Success(order()) },
         )
         val uc = confirm(c)
-        val r = uc("c1", PHOTO) as DomainResult.Success
+        val r = uc.afterCamera(pending, "c1") as DomainResult.Success
         assertEquals(CameoStatus.EXPIRED, r.value.order.cameo.status)
         assertTrue(pending.rows.isEmpty())
-        uc("c1", PHOTO)
+        uc.afterCamera(pending, "c1")
         assertEquals(listOf("key-1", "key-2"), c.keys)
     }
 
@@ -244,8 +278,8 @@ class CameoUseCasesTest {
     fun differentClipsUseDifferentKeys() = runTest {
         val c = cameos({ fail(true) }, { fail(true) })
         val uc = confirm(c)
-        uc("c1", PHOTO)
-        uc("c2", PHOTO)
+        uc.afterCamera(pending, "c1")
+        uc.afterCamera(pending, "c2")
         assertNotEquals(c.keys[0], c.keys[1])
         assertEquals(2, pending.rows.size)
     }
@@ -254,20 +288,21 @@ class CameoUseCasesTest {
     fun attachFailureReturnsPhotoMissing_noPost_draftKept() = runTest {
         val c = cameos({ DomainResult.Success(order()) })
         pending.missingSources += PHOTO
-        val r = confirm(c)("c1", PHOTO) as DomainResult.Failure
+        val r = confirm(c).afterCamera(pending, "c1") as DomainResult.Failure
         assertEquals(PHOTO_MISSING, r.error.code)
         assertNull(r.error.message)
         assertEquals(false, r.error.retryable)
         assertTrue(c.keys.isEmpty())
-        assertEquals(listOf("draft:c1", "attach:key-1"), pending.events)
+        assertEquals(listOf("draft:c1", "attach:key-1", "draft:c1"), pending.events)
         assertEquals(1, pending.rows.size)
         assertNull(pending.rows[0].photoPath)
+        assertEquals(PendingStep.DRAFT, pending.rows[0].step)
     }
 
     @Test
-    fun noSourceAndNoDraftPhoto_returnsPhotoMissing_noPost_noAttach() = runTest {
+    fun noDraftPhoto_returnsPhotoMissing_noPost_noMarkConfirming() = runTest {
         val c = cameos({ DomainResult.Success(order()) })
-        val r = confirm(c)("c1", null) as DomainResult.Failure
+        val r = confirm(c)("c1") as DomainResult.Failure
         assertEquals(PHOTO_MISSING, r.error.code)
         assertTrue(c.keys.isEmpty())
         assertEquals(listOf("draft:c1"), pending.events)
@@ -275,13 +310,13 @@ class CameoUseCasesTest {
     }
 
     @Test
-    fun noSourceButDraftHasPhoto_postsWithoutAttach() = runTest {
+    fun draftHasPhoto_postsWithoutAttach() = runTest {
         val c = cameos({ fail(true) }, { DomainResult.Success(order()) })
         val uc = confirm(c)
-        uc("c1", PHOTO) // 照片已附上，POST 失敗
+        uc.afterCamera(pending, "c1") // 照片已附上，POST 失敗
         pending.events.clear()
-        uc("c1", null)
-        assertEquals(listOf("draft:c1", "post:key-1", "created:key-1"), pending.events)
+        uc("c1")
+        assertEquals(listOf("draft:c1", "confirming:key-1", "post:key-1", "created:key-1"), pending.events)
         assertEquals(listOf("key-1", "key-1"), c.keys)
     }
 
@@ -289,8 +324,8 @@ class CameoUseCasesTest {
     fun retryWithNewPhotoKeepsSameKey() = runTest {
         val c = cameos({ fail(true) }, { DomainResult.Success(order()) })
         val uc = confirm(c)
-        uc("c1", PHOTO)
-        uc("c1", "/cache/captures/b.jpg")
+        uc.afterCamera(pending, "c1")
+        uc.afterCamera(pending, "c1", "/cache/captures/b.jpg")
         assertEquals(listOf("key-1", "key-1"), c.keys)
     }
 
@@ -299,8 +334,8 @@ class CameoUseCasesTest {
         val c = cameos({ DomainResult.Success(order()) })
         val uc = confirm(c)
         pending.missingSources += PHOTO
-        uc("c1", PHOTO)
-        uc("c1", "/cache/captures/b.jpg")
+        uc.afterCamera(pending, "c1")
+        uc.afterCamera(pending, "c1", "/cache/captures/b.jpg")
         assertEquals(listOf("key-1"), c.keys)
         assertEquals(PendingStep.UPLOAD, pending.rows[0].step)
     }
@@ -309,13 +344,13 @@ class CameoUseCasesTest {
     fun cancellationPropagatesAndKeepsDraft() = runTest {
         val c = cameos({ throw CancellationException("left screen") })
         try {
-            confirm(c)("c1", PHOTO)
+            confirm(c).afterCamera(pending, "c1")
             fail("expected CancellationException")
         } catch (e: CancellationException) {
             // expected
         }
         assertEquals(1, pending.rows.size)
-        assertEquals(listOf("draft:c1", "attach:key-1", "post:key-1"), pending.events)
+        assertEquals(listOf("draft:c1", "attach:key-1", "draft:c1", "confirming:key-1", "post:key-1"), pending.events)
     }
 
     @Test

@@ -64,6 +64,7 @@ import androidx.navigation.navArgument
 import io.github.jay41chen.cameo.domain.model.LedgerEntry
 import io.github.jay41chen.cameo.domain.model.LedgerType
 import io.github.jay41chen.cameo.domain.model.PendingCameo
+import io.github.jay41chen.cameo.domain.model.PendingStep
 import io.github.jay41chen.cameo.domain.model.UnfinishedCameo
 import io.github.jay41chen.cameo.domain.model.Cameo
 import io.github.jay41chen.cameo.domain.model.CameoStatus
@@ -127,7 +128,7 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
             FlowScaffold {
                 CameraScreen(
                     onUsePhoto = {
-                        val route = if (request != null) cameoRoute(request) else confirmRoute(clipId, it)
+                        val route = if (request != null) cameoRoute(request) else confirmRoute(clipId)
                         rootNav.navigateSingleTop(route, ROUTE_CAMERA)
                     },
                 )
@@ -137,11 +138,6 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
             ROUTE_CONFIRM,
             arguments = listOf(
                 navArgument("clipId") { type = NavType.StringType },
-                navArgument("photo") {
-                    type = NavType.StringType
-                    nullable = true
-                    defaultValue = null
-                },
             ),
         ) { entry ->
             val clipId = checkNotNull(entry.arguments?.getString("clipId"))
@@ -296,10 +292,13 @@ private fun QuotaHeader(quota: Load<Quota>, onRetry: () -> Unit) {
     HorizontalDivider()
 }
 
+internal const val DRAFT_TEXT = "尚未確認支付"
+
 /** 尚未建立訂單（cameoId == null）的未完成列文字。 */
 internal fun pendingNoOrderText(p: PendingCameo): String = when {
     p.lastError != null -> p.lastError!!
     p.photoPath == null -> NEED_PHOTO_TEXT
+    p.step == PendingStep.DRAFT -> DRAFT_TEXT
     else -> "尚未確認是否建立成功"
 }
 

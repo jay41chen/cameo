@@ -113,6 +113,11 @@ class SubmissionRunnerTest {
     /** 跑在同一個 scheduler 的獨立 scope；backgroundScope 的工作不會被 advanceUntilIdle 推進。 */
     private fun TestScope.bg() = CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob())
 
+    /** 照正式流程：相機頁先把照片附到該片段的草稿，確認頁再按確認。 */
+    private suspend fun FakePendingRepo.camera(clipId: String = "c1") {
+        attachPhoto(getOrCreateDraft(clipId).clientRequestId, CAMERA)
+    }
+
     private fun draftRow(photo: String? = "/photos/k1.jpg") {
         pending.rows += PendingCameo("k1", "c1", "u1", PendingStep.UPLOAD, null, photo)
     }
@@ -122,7 +127,8 @@ class SubmissionRunnerTest {
         stubHappyPath()
         val r = runner(bg())
         sampling.sampleAtTrack = { r.advanceState("key-1").value }
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
 
         val state = r.advanceState("key-1").value as AdvanceRun.Finished
@@ -143,7 +149,8 @@ class SubmissionRunnerTest {
             val r = SubmissionRunner(
                 ConfirmCameoUseCase(rp, p), AdvanceCameoUseCase(rp, p), AttachCameoPhotoUseCase(p), ka, bg(),
             )
-            r.confirm("c1", CAMERA)
+            p.camera()
+            r.confirm("c1")
             advanceUntilIdle()
             val s = r.confirmState("c1").value as ConfirmRun.Finished
             assertEquals(retryable, (s.result as DomainResult.Failure).error.retryable)
@@ -157,7 +164,8 @@ class SubmissionRunnerTest {
     fun `confirm success but expired does not advance`() = runTest {
         repo.creates += ok(CameoStatus.EXPIRED)
         val r = runner(bg())
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertTrue(r.confirmState("c1").value is ConfirmRun.Finished)
         assertNull(r.advanceState("key-1").value)
@@ -168,7 +176,7 @@ class SubmissionRunnerTest {
     @Test
     fun `photo missing does not create or advance`() = runTest {
         val r = runner(bg())
-        r.confirm("c1", null)
+        r.confirm("c1")
         advanceUntilIdle()
         val s = r.confirmState("c1").value as ConfirmRun.Finished
         assertEquals(PHOTO_MISSING, (s.result as DomainResult.Failure).error.code)
@@ -182,10 +190,12 @@ class SubmissionRunnerTest {
         stubHappyPath()
         gated.createGate = CompletableDeferred()
         val r = runner(bg())
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertEquals(ConfirmRun.Running, r.confirmState("c1").value)
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         gated.createGate!!.complete(Unit)
         advanceUntilIdle()
         assertEquals(1, repo.keys.size)
@@ -207,10 +217,12 @@ class SubmissionRunnerTest {
         stubTwoOrders()
         gated.uploadGate = CompletableDeferred()
         val r = runner(bg())
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertTrue(r.isAdvancing("key-1"))
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertEquals(2, repo.keys.size)
         assertEquals(listOf("key-1", "key-2"), repo.keys)
@@ -228,11 +240,13 @@ class SubmissionRunnerTest {
         stubTwoOrders()
         gated.uploadGate = CompletableDeferred()
         val r = runner(bg())
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertTrue(r.isAdvancing("key-1"))
         gated.createGate = CompletableDeferred()
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertEquals(ConfirmRun.Running, r.confirmState("c1").value)
         gated.uploadGate!!.complete(Unit)
@@ -241,7 +255,8 @@ class SubmissionRunnerTest {
         assertEquals(ConfirmRun.Running, r.confirmState("c1").value)
         // 第二張還在建單：第三次 confirm 應被同片段的建單去重擋下
         val keysBefore = repo.keys.size
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertEquals(keysBefore, repo.keys.size)
         assertEquals(2, keepAlive.events.count { it.startsWith("acquire:") })
@@ -257,10 +272,12 @@ class SubmissionRunnerTest {
         stubTwoOrders()
         gated.uploadGate = CompletableDeferred()
         val r = runner(bg())
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         gated.createGate = CompletableDeferred()
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         val acquired = keepAlive.events.filter { it.startsWith("acquire:") }.map { it.removePrefix("acquire:") }
         assertEquals(2, acquired.size)
@@ -283,7 +300,8 @@ class SubmissionRunnerTest {
         stubHappyPath()
         gated.uploadGate = CompletableDeferred()
         val r = runner(bg())
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertTrue(r.isAdvancing("key-1"))
         r.advance("key-1", null)
@@ -298,7 +316,8 @@ class SubmissionRunnerTest {
     fun `concurrent confirm calls from other threads start one job`() = runTest {
         stubHappyPath()
         val r = runner(bg())
-        val threads = List(8) { Thread { r.confirm("c1", CAMERA) } }
+        pending.camera()
+        val threads = List(8) { Thread { r.confirm("c1") } }
         threads.forEach { it.start() }
         threads.forEach { it.join() }
         advanceUntilIdle()
@@ -404,7 +423,8 @@ class SubmissionRunnerTest {
     fun `confirm use case throwing finishes failure and releases`() = runTest {
         // creates 佇列為空，createCameo 會丟 NoSuchElementException
         val r = runner(bg())
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         val s = r.confirmState("c1").value as ConfirmRun.Finished
         assertTrue((s.result as DomainResult.Failure).error.retryable)
@@ -417,7 +437,8 @@ class SubmissionRunnerTest {
         gated.uploadGate = CompletableDeferred()
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
         val r = runner(scope)
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertTrue(r.isAdvancing("key-1"))
         scope.cancel()
@@ -435,7 +456,8 @@ class SubmissionRunnerTest {
         gated.createGate = CompletableDeferred()
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
         val r = runner(scope)
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertEquals(ConfirmRun.Running, r.confirmState("c1").value)
         scope.cancel()
@@ -480,7 +502,8 @@ class SubmissionRunnerTest {
                 }
             }
         }
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertEquals(true, advancingAtFinished)
         gated.uploadGate!!.complete(Unit)
@@ -492,7 +515,8 @@ class SubmissionRunnerTest {
         val scope = bg()
         scope.cancel()
         val r = runner(scope)
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         r.advance("k1", null)
         advanceUntilIdle()
 
@@ -503,7 +527,8 @@ class SubmissionRunnerTest {
         assertTrue(keepAlive.events.isEmpty())
         assertTrue(repo.calls.isEmpty())
         // 登記已清掉：再呼叫仍會立刻得到失敗，不會被「已在進行中」擋掉
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         assertTrue(r.confirmState("c1").value is ConfirmRun.Finished)
     }
 
@@ -519,7 +544,8 @@ class SubmissionRunnerTest {
         stubHappyPath()
         val r = runner(bg())
         val got = collectFinished(r)
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertTrue((r.advanceState("key-1").value as AdvanceRun.Finished).result is AdvanceResult.Done)
         assertEquals(1, got.size)
@@ -544,7 +570,8 @@ class SubmissionRunnerTest {
         repo.creates += fail(retryable = true)
         val r = runner(bg())
         val got = collectFinished(r)
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertTrue((r.confirmState("c1").value as ConfirmRun.Finished).result is DomainResult.Failure)
         assertEquals(1, got.size)
@@ -555,7 +582,8 @@ class SubmissionRunnerTest {
         // creates 佇列為空，createCameo 會丟 NoSuchElementException
         val r = runner(bg())
         val got = collectFinished(r)
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         assertTrue((r.confirmState("c1").value as ConfirmRun.Finished).result is DomainResult.Failure)
         assertEquals(1, got.size)
@@ -567,9 +595,11 @@ class SubmissionRunnerTest {
         gated.createGate = CompletableDeferred()
         val r = runner(bg())
         val got = collectFinished(r)
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         gated.createGate!!.complete(Unit)
         advanceUntilIdle()
         assertEquals(1, repo.keys.size)
@@ -586,7 +616,8 @@ class SubmissionRunnerTest {
     fun `state is kept after the job ends for late observers`() = runTest {
         stubHappyPath()
         val r = runner(bg())
-        r.confirm("c1", CAMERA)
+        pending.camera()
+        r.confirm("c1")
         advanceUntilIdle()
         val late = r.advanceState("key-1").value
         assertTrue(late is AdvanceRun.Finished)

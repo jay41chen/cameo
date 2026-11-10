@@ -252,7 +252,8 @@ class CameoProgressViewModelTest {
         cameos.uploads.addLast(DomainResult.Failure(DomainError("網路不穩", true)))
         cameos.uploads.addLast(okOrder(CameoStatus.UPLOADED)) // 若被自動重試，這筆會被吃掉
         cameos.submits.addLast(okOrder(CameoStatus.QUEUED))
-        runner.confirm("c1", CAMERA_FILE)
+        pending.seedDraftWithPhoto("c1")
+        runner.confirm("c1")
         advanceUntilIdle()
         assertFalse(runner.isAdvancing("key-1"))
         val vm = CameoProgressViewModel(SavedStateHandle(mapOf("clientRequestId" to "key-1")), runner)

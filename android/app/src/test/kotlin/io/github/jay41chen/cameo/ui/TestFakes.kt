@@ -70,8 +70,22 @@ class FakePendingRepo : PendingCameoRepository {
     private var next = 1
 
     override suspend fun getOrCreateDraft(clipId: String): PendingCameo {
-        rows.firstOrNull { it.clipId == clipId && it.step == PendingStep.CREATE }?.let { return it }
-        return PendingCameo("key-${next++}", clipId, null, PendingStep.CREATE, null).also { rows += it }
+        rows.firstOrNull { it.clipId == clipId && (it.step == PendingStep.DRAFT || it.step == PendingStep.CREATE) }
+            ?.let { return it }
+        return PendingCameo("key-${next++}", clipId, null, PendingStep.DRAFT, null).also { rows += it }
+    }
+
+    override suspend fun markConfirming(clientRequestId: String) {
+        val i = rows.indexOfFirst { it.clientRequestId == clientRequestId && it.step == PendingStep.DRAFT }
+        if (i >= 0) rows[i] = rows[i].copy(step = PendingStep.CREATE)
+    }
+
+    /** 相機頁「使用這張」之後的狀態：該片段已有附上照片的草稿（沒有草稿才新增）。 */
+    fun seedDraftWithPhoto(clipId: String): PendingCameo {
+        rows.firstOrNull { it.clipId == clipId && (it.step == PendingStep.DRAFT || it.step == PendingStep.CREATE) }
+            ?.let { return it }
+        val key = "key-${next++}"
+        return PendingCameo(key, clipId, null, PendingStep.DRAFT, null, "/photos/$key.jpg").also { rows += it }
     }
 
     override suspend fun markCreated(clientRequestId: String, cameoId: String) {

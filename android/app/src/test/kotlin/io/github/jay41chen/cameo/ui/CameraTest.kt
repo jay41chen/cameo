@@ -8,14 +8,19 @@ import io.github.jay41chen.cameo.domain.model.Clip
 import io.github.jay41chen.cameo.domain.model.DomainResult
 import io.github.jay41chen.cameo.domain.model.PendingCameo
 import io.github.jay41chen.cameo.domain.model.PendingStep
+import io.github.jay41chen.cameo.domain.repository.PendingCameoRepository
 import io.github.jay41chen.cameo.domain.usecase.AdvanceCameoUseCase
 import io.github.jay41chen.cameo.domain.usecase.AttachCameoPhotoUseCase
+import io.github.jay41chen.cameo.domain.usecase.AttachDraftPhotoUseCase
 import io.github.jay41chen.cameo.domain.usecase.ConfirmCameoUseCase
 import io.github.jay41chen.cameo.submission.SubmissionRunner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -51,7 +56,7 @@ class CameraViewModelTest {
             CoroutineScope(SupervisorJob() + Dispatchers.Main),
         )
     }
-    private fun vm(handle: SavedStateHandle = SavedStateHandle()) = CameraViewModel(handle, files, runner)
+    private fun vm(handle: SavedStateHandle = SavedStateHandle()) = CameraViewModel(handle, files, runner, AttachDraftPhotoUseCase(pending))
 
     @Test
     fun startsAtViewfinder_andCleansOldCaptures() {
@@ -136,13 +141,99 @@ class CameraViewModelTest {
     }
 
     @Test
-    fun usePhoto_withoutRequest_doesNotAdvance() = runTest {
-        val vm = vm()
+    fun usePhoto_withRequest_sendsNavigationEventAfterHandingOff() = runTest {
+        pending.rows += PendingCameo("k1", "c1", "u1", PendingStep.UPLOAD, null, null)
+        cameos.gets["u1"] = DomainResult.Success(
+            CameoOrder(Cameo("u1", Clip("c1", "t", 10), CameoStatus.QUEUED, null, null), null),
+        )
+        val vm = vm(SavedStateHandle(mapOf("request" to "k1", "clipId" to "c1")))
+        val events = collectEvents(vm)
         vm.onUsePhoto("/cache/captures/a.jpg")
         advanceUntilIdle()
-        assertTrue(pending.attached.isEmpty())
+        assertEquals(1, events.size)
+        assertEquals(listOf("k1" to "/cache/captures/a.jpg"), pending.attached)
+    }
+
+    private fun TestScope.collectEvents(vm: CameraViewModel): MutableList<Unit> {
+        val events = mutableListOf<Unit>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.usePhotoDone.collect { events += it } }
+        return events
+    }
+
+    @Test
+    fun usePhoto_withoutRequest_attachesToDraft_thenSendsNavigationOnce() = runTest {
+        val vm = vm(SavedStateHandle(mapOf("clipId" to "c1")))
+        val events = collectEvents(vm)
+        vm.onUsePhoto("/cache/captures/a.jpg")
+        assertTrue(events.isEmpty()) // 附照片完成前不導頁
+        advanceUntilIdle()
+        assertEquals(1, events.size)
+        assertEquals(listOf("key-1" to "/cache/captures/a.jpg"), pending.attached)
+        assertEquals(PendingStep.DRAFT, pending.rows.single().step)
+        assertEquals("c1", pending.rows.single().clipId)
         assertTrue(cameos.calls.isEmpty())
-        assertFalse(runner.isAdvancing("k1"))
+        assertFalse(runner.isAdvancing("key-1"))
+    }
+
+    @Test
+    fun usePhoto_withoutRequest_doubleTap_attachesOnce() = runTest {
+        val vm = vm(SavedStateHandle(mapOf("clipId" to "c1")))
+        val events = collectEvents(vm)
+        vm.onUsePhoto("/cache/captures/a.jpg")
+        vm.onUsePhoto("/cache/captures/a.jpg")
+        advanceUntilIdle()
+        assertEquals(1, pending.attached.size)
+        assertEquals(1, events.size)
+        assertEquals(1, pending.rows.size)
+    }
+
+    @Test
+    fun usePhoto_withoutRequest_attachFails_showsErrorAndDoesNotNavigate() = runTest {
+        pending.missingSources += "/cache/captures/a.jpg"
+        val vm = vm(SavedStateHandle(mapOf("clipId" to "c1")))
+        val events = collectEvents(vm)
+        vm.onUsePhoto("/cache/captures/a.jpg")
+        advanceUntilIdle()
+        assertEquals(CameraUiState.Error(CAPTURE_FAILED_MESSAGE), vm.state.value)
+        assertTrue(events.isEmpty())
+        assertTrue(pending.attached.isEmpty())
+    }
+
+    /** attachPhoto 第一次拋例外（模擬 Room 的 SQLiteFullException），之後照常。 */
+    private fun throwingOnceRepo(): PendingCameoRepository = object : PendingCameoRepository by pending {
+        private var thrown = false
+        override suspend fun attachPhoto(clientRequestId: String, sourcePath: String): Boolean {
+            if (!thrown) {
+                thrown = true
+                throw IllegalStateException("disk full")
+            }
+            return pending.attachPhoto(clientRequestId, sourcePath)
+        }
+    }
+
+    @Test
+    fun usePhoto_withoutRequest_attachThrows_showsErrorAndDoesNotNavigate() = runTest {
+        val vm = CameraViewModel(SavedStateHandle(mapOf("clipId" to "c1")), files, runner, AttachDraftPhotoUseCase(throwingOnceRepo()))
+        val events = collectEvents(vm)
+        vm.onUsePhoto("/cache/captures/a.jpg")
+        advanceUntilIdle()
+        assertEquals(CameraUiState.Error(CAPTURE_FAILED_MESSAGE), vm.state.value)
+        assertTrue(events.isEmpty())
+        assertTrue(pending.attached.isEmpty())
+    }
+
+    @Test
+    fun usePhoto_withoutRequest_afterFailure_retakeAndUseAgainAttachesNewPhoto() = runTest {
+        val vm = CameraViewModel(SavedStateHandle(mapOf("clipId" to "c1")), files, runner, AttachDraftPhotoUseCase(throwingOnceRepo()))
+        val events = collectEvents(vm)
+        vm.onUsePhoto("/cache/captures/a.jpg")
+        advanceUntilIdle()
+        assertEquals(CameraUiState.Error(CAPTURE_FAILED_MESSAGE), vm.state.value)
+        vm.retake()
+        vm.onUsePhoto("/cache/captures/b.jpg")
+        advanceUntilIdle()
+        assertEquals(1, events.size)
+        assertEquals(listOf("key-1" to "/cache/captures/b.jpg"), pending.attached)
     }
 }
 
@@ -160,8 +251,7 @@ class CameoNavTest {
     }
 
     @Test
-    fun confirmRoute_encodesPhotoPath() {
-        assertEquals("confirm/c1?photo=%2Fcache%2Fcaptures%2Fa%20b.jpg", confirmRoute("c1", "/cache/captures/a b.jpg"))
+    fun confirmRoute_hasNoPhotoArg() {
         assertEquals("confirm/c1", confirmRoute("c1"))
     }
 
