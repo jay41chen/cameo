@@ -143,6 +143,52 @@ flowchart TB
   VM -. "影片串流（OkHttp，直接用 :data 的連線設定）" .-> Backend
 ```
 
+以下分層圖畫後端各層的呼叫方向。
+
+```mermaid
+flowchart TB
+  Client["App／瀏覽器"]
+  Sim["vendor-sim（不套分層）"]
+  PG[("Postgres")]
+  subgraph CMD["cmd/api"]
+    Wire["組裝：建立 adapter 並注入 usecase"]
+  end
+  subgraph APPL["internal/app"]
+    Sweep["服務啟動與背景掃描（逾期、派工、生成逾時）"]
+  end
+  subgraph HTTP["internal/adapter/http"]
+    Handler["handler、debug API、控制台"]
+  end
+  subgraph UC["internal/usecase"]
+    Svc["Service"]
+    Ports["Port 介面（TxRunner、Tx、Queries、FileStore、VendorClient、Clock、RuntimeConfig）"]
+    Svc --> Ports
+  end
+  subgraph DOM["internal/domain"]
+    Rules["狀態機、點數、額度規則"]
+  end
+  subgraph IMPL["Port 實作"]
+    PGA["internal/adapter/postgres"]
+    VA["internal/adapter/vendor"]
+    FS["internal/adapter/filestore"]
+  end
+  Client -- "REST /v1、分享頁 /s、/debug" --> Handler
+  Sim -- "回呼 /webhooks/vendor" --> Handler
+  Handler --> Svc
+  Handler --> Rules
+  Sweep --> Svc
+  Svc --> Rules
+  Wire -. "建立並注入" .-> IMPL
+  Wire -. "啟動" .-> Sweep
+  PGA -. "實作 TxRunner、Tx、Queries" .-> Ports
+  VA -. "實作 VendorClient" .-> Ports
+  FS -. "實作 FileStore" .-> Ports
+  Handler -. "實作 RuntimeConfig" .-> Ports
+  PGA --> Rules
+  PGA --> PG
+  VA -- "POST /jobs" --> Sim
+```
+
 **明年做另一個平台（iOS）可不用重新設計的部分：** 後端與 API 契約、狀態機與點數／額度規則、`:domain` 的規則與模型概念（以 Swift 重新表達）。需重寫的是 View、平台實作（相機、推播、背景任務）。
 
 **iOS 的背景執行差異：** 後端契約、狀態機、點數與額度規則、本機草稿與接續的做法都不變；差別在背景執行。iOS 沒有前景服務，App 進背景後很快被暫停，無法像 Android 一樣在背景輪詢，所以 iOS 的完成通知要靠後端推播（APNs，見第 8 節「正式推播」），回到 App 時再查 API 補發；系統的背景刷新由系統決定何時執行、不保證會執行，只能當補充。上傳自拍改用系統的背景傳輸：App 被系統暫停或終止時由系統繼續傳；使用者從多工畫面強制關閉 App 時，系統會取消傳輸，回到 App 再從草稿接續。

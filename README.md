@@ -120,4 +120,5 @@ curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
 | [`spec-server.md`](spec-server.md) | 後端開發規格 |
 | [`spec-mobile.md`](spec-mobile.md) | App 開發規格 |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 架構與取捨 |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | 常見改動要動哪些地方 |
 | [`AI-LOG.md`](AI-LOG.md) | AI 協作紀錄 |

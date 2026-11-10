@@ -12,7 +12,7 @@
 - 回報要附指令輸出或檔案路徑，否則標「推測」；AI 推論的設計理由一律標 `[待確認]`。
 
 ## 分工
-- PO（session `Cameo`，在主資料夾的 `main`）：維護 `README.md`、`API.md`、`VERIFICATION.md`、`BACKLOG.md`、`backend/README.md`、`android/README.md`、`ARCHITECTURE.md`、`AI-LOG.md`、`CLAUDE.md`、`.claude/agents/`、`.gitignore`。行為、規則、API 約定的變更，都由使用者決定後由 PO 改；包含 `spec-server.md`、`spec-mobile.md` 的規格內容（畫面行為改 `spec-mobile.md` 第 2 章）。
+- PO（session `Cameo`，在主資料夾的 `main`）：維護 `README.md`、`API.md`、`VERIFICATION.md`、`BACKLOG.md`、`backend/README.md`、`android/README.md`、`ARCHITECTURE.md`、`CONTRIBUTING.md`、`AI-LOG.md`、`CLAUDE.md`、`.claude/agents/`、`.gitignore`。行為、規則、API 約定的變更，都由使用者決定後由 PO 改；包含 `spec-server.md`、`spec-mobile.md` 的規格內容（畫面行為改 `spec-mobile.md` 第 2 章）。
 - Server（`cameo-server`）：改 `backend/`、`docker-compose.yml`；`spec-server.md` 只更新實作狀態與實測結果；`backend/README.md` 由 PO 維護。
 - Mobile（`cameo-mobile`）：改 `android/`；`spec-mobile.md` 只更新實作狀態與實測結果；`android/README.md` 由 PO 維護。
 - 手動驗證不另立清單檔，驗證結果寫在各端規格的現況欄和回報裡。H9 之後由 PO 把已驗證與未涵蓋項目整理進 `VERIFICATION.md`。
