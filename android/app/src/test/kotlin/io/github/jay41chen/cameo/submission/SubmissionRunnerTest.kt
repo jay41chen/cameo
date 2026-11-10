@@ -593,4 +593,65 @@ class SubmissionRunnerTest {
         assertTrue((late as AdvanceRun.Finished).result is AdvanceResult.Done)
         assertTrue(r.confirmState("c1").value is ConfirmRun.Finished)
     }
+
+    @Test
+    fun `resume without state advances once`() = runTest {
+        draftRow()
+        repo.gets["u1"] = ok(CameoStatus.QUEUED)
+        val r = runner(bg())
+        r.resume("k1")
+        advanceUntilIdle()
+        assertEquals(listOf("get"), repo.calls)
+        assertTrue((r.advanceState("k1").value as AdvanceRun.Finished).result is AdvanceResult.Done)
+    }
+
+    @Test
+    fun `resume after observing state without a run still advances`() = runTest {
+        draftRow()
+        repo.gets["u1"] = ok(CameoStatus.QUEUED)
+        val r = runner(bg())
+        r.advanceState("k1")
+        r.resume("k1")
+        advanceUntilIdle()
+        assertEquals(listOf("get"), repo.calls)
+        assertTrue((r.advanceState("k1").value as AdvanceRun.Finished).result is AdvanceResult.Done)
+    }
+
+    @Test
+    fun `resume after a finished failure does not advance again`() = runTest {
+        draftRow()
+        repo.gets["u1"] = ok(CameoStatus.AWAITING_UPLOAD, upload = true)
+        repo.uploads += fail(retryable = true)
+        repo.uploads += ok(CameoStatus.UPLOADED)
+        val r = runner(bg())
+        r.advance("k1", null)
+        advanceUntilIdle()
+        assertRetryableOrFailed(r.advanceState("k1").value)
+        assertEquals(1, gated.uploadCalls)
+        r.resume("k1")
+        advanceUntilIdle()
+        assertEquals(1, gated.uploadCalls)
+        assertFalse(r.isAdvancing("k1"))
+    }
+
+    @Test
+    fun `resume while advancing does not start a second run`() = runTest {
+        draftRow()
+        repo.gets["u1"] = ok(CameoStatus.AWAITING_UPLOAD, upload = true)
+        repo.uploads += ok(CameoStatus.UPLOADED)
+        repo.submits += ok(CameoStatus.QUEUED)
+        gated.uploadGate = CompletableDeferred()
+        val r = runner(bg())
+        r.advance("k1", null)
+        advanceUntilIdle()
+        r.resume("k1")
+        gated.uploadGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(1, gated.uploadCalls)
+        assertEquals(1, keepAlive.events.count { it.startsWith("acquire") })
+    }
+
+    private fun assertRetryableOrFailed(state: AdvanceRun?) {
+        assertTrue(((state as AdvanceRun.Finished).result as AdvanceResult.Failed).error.retryable)
+    }
 }

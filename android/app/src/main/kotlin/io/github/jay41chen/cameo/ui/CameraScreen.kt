@@ -93,7 +93,10 @@ fun CameraScreen(onUsePhoto: (String) -> Unit, viewModel: CameraViewModel = hilt
 
     val s = state
     when {
-        s is CameraUiState.Preview -> PhotoPreview(s.path, onRetake = viewModel::retake, onUse = { onUsePhoto(s.path) })
+        s is CameraUiState.Preview -> PhotoPreview(s.path, onRetake = viewModel::retake, onUse = {
+            viewModel.onUsePhoto(s.path)
+            onUsePhoto(s.path)
+        })
         !granted -> Column(
             Modifier.fillMaxSize().padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,

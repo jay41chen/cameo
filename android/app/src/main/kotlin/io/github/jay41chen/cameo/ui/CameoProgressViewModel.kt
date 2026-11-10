@@ -36,26 +36,22 @@ internal fun progressActions(state: ProgressUiState): List<ProgressAction> = whe
 }
 
 /**
- * 進入就請程序層級的 [SubmissionRunner] 開始上傳與送出（同一個 clientRequestId 已在推進就接上，不重複啟動）；
- * 離開畫面不會取消，推進由 runner 執行，這裡只觀察 [SubmissionRunner.advanceState]。
- * 重拍後帶 `photo` 參數回來：交給 runner 後就立刻清掉參數，避免重建時再附一次。
+ * 進度頁只觀察 [SubmissionRunner.advanceState]，離開畫面不會取消。
+ * 推進由使用者動作觸發：確認支付、「繼續」、重拍「使用這張」、「重試」。
+ * 進入時呼叫 [SubmissionRunner.resume]，只在本程序沒有這筆狀態（程序被殺重建）時接續。
  */
 @HiltViewModel
 class CameoProgressViewModel @Inject constructor(
-    private val savedStateHandle: SavedStateHandle,
+    savedStateHandle: SavedStateHandle,
     private val runner: SubmissionRunner,
 ) : ViewModel() {
     private val clientRequestId: String = checkNotNull(savedStateHandle["clientRequestId"])
-    private var photo: String? = savedStateHandle[PHOTO_KEY]
 
     private val _state = MutableStateFlow<ProgressUiState>(ProgressUiState.Working(null))
     val state: StateFlow<ProgressUiState> = _state
 
     init {
-        // 先呼叫 advance 再收集：不會先看到上一次留下的結果；先清 photo：程序被殺重建時不會拿已搬走的檔案再附一次
-        runner.advance(clientRequestId, photo)
-        photo = null
-        savedStateHandle[PHOTO_KEY] = null
+        runner.resume(clientRequestId)
         viewModelScope.launch {
             runner.advanceState(clientRequestId).collect { run ->
                 when (run) {
@@ -80,8 +76,6 @@ class CameoProgressViewModel @Inject constructor(
     /** 執行中不重入。 */
     fun retry() {
         if (runner.isAdvancing(clientRequestId)) return
-        runner.advance(clientRequestId, photo)
+        runner.advance(clientRequestId, null)
     }
 }
-
-private const val PHOTO_KEY = "photo"

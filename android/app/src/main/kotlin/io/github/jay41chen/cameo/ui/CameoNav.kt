@@ -11,7 +11,7 @@ internal const val ROUTE_MY_CAMEOS = "my_cameos"
 internal const val ROUTE_CAMERA = "camera/{clipId}?request={request}"
 internal const val ROUTE_CONFIRM = "confirm/{clipId}?photo={photo}"
 internal const val ROUTE_VIDEO = "video/{cameoId}"
-internal const val ROUTE_CAMEO = "cameo/{clientRequestId}?photo={photo}"
+internal const val ROUTE_CAMEO = "cameo/{clientRequestId}"
 
 internal fun videoRoute(cameoId: String): String = "video/$cameoId"
 
@@ -23,9 +23,8 @@ internal fun cameraRoute(clipId: String, request: String? = null): String =
 internal fun confirmRoute(clipId: String, photo: String? = null): String =
     if (photo == null) "confirm/$clipId" else "confirm/$clipId?photo=${urlEncode(photo)}"
 
-/** 進度畫面（上傳、送出）。[photo] 為重拍後的相機暫存檔路徑。 */
-internal fun cameoRoute(clientRequestId: String, photo: String? = null): String =
-    if (photo == null) "cameo/$clientRequestId" else "cameo/$clientRequestId?photo=${urlEncode(photo)}"
+/** 進度畫面（上傳、送出）。只觀察，推進由使用者動作在導頁前交給 runner。 */
+internal fun cameoRoute(clientRequestId: String): String = "cameo/$clientRequestId"
 
 /**
  * 未完成列的「繼續」：已建單的草稿進進度畫面（由後端狀態決定下一步）；

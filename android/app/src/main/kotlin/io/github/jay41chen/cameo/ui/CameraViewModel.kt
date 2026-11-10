@@ -2,6 +2,7 @@ package io.github.jay41chen.cameo.ui
 
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
+import io.github.jay41chen.cameo.submission.SubmissionRunner
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +26,7 @@ internal const val CAPTURE_FAILED_MESSAGE = "拍照失敗，請再試一次"
 class CameraViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
     private val files: CaptureFiles,
+    private val runner: SubmissionRunner,
 ) : ViewModel() {
     private val restored: String? = savedStateHandle.get<String>(PREVIEW_KEY)?.takeIf { files.exists(it) }
 
@@ -34,6 +36,10 @@ class CameraViewModel @Inject constructor(
     val state: StateFlow<CameraUiState> = _state
 
     private var capturingPath: String? = null
+
+    /** 替既有草稿重拍時的 clientRequestId；從確認頁進來為 null。 */
+    private val request: String? = savedStateHandle["request"]
+    private var photoHandedOff = false
 
     init {
         savedStateHandle[PREVIEW_KEY] = restored
@@ -68,6 +74,14 @@ class CameraViewModel @Inject constructor(
         (_state.value as? CameraUiState.Preview)?.let { files.delete(it.path) }
         savedStateHandle[PREVIEW_KEY] = null
         _state.value = CameraUiState.Viewfinder
+    }
+
+    /** 重拍替既有草稿「使用這張」：把照片交給 runner 推進，只交一次。沒有 request 時不做事。 */
+    fun onUsePhoto(path: String) {
+        val id = request ?: return
+        if (photoHandedOff) return
+        photoHandedOff = true
+        runner.advance(id, path)
     }
 }
 

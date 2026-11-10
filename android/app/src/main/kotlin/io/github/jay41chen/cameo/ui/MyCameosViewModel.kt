@@ -219,6 +219,7 @@ class MyCameosViewModel @Inject constructor(
     /** 已建單的繼續不檢查；尚未建單的繼續走和 FAB 一樣的檢查。 */
     fun onContinueClick(row: UnfinishedCameo, permission: StartPermission) {
         if (row.pending.cameoId != null) {
+            runner.advance(row.pending.clientRequestId, null)
             _startNavigation.trySend(StartNavigation.Continue(row.pending))
             return
         }

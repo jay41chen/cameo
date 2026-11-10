@@ -5,17 +5,53 @@ import io.github.jay41chen.cameo.domain.model.Cameo
 import io.github.jay41chen.cameo.domain.model.CameoOrder
 import io.github.jay41chen.cameo.domain.model.CameoStatus
 import io.github.jay41chen.cameo.domain.model.Clip
+import io.github.jay41chen.cameo.domain.model.DomainResult
 import io.github.jay41chen.cameo.domain.model.PendingCameo
 import io.github.jay41chen.cameo.domain.model.PendingStep
+import io.github.jay41chen.cameo.domain.usecase.AdvanceCameoUseCase
+import io.github.jay41chen.cameo.domain.usecase.AttachCameoPhotoUseCase
+import io.github.jay41chen.cameo.domain.usecase.ConfirmCameoUseCase
+import io.github.jay41chen.cameo.submission.SubmissionRunner
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class CameraViewModelTest {
     private val files = FakeCaptureFiles()
-    private fun vm(handle: SavedStateHandle = SavedStateHandle()) = CameraViewModel(handle, files)
+    private val pending = FakePendingRepo()
+    private val cameos = FakeCameoRepo()
+
+    @Before
+    fun setUp() = Dispatchers.setMain(StandardTestDispatcher())
+
+    @After
+    fun tearDown() = Dispatchers.resetMain()
+
+    // 用 Main（= runTest 同一個 scheduler），工作照正式環境的順序排程，不會在 launch 回傳前就跑完
+    private val runner by lazy {
+        SubmissionRunner(
+            ConfirmCameoUseCase(cameos, pending),
+            AdvanceCameoUseCase(cameos, pending),
+            AttachCameoPhotoUseCase(pending),
+            FakeKeepAlive(),
+            CoroutineScope(SupervisorJob() + Dispatchers.Main),
+        )
+    }
+    private fun vm(handle: SavedStateHandle = SavedStateHandle()) = CameraViewModel(handle, files, runner)
 
     @Test
     fun startsAtViewfinder_andCleansOldCaptures() {
@@ -82,6 +118,32 @@ class CameraViewModelTest {
         assertEquals(CameraUiState.Viewfinder, vm.state.value)
         assertNull(handle.get<String>("preview"))
     }
+
+    @Test
+    fun usePhoto_withRequest_handsPathToRunnerOnce() = runTest {
+        pending.rows += PendingCameo("k1", "c1", "u1", PendingStep.UPLOAD, null, null)
+        cameos.gets["u1"] = DomainResult.Success(
+            CameoOrder(Cameo("u1", Clip("c1", "t", 10), CameoStatus.QUEUED, null, null), null),
+        )
+        val vm = vm(SavedStateHandle(mapOf("request" to "k1")))
+        vm.onUsePhoto("/cache/captures/a.jpg")
+        advanceUntilIdle() // 第一次推進跑完，runner 已不在跑
+        assertFalse(runner.isAdvancing("k1"))
+        vm.onUsePhoto("/cache/captures/b.jpg") // 再點：只能被 photoHandedOff 旗標擋下
+        advanceUntilIdle()
+        assertEquals(listOf("k1" to "/cache/captures/a.jpg"), pending.attached)
+        assertEquals(listOf("get"), cameos.calls)
+    }
+
+    @Test
+    fun usePhoto_withoutRequest_doesNotAdvance() = runTest {
+        val vm = vm()
+        vm.onUsePhoto("/cache/captures/a.jpg")
+        advanceUntilIdle()
+        assertTrue(pending.attached.isEmpty())
+        assertTrue(cameos.calls.isEmpty())
+        assertFalse(runner.isAdvancing("k1"))
+    }
 }
 
 class CameoNavTest {
@@ -112,7 +174,7 @@ class CameoNavTest {
 
     @Test
     fun cameoAndCameraRoutes_encodeArguments() {
-        assertEquals("cameo/k1?photo=%2Fcache%2Fa%20b.jpg", cameoRoute("k1", "/cache/a b.jpg"))
+        assertEquals("cameo/k1", cameoRoute("k1"))
         assertEquals("camera/c1?request=k1", cameraRoute("c1", "k1"))
         assertEquals("camera/c1", cameraRoute("c1"))
     }

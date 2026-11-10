@@ -127,7 +127,7 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
             FlowScaffold {
                 CameraScreen(
                     onUsePhoto = {
-                        val route = if (request != null) cameoRoute(request, it) else confirmRoute(clipId, it)
+                        val route = if (request != null) cameoRoute(request) else confirmRoute(clipId, it)
                         rootNav.navigateSingleTop(route, ROUTE_CAMERA)
                     },
                 )
@@ -158,11 +158,6 @@ fun CameoRoot(openMyCameosRequest: Int = 0) {
             ROUTE_CAMEO,
             arguments = listOf(
                 navArgument("clientRequestId") { type = NavType.StringType },
-                navArgument("photo") {
-                    type = NavType.StringType
-                    nullable = true
-                    defaultValue = null
-                },
             ),
         ) {
             FlowScaffold {

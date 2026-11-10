@@ -5,7 +5,14 @@ import io.github.jay41chen.cameo.domain.model.DomainResult
 import io.github.jay41chen.cameo.domain.model.PendingCameo
 import io.github.jay41chen.cameo.domain.model.PendingStep
 import io.github.jay41chen.cameo.domain.model.UnfinishedCameo
+import io.github.jay41chen.cameo.domain.usecase.AdvanceCameoUseCase
+import io.github.jay41chen.cameo.domain.usecase.AttachCameoPhotoUseCase
+import io.github.jay41chen.cameo.domain.usecase.ConfirmCameoUseCase
+import io.github.jay41chen.cameo.submission.AdvanceRun
+import io.github.jay41chen.cameo.submission.SubmissionRunner
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -322,6 +329,26 @@ class StartPermissionViewModelTest {
         assertEquals(StartPrompt.NONE, vm.startPrompt.value)
         assertEquals(StartPermission.entries.size, navs.size)
         assertTrue(navs.all { it == StartNavigation.Continue(created) })
+    }
+
+    @Test
+    fun continue_withOrder_advancesRunnerOnce_andNavigates() = runTest {
+        pending.rows += created
+        cameos.gets["u2"] = DomainResult.Success(testOrder(CameoStatus.QUEUED, "u2"))
+        val runner = SubmissionRunner(
+            ConfirmCameoUseCase(cameos, pending),
+            AdvanceCameoUseCase(cameos, pending),
+            AttachCameoPhotoUseCase(pending),
+            FakeKeepAlive(),
+            CoroutineScope(SupervisorJob() + Dispatchers.Main), // 與 runTest 同一個 scheduler
+        )
+        val vm = myCameosVm(pending = pending, cameos = cameos, quota = quota, runner = runner)
+        val navs = collectStartNavigation(vm)
+        vm.onContinueClick(createdRow, StartPermission.PROCEED)
+        advanceUntilIdle()
+        assertEquals(listOf("get"), cameos.calls)
+        assertTrue(runner.advanceState("k2").value is AdvanceRun.Finished)
+        assertEquals(listOf<StartNavigation>(StartNavigation.Continue(created)), navs)
     }
 
     @Test

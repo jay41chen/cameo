@@ -46,6 +46,8 @@ private const val RUNNER_TAG = "SubmissionRunner"
  * - keepAlive 的 key 每次提交各自獨立（`submit:<clipId>:<序號>`），同片段的兩張訂單不會互相放掉對方的保持。
  * - confirm 成功（非 EXPIRED）後在同一條工作裡直接推進，並把該工作登記為該 clientRequestId 的推進工作。
  * - 工作結束只移除「進行中」登記，最後的狀態保留給之後才來觀察的畫面。
+ * - [advanceJobs] 只表示「正在跑」；[advanceFlows] 的值不為 null 表示「本程序處理過這筆」。
+ *   [advance] 看前者（沒在跑就開始新的一次），[resume] 看後者（處理過就不動，供進度頁進入時接續）。
  * - keepAlive 的 release 一定在 `finally`，且在推進與 track 之後。
  * - [finished] 在 confirm、advance 各自那條工作結束時發一次（成功、失敗、例外、取消都發，在鎖外）；
  *   confirm 接著推進的整條工作只發一次；重複呼叫被擋掉與 scope 已取消的提早 return 不發。
@@ -140,32 +142,46 @@ class SubmissionRunner(
     }
 
     fun advance(clientRequestId: String, photoSourcePath: String?) {
+        synchronized(lock) { startAdvance(clientRequestId, photoSourcePath) }
+    }
+
+    /**
+     * 進度頁進入時接續：本程序已有這筆的推進狀態（正在跑或已結束）就不動；
+     * 沒有（例如程序被殺重建）才開始一次。判斷看 [advanceFlows] 的值不為 null，因為 [advanceState] 會先放一個值為 null 的 flow。
+     */
+    fun resume(clientRequestId: String) {
         synchronized(lock) {
-            if (clientRequestId in advanceJobs) return
-            if (!scope.isActive) {
-                advanceFlow(clientRequestId).value = AdvanceRun.Finished(retryableAdvanceFailure())
-                return
-            }
-            val job = scope.launch {
-                synchronized(lock) { } // 等外層登記完成
-                val self = coroutineContext[Job]!!
-                val key = "advance:$clientRequestId"
-                try {
-                    keepAlive.acquire(key)
-                    runAdvance(clientRequestId, photoSourcePath)
-                } finally {
-                    keepAlive.release(key)
-                    synchronized(lock) {
-                        val af = advanceFlow(clientRequestId)
-                        if (af.value is AdvanceRun.Working) af.value = AdvanceRun.Finished(retryableAdvanceFailure())
-                        if (advanceJobs[clientRequestId] === self) advanceJobs.remove(clientRequestId)
-                    }
-                    _finished.tryEmit(Unit)
-                }
-            }
-            advanceJobs[clientRequestId] = job
-            advanceFlow(clientRequestId).value = AdvanceRun.Working(null)
+            if (advanceFlows[clientRequestId]?.value != null) return
+            startAdvance(clientRequestId, null)
         }
+    }
+
+    // 呼叫端必須持有 lock
+    private fun startAdvance(clientRequestId: String, photoSourcePath: String?) {
+        if (clientRequestId in advanceJobs) return
+        if (!scope.isActive) {
+            advanceFlow(clientRequestId).value = AdvanceRun.Finished(retryableAdvanceFailure())
+            return
+        }
+        val job = scope.launch {
+            synchronized(lock) { } // 等外層登記完成
+            val self = coroutineContext[Job]!!
+            val key = "advance:$clientRequestId"
+            try {
+                keepAlive.acquire(key)
+                runAdvance(clientRequestId, photoSourcePath)
+            } finally {
+                keepAlive.release(key)
+                synchronized(lock) {
+                    val af = advanceFlow(clientRequestId)
+                    if (af.value is AdvanceRun.Working) af.value = AdvanceRun.Finished(retryableAdvanceFailure())
+                    if (advanceJobs[clientRequestId] === self) advanceJobs.remove(clientRequestId)
+                }
+                _finished.tryEmit(Unit)
+            }
+        }
+        advanceJobs[clientRequestId] = job
+        advanceFlow(clientRequestId).value = AdvanceRun.Working(null)
     }
 
     /**

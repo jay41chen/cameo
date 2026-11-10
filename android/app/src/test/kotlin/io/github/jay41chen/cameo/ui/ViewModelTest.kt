@@ -114,7 +114,7 @@ internal fun myCameosVm(
         AdvanceCameoUseCase(cameos, pending),
         AttachCameoPhotoUseCase(pending),
         FakeKeepAlive(),
-        CoroutineScope(SupervisorJob()),
+        CoroutineScope(SupervisorJob() + Dispatchers.Main),
     ),
 ): MyCameosViewModel {
     val repo = object : CameoRepository by cameos {

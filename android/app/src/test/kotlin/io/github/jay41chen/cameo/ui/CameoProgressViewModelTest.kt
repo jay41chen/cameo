@@ -34,6 +34,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -77,10 +78,19 @@ class CameoProgressViewModelTest {
         CoroutineScope(SupervisorJob() + Dispatchers.Main), // 測試的 Main dispatcher，與 runTest 同一個 scheduler
     )
 
-    private val runner by lazy { runnerFor(gated, pending) }
+    private var currentRunner: SubmissionRunner? = null
+    private val runner: SubmissionRunner get() = currentRunner ?: runnerFor(gated, pending).also { currentRunner = it }
 
-    private fun vm(photo: String? = null, handle: SavedStateHandle = SavedStateHandle(mapOf("clientRequestId" to "k1", "photo" to photo))) =
-        CameoProgressViewModel(handle, runner)
+    /** 模擬程序重建：之後的 ViewModel 用全新的 runner（沒有任何先前的推進狀態）。 */
+    private fun newProcess() {
+        currentRunner = null
+    }
+
+    /** [photo] 不為 null 時，先由 runner 推進並附照片（代表重拍「使用這張」），再建立進度頁觀察。 */
+    private fun vm(photo: String? = null): CameoProgressViewModel {
+        if (photo != null) runner.advance("k1", photo)
+        return CameoProgressViewModel(SavedStateHandle(mapOf("clientRequestId" to "k1")), runner)
+    }
 
     @Test
     fun start_acquiresWithClientRequestId_beforeAnyWork() = runTest {
@@ -96,6 +106,7 @@ class CameoProgressViewModelTest {
     fun done_nonTerminal_tracksThenReleases_beforeStateIsDone() = runTest {
         listOf(CameoStatus.QUEUED, CameoStatus.GENERATING, CameoStatus.UNKNOWN).forEach { status ->
             pending.rows.clear()
+            newProcess()
             keepAlive.events.clear()
             row()
             cameos.gets["u1"] = okOrder(status)
@@ -114,6 +125,7 @@ class CameoProgressViewModelTest {
     fun done_alreadyFinished_doesNotTrack_butReleases() = runTest {
         listOf(CameoStatus.SUCCEEDED, CameoStatus.FAILED).forEach { status ->
             pending.rows.clear()
+            newProcess()
             keepAlive.events.clear()
             row()
             cameos.gets["u1"] = okOrder(status)
@@ -134,6 +146,7 @@ class CameoProgressViewModelTest {
 
         keepAlive.events.clear()
         pending.rows.clear()
+        newProcess()
         row(photo = null)
         cameos.gets["u1"] = okOrder(CameoStatus.AWAITING_UPLOAD, upload = true)
         vm()
@@ -142,6 +155,7 @@ class CameoProgressViewModelTest {
 
         keepAlive.events.clear()
         pending.rows.clear()
+        newProcess()
         row(cameoId = null)
         vm()
         advanceUntilIdle()
@@ -149,12 +163,14 @@ class CameoProgressViewModelTest {
 
         keepAlive.events.clear()
         pending.rows.clear()
+        newProcess()
         vm()
         advanceUntilIdle()
         assertEquals("gone", release, keepAlive.events)
 
         keepAlive.events.clear()
         pending.rows.clear()
+        newProcess()
         row()
         cameos.gets["u1"] = okOrder(CameoStatus.AWAITING_UPLOAD, upload = true)
         cameos.uploads.addLast(DomainResult.Failure(DomainError("網路不穩", true)))
@@ -195,6 +211,7 @@ class CameoProgressViewModelTest {
         // Gone
         keepAlive.events.clear()
         pending.rows.clear()
+        newProcess()
         vm(photo = CAMERA_FILE)
         advanceUntilIdle()
         assertEquals(listOf("acquire:advance:k1", "release:advance:k1"), keepAlive.events)
@@ -219,18 +236,43 @@ class CameoProgressViewModelTest {
     }
 
     @Test
-    fun photoArg_isClearedAtOnceAndHandedToRunner() = runTest {
+    fun photoHandedToRunnerBeforeViewModel_isAttachedOnce() = runTest {
         row(photo = null)
         cameos.gets["u1"] = okOrder(CameoStatus.QUEUED)
-        val handle = SavedStateHandle(mapOf("clientRequestId" to "k1", "photo" to CAMERA_FILE))
-        vm(handle = handle)
-        assertNull(handle.get<String>("photo")) // 排程還沒推進就已清掉
+        vm(photo = CAMERA_FILE)
         advanceUntilIdle()
         assertEquals(listOf("k1" to CAMERA_FILE), pending.attached)
     }
 
     @Test
-    fun staleFinishedFromEarlierRun_isNeverShown_andAdvanceRunsAgain() = runTest {
+    fun confirmThenFastUploadFailure_thenProgressPage_uploadsOnce_andShowsRetryableFailure() = runTest {
+        // 本 bug：建單後 runner 接著推進，上傳快速失敗、工作已結束；之後進度頁才建立，不可再推進一次
+        cameos.creates += okOrder(CameoStatus.AWAITING_UPLOAD, upload = true)
+        cameos.gets["u1"] = okOrder(CameoStatus.AWAITING_UPLOAD, upload = true)
+        cameos.uploads.addLast(DomainResult.Failure(DomainError("網路不穩", true)))
+        cameos.uploads.addLast(okOrder(CameoStatus.UPLOADED)) // 若被自動重試，這筆會被吃掉
+        cameos.submits.addLast(okOrder(CameoStatus.QUEUED))
+        runner.confirm("c1", CAMERA_FILE)
+        advanceUntilIdle()
+        assertFalse(runner.isAdvancing("key-1"))
+        val vm = CameoProgressViewModel(SavedStateHandle(mapOf("clientRequestId" to "key-1")), runner)
+        advanceUntilIdle()
+        assertEquals(1, cameos.calls.count { it == "upload" })
+        assertEquals(ProgressUiState.Failed("網路不穩", true), vm.state.value)
+    }
+
+    @Test
+    fun freshRunner_simulatingProcessRecreation_autoAdvances() = runTest {
+        row()
+        cameos.gets["u1"] = okOrder(CameoStatus.QUEUED)
+        val vm = CameoProgressViewModel(SavedStateHandle(mapOf("clientRequestId" to "k1")), runnerFor(cameos, pending))
+        advanceUntilIdle()
+        assertTrue(vm.state.value is ProgressUiState.Done)
+        assertEquals(listOf("get"), cameos.calls)
+    }
+
+    @Test
+    fun staleFinishedFromEarlierRun_isNeverShown_whenContinueAdvancesAgain() = runTest {
         row()
         cameos.gets["u1"] = okOrder(CameoStatus.AWAITING_UPLOAD, upload = true)
         cameos.uploads.addLast(DomainResult.Failure(DomainError("舊的失敗", true)))
@@ -242,6 +284,7 @@ class CameoProgressViewModelTest {
 
         cameos.uploads.addLast(okOrder(CameoStatus.UPLOADED))
         cameos.submits.addLast(okOrder(CameoStatus.QUEUED))
+        runner.advance("k1", null) // 「繼續」：由使用者動作觸發推進
         val vm = vm()
         val seen = mutableListOf<ProgressUiState>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.toList(seen) }
@@ -252,16 +295,14 @@ class CameoProgressViewModelTest {
     }
 
     @Test
-    fun attachSuccess_clearsPhotoArgImmediately_thenRunsToDone() = runTest {
+    fun attachSuccess_thenRunsToDone_attachingOnce() = runTest {
         row(photo = null)
         cameos.gets["u1"] = okOrder(CameoStatus.AWAITING_UPLOAD, upload = true)
         cameos.uploads.addLast(okOrder(CameoStatus.UPLOADED))
         cameos.submits.addLast(okOrder(CameoStatus.QUEUED))
-        val handle = SavedStateHandle(mapOf("clientRequestId" to "k1", "photo" to CAMERA_FILE))
-        val vm = vm(handle = handle)
-        gated.uploadGate = CompletableDeferred() // 卡在上傳，確認附上照片後就已經清掉參數
+        gated.uploadGate = CompletableDeferred() // 卡在上傳
+        val vm = vm(photo = CAMERA_FILE)
         advanceUntilIdle()
-        assertNull(handle.get<String>("photo"))
         assertEquals(listOf("k1" to CAMERA_FILE), pending.attached)
         assertEquals(ProgressUiState.Working(CameoStep.UPLOADING), vm.state.value)
         gated.uploadGate!!.complete(Unit)
@@ -316,6 +357,7 @@ class CameoProgressViewModelTest {
             CameoStatus.UNKNOWN,
         ).forEach { status ->
             pending.rows.clear()
+            newProcess()
             row()
             cameos.gets["u1"] = okOrder(status)
             val vm = vm()
@@ -335,6 +377,7 @@ class CameoProgressViewModelTest {
     @Test
     fun noRow_isGone_andCameoNotFoundIsGone() = runTest {
         assertEquals(ProgressUiState.Gone, vm().also { advanceUntilIdle() }.state.value)
+        newProcess()
         row()
         cameos.gets["u1"] = DomainResult.Failure(DomainError("x", false, "CAMEO_NOT_FOUND"))
         val vm2 = vm()
@@ -381,8 +424,7 @@ class CameoProgressViewModelTest {
         cameos.uploads.addLast(DomainResult.Failure(DomainError("網路不穩", true)))
         cameos.uploads.addLast(okOrder(CameoStatus.UPLOADED))
         cameos.submits.addLast(okOrder(CameoStatus.QUEUED))
-        val handle = SavedStateHandle(mapOf("clientRequestId" to "k1", "photo" to CAMERA_FILE))
-        val vm = vm(handle = handle)
+        val vm = vm(photo = CAMERA_FILE)
         advanceUntilIdle()
         assertEquals(ProgressUiState.Failed("網路不穩", true), vm.state.value)
         assertEquals(1, pending.attached.size)
