@@ -17,7 +17,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 - Header：`Authorization: Bearer test-token`（假設已用測試帳號登入）、`X-App-Version: <版本碼整數>` `[待確認]`。
 - 錯誤格式：`{"code":"...","message":"給使用者看的文字","retryable":false}`；`retryable` 為 `true` 時 App 可稍後重試。
 - 先判斷路由再驗 token：未知路徑（不論有沒有 token）回 `404 NOT_FOUND`；已知路徑但方法不對回 `405 METHOD_NOT_ALLOWED`（帶 `Allow`）；已知路徑且方法正確，缺少或錯誤的 `Authorization` 才回 `401 UNAUTHORIZED`；後端錯誤回 `500 INTERNAL`（`retryable: true`）。都使用上述錯誤格式。
-- App 忽略未知欄位。未知的訂單 `status` 視為非終態；有後端 `display` 就顯示，沒有才用通用文字；兩種情況都重新查詢。
+- App 忽略未知欄位。未知的訂單 `status` 視為非終態；有後端 `display` 就顯示，沒有才用通用文字，兩種情況都重新查詢。App 會繼續追蹤到時間上限（35 分鐘），轉成 `SUCCEEDED`／`FAILED` 時盡力通知，首頁可視時也輪詢；提交流程遇到它則停下，不上傳、不送出。以上只有單元測試，未在模擬器實測。
 - 版本過舊回 `426 UPGRADE_REQUIRED`。
 - `GET /s/{token}`、`GET /s/{token}/video` 免登入，不需 `Authorization`；`GET /s/{token}` 的 404 與查詢錯誤時的 500 回 HTML，是上述錯誤格式的例外，細節見「影片與分享」。
 - 時間為 ISO 8601，台北時間（+08:00）。
