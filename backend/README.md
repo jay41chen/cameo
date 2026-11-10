@@ -18,12 +18,12 @@ docker compose up --build
 
 | 變數 | 預設 | 說明 |
 |---|---|---|
-| `DAILY_LIMIT` | `3` | 每人每日（台北時間）客串次數上限 |
+| `DAILY_LIMIT` | `3` | 每人每日（台北時間）客串次數上限；執行中可用 `/debug/config` 或網頁控制台的「設定」調整（見 [`../API.md`](../API.md)「Debug 異常 API」），值只存在記憶體，`api` 重啟後回到環境變數的值 |
 | `UPLOAD_TTL` | `1h` | 建單後的上傳期限，超過會自動釋放點數與額度（Go duration，例如 `5s`、`30m`） |
 | `EXPIRY_SWEEP_INTERVAL` | `30s` | 逾期掃描間隔 |
 | `SELFIE_DIR` | `/data/selfies` | 自拍存放目錄；`docker-compose.yml` 把 named volume `selfies` 掛在這裡，容器重啟後檔案仍在（容器以 `nobody` 執行，目錄在映像檔內已設為可寫） |
 | `MAX_SELFIE_BYTES` | `10485760` | 自拍檔案大小上限（bytes），超過回 `413 SELFIE_TOO_LARGE` |
-| `GENERATION_TTL` | `30m`（compose 預設 `2m`） | 生成期限：送出（轉 `QUEUED`）起算，涵蓋排隊與生成；到期（`<=` 現在）仍未完成的訂單轉 `FAILED`（原因 `TIMEOUT`）並退點。期限在送出時寫入訂單，改設定只影響新訂單，容器重建後才生效。`VENDOR_DELAY_SEC` 調到接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時 |
+| `GENERATION_TTL` | `30m`（compose 預設 `2m`） | 生成期限：送出（轉 `QUEUED`）起算，涵蓋排隊與生成；到期（`<=` 現在）仍未完成的訂單轉 `FAILED`（原因 `TIMEOUT`）並退點。期限在送出時寫入訂單，改設定只影響新訂單；改環境變數要重建容器才生效，執行中改用 `/debug/config`（見 [`../API.md`](../API.md)「Debug 異常 API」），值只存在記憶體，`api` 重啟後回到環境變數的值。`VENDOR_DELAY_SEC` 調到接近或超過期限時，要同時調大 `GENERATION_TTL`，否則正常訂單也會逾時 |
 | `DEBUG_API_ENABLED` | 程式預設關閉；compose 預設 `true` | 控制 `/debug/*`（含網頁控制台 `/debug/console`，見 [`../API.md`](../API.md)「Debug 異常 API」），也控制 `PUT share` 的 `debug_base_url`（見 [`../API.md`](../API.md)「影片與分享」）；只有值為 `true` 才開啟，未開啟時 `/debug/*` 回 `404` |
 | `PUBLIC_BASE_URL` | `http://localhost:8080`（程式與 compose 相同） | 分享網址的 base，不寫死。預設用電腦瀏覽器開；要在模擬器內開，設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用。不會跟著 `API_PORT` 變動；改 `API_PORT` 時要一起設定，否則分享連結的 port 會錯 |
 | `DISPATCH_SWEEP_INTERVAL` | `2s` | 派工與生成逾時掃描間隔；每個週期先處理逾時、再派工（每次最多 20 筆，`created_at` 由舊到新） |
@@ -32,13 +32,13 @@ docker compose up --build
 
 例如 `UPLOAD_TTL=5s EXPIRY_SWEEP_INTERVAL=1s docker compose up -d` 可快速觀察逾期釋放。
 
-本機要放寬每日額度可用 `DAILY_LIMIT=100 docker compose up -d`；預設值不變。
+本機要放寬每日額度可用 `DAILY_LIMIT=100 docker compose up -d`；預設值不變；也可以在網頁控制台的「設定」直接改。
 
 `vendor-sim` 的設定（環境變數，見 `docker-compose.yml`）：
 
 | 變數 | compose 預設 | 說明 |
 |---|---|---|
-| `VENDOR_DELAY_SEC` | `20` | 收到工作後等幾秒才送回呼（可用小數） |
+| `VENDOR_DELAY_SEC` | `20` | 收到工作後等幾秒才送回呼（可用小數）；執行中可用 `/debug/config` 或網頁控制台的「設定」調整（見 [`../API.md`](../API.md)「Debug 異常 API」），覆寫存在 `api` 的記憶體，`api` 重啟後清除，回到這裡的值；重啟 `vendor-sim` 不影響覆寫。覆寫只影響之後收到的新工作 |
 | `VENDOR_CALLBACK_URL` | `http://api:8080/webhooks/vendor` | 回呼目標 |
 | `VENDOR_PUBLIC_URL` | `http://vendor-sim:9000` | 回呼 `video_url` 的 base（`{base}/videos/{job_id}.mp4`） |
 | `VENDOR_FAULTS_URL` | `http://api:8080/debug/faults/consume` | 取得異常的端點（程式預設相同），單次逾時 2 秒 |

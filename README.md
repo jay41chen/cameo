@@ -74,12 +74,12 @@ curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
 
 後端啟動後，在專案根目錄用 `backend/scripts/fault.sh` 登記異常，再到 App 上照常客串一次，就會觸發。
 
-也可以用瀏覽器開 `http://localhost:8080/debug/console`：按情境按鈕會填入範例 JSON，可先改參數（例如內容審核拒絕的 `CONTENT_REJECTED`）再按「登記」；頁面也能清空異常、重設環境，並每 3 秒顯示點數、額度和最近 10 筆已送出的訂單。
+也可以用瀏覽器開 `http://localhost:8080/debug/console`：按情境按鈕會填入範例 JSON，可先改參數（例如內容審核拒絕的 `CONTENT_REJECTED`）再按「登記」；頁面也能清空異常、重設環境，並每 3 秒顯示點數、額度和最近 10 筆已送出的訂單；「設定」區塊可調整每日額度、生成期限和廠商延遲（只存在記憶體，後端重啟還原）。
 
 | 異常 | 指令 | App 上會看到 |
 |---|---|---|
 | 廠商回報失敗 | `backend/scripts/fault.sh vendor-failed` | 失敗通知，點數退還 |
-| 廠商不回呼 | `backend/scripts/fault.sh vendor-no-callback` | 約 2 分鐘後逾時，失敗通知，點數退還 |
+| 廠商不回呼 | `backend/scripts/fault.sh vendor-no-callback` | 約 2 分鐘後逾時（預設生成期限；在控制台改過就不同），失敗通知，點數退還 |
 | 廠商重複回呼 | `backend/scripts/fault.sh vendor-duplicate-callback` | 只有 1 則通知、只扣 1 次 |
 | 上傳中斷 | `backend/scripts/fault.sh upload-interrupted` | 錯誤與「重試」，重試後成功，只扣 1 次 |
 | 上傳期限已過 | `backend/scripts/fault.sh upload-expired` | 顯示「已過期」與「上傳期限已過，點數沒有扣款，請重新客串。」 |
