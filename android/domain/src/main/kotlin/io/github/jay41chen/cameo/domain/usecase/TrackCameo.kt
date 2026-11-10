@@ -25,16 +25,16 @@ const val TRACK_LIMIT_MS: Long = 35L * 60 * 1000
 /**
  * 依一次查詢結果與已追蹤時間 [elapsedMs] 決定下一步。純函式，不碰時鐘。
  * - `SUCCEEDED`、`FAILED`：[TrackDecision.NOTIFY_AND_STOP]（即使剛好超過上限，結果已到就通知）。
- * - `QUEUED`、`GENERATING` 與查詢失敗：[TrackDecision.CONTINUE]，但 [elapsedMs] 已達 [TRACK_LIMIT_MS] 就 [TrackDecision.STOP]。
- * - 其他狀態（`EXPIRED`、`AWAITING_UPLOAD`、`UPLOADED`、`UNKNOWN`）：[TrackDecision.STOP]。
+ * - `QUEUED`、`GENERATING`、`UNKNOWN`（App 不認得的狀態，視為非終態）與查詢失敗：[TrackDecision.CONTINUE]，但 [elapsedMs] 已達 [TRACK_LIMIT_MS] 就 [TrackDecision.STOP]。
+ * - 其他狀態（`EXPIRED`、`AWAITING_UPLOAD`、`UPLOADED`）：[TrackDecision.STOP]。
  */
 fun decideTracking(result: DomainResult<CameoOrder>, elapsedMs: Long): TrackDecision {
     val status = (result as? DomainResult.Success)?.value?.cameo?.status
     return when (status) {
         CameoStatus.SUCCEEDED, CameoStatus.FAILED -> TrackDecision.NOTIFY_AND_STOP
-        null, CameoStatus.QUEUED, CameoStatus.GENERATING ->
+        null, CameoStatus.QUEUED, CameoStatus.GENERATING, CameoStatus.UNKNOWN ->
             if (elapsedMs >= TRACK_LIMIT_MS) TrackDecision.STOP else TrackDecision.CONTINUE
-        CameoStatus.EXPIRED, CameoStatus.AWAITING_UPLOAD, CameoStatus.UPLOADED, CameoStatus.UNKNOWN ->
+        CameoStatus.EXPIRED, CameoStatus.AWAITING_UPLOAD, CameoStatus.UPLOADED ->
             TrackDecision.STOP
     }
 }

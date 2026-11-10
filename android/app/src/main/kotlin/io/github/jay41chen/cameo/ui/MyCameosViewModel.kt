@@ -37,7 +37,7 @@ import kotlin.time.Duration.Companion.seconds
 private val POLL_DEBOUNCE = 300.milliseconds
 private val POLL_INTERVAL = 3.seconds
 
-/** 輪詢目標：可視（key 在 [visibleKeys]）且還在排隊或生成中的訂單 id。 */
+/** 輪詢目標：可視（key 在 [visibleKeys]）且還需要追蹤（排隊、生成中或未知狀態，見 needsTracking）的訂單 id。 */
 internal fun pollTargets(items: List<Cameo>, visibleKeys: Set<Any>): List<String> =
     items.filter { it.id in visibleKeys && needsTracking(it.status) }.map { it.id }
 

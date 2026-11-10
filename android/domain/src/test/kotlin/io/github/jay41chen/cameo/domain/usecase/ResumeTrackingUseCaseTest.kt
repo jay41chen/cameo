@@ -103,6 +103,16 @@ class ResumeTrackingUseCaseTest {
     }
 
     @Test
+    fun unknown_isTracked_notClaimed() = runTest {
+        row("k1", "u1")
+        server("u1", CameoStatus.UNKNOWN)
+        val r = run()
+        assertEquals(listOf("u1"), r)
+        assertTrue(notified.isEmpty())
+        assertEquals(1, pending.rows.size)
+    }
+
+    @Test
     fun queryFailure_skipped_otherStatesUntouched() = runTest {
         row("k1", "u1")
         row("k2", "u2")

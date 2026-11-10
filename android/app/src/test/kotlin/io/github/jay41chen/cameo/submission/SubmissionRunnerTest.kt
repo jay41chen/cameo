@@ -330,6 +330,19 @@ class SubmissionRunnerTest {
     }
 
     @Test
+    fun `advance unknown result tracks before release`() = runTest {
+        draftRow()
+        repo.gets["u1"] = ok(CameoStatus.AWAITING_UPLOAD, upload = true)
+        repo.uploads += ok(CameoStatus.UPLOADED)
+        repo.submits += ok(CameoStatus.UNKNOWN)
+        val r = runner(bg())
+        r.advance("k1", null)
+        advanceUntilIdle()
+        assertTrue((r.advanceState("k1").value as AdvanceRun.Finished).result is AdvanceResult.Done)
+        assertEquals(listOf("acquire:advance:k1", "track:u1", "release:advance:k1"), keepAlive.events)
+    }
+
+    @Test
     fun `advance retryable failure finishes failed without track`() = runTest {
         draftRow()
         repo.gets["u1"] = ok(CameoStatus.AWAITING_UPLOAD, upload = true)

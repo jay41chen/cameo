@@ -50,8 +50,8 @@ class PollTargetsTest {
     private val all: Set<Any> = items.map { it.id }.toSet()
 
     @Test
-    fun onlyVisibleQueuedAndGeneratingAreTargets() {
-        assertEquals(listOf("q", "g"), pollTargets(items, all))
+    fun onlyVisibleNonTerminalAreTargets() {
+        assertEquals(listOf("q", "g", "x"), pollTargets(items, all))
     }
 
     @Test
@@ -62,7 +62,7 @@ class PollTargetsTest {
 
     @Test
     fun finishedAndNonTrackedStatusesAreNeverTargets() {
-        assertEquals(emptyList<String>(), pollTargets(items, setOf("s", "f", "a", "u", "e", "x")))
+        assertEquals(emptyList<String>(), pollTargets(items, setOf("s", "f", "a", "u", "e")))
     }
 
     @Test

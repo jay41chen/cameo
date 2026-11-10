@@ -41,7 +41,7 @@ class TrackCameoTest {
 
     @Test
     fun limitBoundary_justBelowContinues_atLimitStops() {
-        listOf(ok(CameoStatus.QUEUED), ok(CameoStatus.GENERATING), queryFailed).forEach {
+        listOf(ok(CameoStatus.QUEUED), ok(CameoStatus.GENERATING), ok(CameoStatus.UNKNOWN), queryFailed).forEach {
             assertEquals(TrackDecision.CONTINUE, decideTracking(it, TRACK_LIMIT_MS - 1))
             assertEquals(TrackDecision.STOP, decideTracking(it, TRACK_LIMIT_MS))
             assertEquals(TrackDecision.STOP, decideTracking(it, TRACK_LIMIT_MS + 1))
@@ -50,7 +50,7 @@ class TrackCameoTest {
 
     @Test
     fun otherStatuses_stopWithoutNotification() {
-        listOf(CameoStatus.EXPIRED, CameoStatus.AWAITING_UPLOAD, CameoStatus.UPLOADED, CameoStatus.UNKNOWN).forEach {
+        listOf(CameoStatus.EXPIRED, CameoStatus.AWAITING_UPLOAD, CameoStatus.UPLOADED).forEach {
             assertEquals(TrackDecision.STOP, decideTracking(ok(it), 0))
         }
     }

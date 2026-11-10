@@ -93,8 +93,8 @@ class CameoProgressViewModelTest {
     }
 
     @Test
-    fun done_queuedOrGenerating_tracksThenReleases_beforeStateIsDone() = runTest {
-        listOf(CameoStatus.QUEUED, CameoStatus.GENERATING).forEach { status ->
+    fun done_nonTerminal_tracksThenReleases_beforeStateIsDone() = runTest {
+        listOf(CameoStatus.QUEUED, CameoStatus.GENERATING, CameoStatus.UNKNOWN).forEach { status ->
             pending.rows.clear()
             keepAlive.events.clear()
             row()
@@ -112,7 +112,7 @@ class CameoProgressViewModelTest {
 
     @Test
     fun done_alreadyFinished_doesNotTrack_butReleases() = runTest {
-        listOf(CameoStatus.SUCCEEDED, CameoStatus.FAILED, CameoStatus.UNKNOWN).forEach { status ->
+        listOf(CameoStatus.SUCCEEDED, CameoStatus.FAILED).forEach { status ->
             pending.rows.clear()
             keepAlive.events.clear()
             row()

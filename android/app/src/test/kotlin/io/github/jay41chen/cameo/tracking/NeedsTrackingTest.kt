@@ -6,8 +6,8 @@ import org.junit.Test
 
 class NeedsTrackingTest {
     @Test
-    fun `只有排隊與生成中需要追蹤`() {
-        val expected = setOf(CameoStatus.QUEUED, CameoStatus.GENERATING)
+    fun `排隊、生成中與未知狀態需要追蹤`() {
+        val expected = setOf(CameoStatus.QUEUED, CameoStatus.GENERATING, CameoStatus.UNKNOWN)
         CameoStatus.entries.forEach { status ->
             assertEquals("status=$status", status in expected, needsTracking(status))
         }

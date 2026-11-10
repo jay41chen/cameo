@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
  *   「認領＋[onFinished]」包在同一個 `withContext(NonCancellable)`，取消不會讓已認領的訂單漏通知；
  *   只有認領之後、通知之前程序被殺才會少發。
  *   [notificationsEnabled] 為 false 時不認領、不呼叫，草稿保留到通知可用時再補發。
- * - `QUEUED`／`GENERATING`：放進回傳清單。
+ * - `QUEUED`／`GENERATING`／`UNKNOWN`：放進回傳清單。
  * - 其他狀態與查詢失敗：不動，下次再查。
  */
 class ResumeTrackingUseCase(
