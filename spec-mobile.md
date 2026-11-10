@@ -73,7 +73,7 @@
 - 提交（建單、上傳、送出）由程序層級的提交執行者接續完成，不依賴畫面；確認頁和進度頁只顯示進度。按「確認支付」後，就算離開確認頁或進度頁，流程也會跑完並發完成通知；每次提交只用一個保持，結束時釋放；同一個片段的兩次提交各一把。
 - 同一個片段的前一張訂單還在上傳或送出時，回確認頁再按「確認支付」會建立第二張訂單、另外扣點；兩張各自上傳、送出、完成和通知，互不中斷。前一張還在建單（還沒回應）時連按，仍只建一張。
 - 確認頁返回的轉場中點「確認支付」不建單：只接受頁面在前景時的點擊（`dropUnlessResumed`）。
-- 提交成功且訂單為 `QUEUED`、`GENERATING`：服務改為每 10 秒查訂單，完成時發通知。
+- 提交成功且訂單為 `QUEUED`、`GENERATING` 或 `UNKNOWN`（App 不認得的狀態，見第 4 章「未知狀態」）：服務改為每 10 秒查訂單，完成時發通知。
 - 訂單已結束、提交失敗或過期：釋放這筆；提交保持超過 5 分鐘也會自動釋放，避免常駐通知卡住；服務沒有其他工作就停止。離開頁面不會釋放，也不會中止提交。
 - 常駐通知全程顯示「處理中，完成後會通知你」，服務啟動時立即顯示。
 - 上傳或送出失敗時不發完成通知，回到 App 才看得到失敗。
@@ -94,7 +94,7 @@
 
 **狀態更新**
 
-- 3 秒輪詢只查已送出區裡可視的 `QUEUED`、`GENERATING`，用 `GET /v1/cameos/{id}` 就地更新；不可視的訂單輪詢不查。
+- 3 秒輪詢只查已送出區裡可視的 `QUEUED`、`GENERATING`、`UNKNOWN`，用 `GET /v1/cameos/{id}` 就地更新；不可視的訂單輪詢不查。
 - 待處理區不參與 3 秒輪詢。待處理區、餘額、額度在回前景、回首頁時更新；待處理訂單到期後，要到那時才顯示已過期，可用點數也到那時才更新。
 - 上述限制只管 3 秒輪詢：回前景的草稿狀態查詢、第 3、4 章的通知補發查詢、背景服務每 10 秒查詢都不受限。
 - 可視範圍改變後，捲動停 0.3 秒就立刻查，之後回到每 3 秒。
@@ -165,10 +165,26 @@ App 行為：
 本章與第 3 章合起來看，「本節」「下方」指這兩章。
 
 - 承諾：盡力在 App 位於背景時通知，沒辦法百分之百保證。前景服務不保證存活：強制停止、程序被殺時服務會消失（實測），廠牌省電與低記憶體未測，也未在真機驗證。服務消失時收不到通知，回到 App 會查詢並補發。上傳或送出還沒成功就被中斷時，訂單不會自己繼續。回到 App 後，還原到進度頁會自動接續，失敗時按「重試」；從待處理列則按「繼續」；只扣一次。一直沒回來時不會生成、不會扣款，已建單的點數占到上傳期限才釋放（到期釋放未實測）；例外是送出請求已到後端、只是 App 沒收到回應，這時訂單仍會生成並扣款（實測）。
-- App 被終止：開啟（回到前景）時補發，且只發一次。對所有有 `cameoId` 的草稿查一次訂單：`SUCCEEDED`／`FAILED` 先刪本機草稿（原子，刪到才算認領）、認領成功就立刻發通知（每筆各自「認領＋通知」，包在不可取消的區塊內）；`QUEUED`／`GENERATING` 重新啟動前景服務追蹤；其他狀態與查詢失敗不動。前景服務到結束狀態也走同一個「先刪草稿、刪成功才發通知」流程，這是「只發一次」的唯一機制。
+- App 被終止：開啟（回到前景）時補發，且只發一次。對所有有 `cameoId` 的草稿查一次訂單：`SUCCEEDED`／`FAILED` 先刪本機草稿（原子，刪到才算認領）、認領成功就立刻發通知（每筆各自「認領＋通知」，包在不可取消的區塊內）；`QUEUED`／`GENERATING`／`UNKNOWN` 重新啟動前景服務追蹤；其他狀態與查詢失敗不動。前景服務到結束狀態也走同一個「先刪草稿、刪成功才發通知」流程，這是「只發一次」的唯一機制。
 - 取捨：先刪再發。不會補發（少發，不重發）的情況：認領之後、發通知之前程序被殺（進程中止）；另有回前景判斷「通知可用」到實際認領之間使用者剛好關掉通知的極窄窗口，這時草稿已刪、不補發（讀碼推論，未實測）；協程取消不會少發，因為認領與通知在同一個不可取消區塊。通知不可用（見下方通知權限）時不刪草稿、不通知，等通知可用後開啟 App 再補發。
 - 首頁入口的權限判斷不存持久的「已請求過」旗標：權限沒開時每次先向系統請求；收到拒絕後，依 `shouldShowRequestPermissionRationale` 決定說明原因或提供「前往設定」（Android 行為為推論）。
 - 做法已定案：前景服務（`dataSync`）。App 在使用者按「確認支付」時（建單前）就啟動前景服務，提交成功後每 10 秒查訂單，完成時發本機通知；細節見第 2 章「提交期間的前景服務」（取捨見 `ARCHITECTURE.md` 第 8 節）。
+- 未知狀態：後端新增 App 不認得的訂單狀態（`UNKNOWN`）時，視為非終態，規則同 `API.md`：
+  - 要改的地方：只有兩處。`domain/.../usecase/TrackCameo.kt` 的 `decideTracking`，以及 `app/.../tracking/TrackWhileGenerating.kt` 的 `needsTracking`，兩者都把 `UNKNOWN` 當成要繼續追蹤。其他呼叫端會自動跟著生效，不用另外改判斷：`CameoTrackService.kt`（`decideTracking`）、`ResumeTrackingUseCase.kt`（回前景重新追蹤，用 `decideTracking`）、`MyCameosViewModel.kt` 的 `pollTargets`（`needsTracking`）、`SubmissionRunner.kt`（送出後開始追蹤，用 `needsTracking`）。以下 KDoc 不能再寫只認 `QUEUED`／`GENERATING`，要一併更新：`TrackCameo.kt` 的 `decideTracking`（第 28–29 行）、`ResumeTrackingUseCase.kt`（第 16 行）、`MyCameosViewModel.kt` 的 `pollTargets`（第 40 行）、`TrackWhileGenerating.kt` 的 `needsTracking`。
+  - 前景服務追蹤：比照 `QUEUED`、`GENERATING` 繼續查，同樣受追蹤時間上限保護（35 分鐘，`TRACK_LIMIT_MS`）；之後變成 `SUCCEEDED`／`FAILED` 照常通知，到上限就停止。送出結果是 `UNKNOWN` 時也開始追蹤（`SubmissionRunner` 呼叫 `keepAlive.track`）。
+  - 回前景重新追蹤：由 `ResumeTrackingUseCase` 透過 `decideTracking` 決定，不用另外改判斷；`UNKNOWN` 會被放進回傳的追蹤清單（要加測試，見下方驗證程度）。
+  - 首頁 3 秒輪詢：看得到的 `UNKNOWN` 訂單也輪詢（`pollTargets`）。
+  - 提交流程遇到 `UNKNOWN` 仍停下、不上傳、不送出，因為 App 不知道下一步；未完成清單照舊列出 `UNKNOWN`。
+  - 畫面顯示後端的 `display`；沒有時沿用現有的後備文字（已送出區「狀態未知」、待處理區「處理中」），這次不改。
+  - 驗證程度（單元測試）：
+    - `decideTracking(UNKNOWN)` 未到上限回 `CONTINUE`、到上限回 `STOP`。
+    - `needsTracking(UNKNOWN)` 回 true。
+    - `pollTargets` 包含看得到的 `UNKNOWN`。
+    - 送出結果是 `UNKNOWN` 時會呼叫 `keepAlive.track`（`SubmissionRunner`）。
+    - `ResumeTrackingUseCase` 會把 `UNKNOWN` 放進追蹤清單。
+    - 要改寫的現有測試：`TrackCameoTest` 的 `otherStatuses_stopWithoutNotification`（約第 53 行，`UNKNOWN` 目前列在 `STOP`）；`PollVisibleTest` 的 `onlyVisibleQueuedAndGeneratingAreTargets`（約第 53 行，預期清單不含 `x`）；`NeedsTrackingTest`（`只有排隊與生成中需要追蹤`，預期集合要加 `UNKNOWN`）；`CameoProgressViewModelTest` 的 `done_alreadyFinished_doesNotTrack_butReleases`（約第 115 行，把 `UNKNOWN` 和終態放同一組，要拆開，`UNKNOWN` 改驗會追蹤）。
+    - mutation 至少兩個：`decideTracking` 把 `UNKNOWN` 改回 `STOP`；`needsTracking` 拿掉 `UNKNOWN`。
+    - 未在模擬器實測，因為要讓後端回 App 不認得的狀態得另外改後端。
 - 後端靠廠商 webhook 得知結果；正式推播服務只寫文件，不實作。
 
 ## 5. 會用到的後端約定
