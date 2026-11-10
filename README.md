@@ -90,11 +90,12 @@ curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
 
 後端啟動後，在專案根目錄用 `backend/scripts/fault.sh` 登記異常，再到 App 上照常客串一次，就會觸發。
 
-也可以用瀏覽器開 `http://localhost:8080/debug/console`：按情境按鈕會填入範例 JSON，可先改參數（例如內容審核拒絕的 `CONTENT_REJECTED`）再按「登記」；頁面也能清空異常、重設環境，並每 3 秒顯示點數、額度和最近 10 筆已送出的訂單；「設定」區塊可調整每日額度、生成期限和廠商延遲（只存在記憶體，後端重啟還原）。
+也可以用瀏覽器開 `http://localhost:8080/debug/console`：按情境按鈕會填入範例 JSON，可先改參數（例如送出回應遺失把 `target` 改成 `submit`）再按「登記」；頁面也能清空異常、重設環境，並每 3 秒顯示點數、額度和最近 10 筆已送出的訂單；「設定」區塊可調整每日額度、生成期限和廠商延遲（只存在記憶體，後端重啟還原）。
 
 | 異常 | 指令 | App 上會看到 |
 |---|---|---|
 | 廠商回報失敗 | `backend/scripts/fault.sh vendor-failed` | 失敗通知，點數退還 |
+| 內容審核拒絕 | `backend/scripts/fault.sh content-rejected` | 「無法生成」，點數退還，今日次數不退 |
 | 廠商不回呼 | `backend/scripts/fault.sh vendor-no-callback` | 約 2 分鐘後逾時（預設生成期限；在控制台改過就不同），失敗通知，點數退還 |
 | 廠商重複回呼 | `backend/scripts/fault.sh vendor-duplicate-callback` | 只有 1 則通知、只扣 1 次 |
 | 上傳中斷 | `backend/scripts/fault.sh upload-interrupted` | 錯誤與「重試」，重試後成功，只扣 1 次 |
@@ -102,8 +103,7 @@ curl -H 'Authorization: Bearer test-token' localhost:8080/v1/points
 | 建單回應遺失 | `backend/scripts/fault.sh response-lost-after-commit` | 常被自動重送吸收，看不到錯誤；只扣 1 次 |
 
 - `backend/scripts/fault.sh` 不帶參數會列出所有情境；`reset` 重設環境，`list` 看已登記的異常，`clear` 清除。
-- 廠商類的 3 種同時只能登記一種，換別種前先 `clear`。
-- 內容審核拒絕：用自訂 JSON，`{"name":"vendor_failed","params":{"reason":"CONTENT_REJECTED"}}`，存成檔案後執行 `backend/scripts/fault.sh <檔案>.json`。
+- 廠商類異常（`vendor_*`）同時只能登記一種，換別種前先 `clear`。`content-rejected` 和 `vendor-failed` 是同一種異常（`vendor_failed`），後登記的會直接覆蓋前一筆。
 - 送出回應遺失：情境檔預設是建單；要測送出，用自訂 JSON `{"name":"response_lost_after_commit","target":"submit"}`，存成檔案後執行 `backend/scripts/fault.sh <檔案>.json`。
 - 控制台只列已送出的訂單；上傳期限已過、上傳中斷的結果要看 App 或 API 回應。改過 port 時，網址換成對應的 port。
 - 每種異常的參數、後端結果與 curl 寫法見 [`API.md`](API.md)「異常觸發方式」。

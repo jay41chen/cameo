@@ -50,11 +50,10 @@
 - 後端：
   - 名稱常數與 `faultDefs` 在 `backend/internal/adapter/http/faults.go`；觸發點在對應的 handler 或 usecase。
   - 廠商類（`vendor_*`）的行為在模擬廠商 `backend/cmd/vendor-sim/main.go`，由它向 `POST /debug/faults/consume` 取得異常。
-- 範例檔：`backend/faults/<名稱>.json`（檔名是異常名稱把底線改成連字號），同時更新 `backend/internal/adapter/http/console.html` 裡的範例 JSON。測試 `TestDebugConsoleEmbedsFaultFiles`（`console_test.go`）會比對兩邊，並要求一一對應。
-- 腳本：`backend/scripts/fault.sh` 檔頭的說明文字列出情境，新增時一併補上；它依 `backend/faults/` 的檔名送出。
-- 測試：`backend/internal/adapter/http/faults_test.go`（登記與驗證）、`backend/test/integration/faults_trigger_test.go`（實際觸發）；`vendor-sim` 的行為補在 `backend/cmd/vendor-sim/main_test.go`。
-- 測試裡寫死的異常數量 6 要一起改（`backend/internal/adapter/http/console_test.go`、`faults_test.go`）。
-- 文件：`API.md` 的 Debug 異常 API 異常表與「異常觸發方式」、`README.md` 的異常表、`spec-server.md` 第 7 章；`README.md` 和 `API.md` 裡的「6 種異常」也要改。
+- 情境：在 `backend/faults/` 加 `<情境名>.json`（登記用的 body），並在 `backend/faults/scenarios.tsv` 加一行「情境名 Tab 說明」（行序就是控制台顯示順序）。控制台頁面與 `fault.sh` 都從這裡讀，不用改 `console.html` 或腳本；`backend/faults/faults.go` 載入時檢查兩邊一一對應。
+- 測試：`backend/faults/faults_test.go`（情境檔一致性）、`backend/internal/adapter/http/faults_test.go`（登記與驗證）、`backend/test/integration/faults_trigger_test.go`（實際觸發）；`vendor-sim` 的行為補在 `backend/cmd/vendor-sim/main_test.go`。
+- 文件：`API.md` 的 Debug 異常 API 異常表與「異常觸發方式」、`README.md` 的異常表、`spec-server.md` 第 7 章；新增異常種類時，`README.md` 和 `API.md` 裡的「6 種異常」也要改。
+- 只加情境（同一種異常、不同參數，例如 `content-rejected`）：只要上面「情境」那一步，加上 `README.md` 異常表與 `API.md`「異常觸發方式」。
 - 相容性注意：同一時間只允許一種 `vendor_*` 異常；異常存在記憶體，重啟就清空；`DEBUG_API_ENABLED=false` 時 `/debug/*` 要維持回 404。
 
 ### 改每日額度規則
