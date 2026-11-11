@@ -251,7 +251,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 網頁控制台 `GET /debug/console`：在瀏覽器登記、清空、重設異常，並每 3 秒顯示點數、今日額度、最近 10 筆已送出的訂單和已登記的異常（`GET /v1/cameos` 只回已送出的訂單，所以 `AWAITING_UPLOAD`、`UPLOADED`、`EXPIRED` 不會出現）。只在 `DEBUG_API_ENABLED=true` 時開放，否則和其他 `/debug/*` 一樣回 `404`。開頁面不用 token；頁內 JS 固定帶 `Authorization: Bearer test-token`，同源呼叫既有 API，其他 `/debug/*` 與 `/v1/*` 不帶 token 仍回 `401`。只收 `GET`、`HEAD`，其他方法回 `405`；回應帶 `Cache-Control: no-store`。頁面是嵌進後端的純 HTML/CSS/JS，不載入外部資源；頁面的情境按鈕由後端內嵌的 `backend/faults/`（`scenarios.tsv` 與各情境 JSON）產生。驗證程度：Go 測試涵蓋 `200` 與標頭、關閉時 `404`、`POST` 回 `405`、頁面情境（順序、名稱、說明、範例 JSON）與 `backend/faults/` 一致，情境檔一一對應與格式錯誤另有單元測試（`backend/faults/faults_test.go`）；Docker 實測 `200`、`no-store`、`405`，關閉後 `404`；在 Chrome 實際操作登記、清空、重設、3 秒更新，並在頁面登記 `vendor-failed` 後用 curl 走完一筆訂單，結果為 `FAILED`／`VENDOR_FAILED`／`REFUNDED`；375px 寬不會水平捲動，沒有用真手機測。
 
-控制台頁面另有「設定」區塊：三個輸入框（每日額度、生成期限秒數、廠商延遲秒數，延遲空白＝用 `vendor-sim` 預設），按「儲存」只送有變動的欄位（延遲由有值清成空白時送 `null`）；沒有變動就不送並顯示「沒有變動」，輸入不是有效數字（顯示「請求失敗：輸入不是有效的數字」）或每日額度、生成期限空白時整筆不送；警示依最近一次讀到的設定判斷，不是依輸入框的值：該設定的延遲有值且大於或等於生成期限時，顯示「延遲不短於生成期限，正常訂單會逾時」。設定區塊只在開頁和儲存成功後讀 `GET /debug/config`（警示也只在這兩個時機更新），不跟著 3 秒更新。
+控制台頁面另有「設定」區塊：三個輸入框（每日額度、生成期限秒數、廠商延遲秒數，延遲空白＝用 `vendor-sim` 預設），按「儲存」只送有變動的欄位（延遲由有值清成空白時送 `null`）；沒有變動就不送並顯示「沒有變動」，輸入不是有效數字（顯示「請求失敗：輸入不是有效的數字」）或每日額度、生成期限空白時整筆不送；警示依最近一次讀到的設定判斷，不是依輸入框的值：該設定的延遲有值且大於或等於生成期限時，顯示「延遲不短於生成期限，正常訂單會逾時」。設定區塊只在開頁和儲存成功後讀 `GET /debug/config`（警示也只在這兩個時機更新），不跟著 3 秒更新。規格另要新增第四個輸入框「初始點數」（空白＝用 seed，由有值清成空白時送 `null`，旁註「按重設後生效」），**尚未實作**。
 
 驗證程度：自動測試涵蓋上述端點和 6 種異常（`vendor_*` 分別測 `vendor-sim` 與 `consume`，兩者串接只有 Docker 實測）；在 Docker 實測確認 reset、互斥、並存、部分輸入驗證和 6 種異常的觸發。`consume` 的 2 秒逾時只有單元測試，沒有 Docker 實測；App 在這些異常下的表現已在 API 37 模擬器實測，見「異常觸發方式」。`DEBUG_API_ENABLED=false` 已於 Docker 重跑（`/debug/reset`、`/debug/faults`、`consume` 回 `404`，訂單與額度不變；`vendor-sim` 記 log 後照常回呼，訂單 `SUCCEEDED`），開關讀環境變數的判斷沒有自動測試；同名覆蓋和其餘輸入驗證只有自動測試，沒有 Docker 實測。
 
@@ -265,27 +265,29 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 | `POST /debug/faults` | 設定異常，成功回 `200` 和目前清單（同 `GET`） |
 | `DELETE /debug/faults` | 全部清除，回 `204` |
 | `POST /debug/reset` | 重設環境，回 `204` |
-| `GET /debug/config` | 查看執行期設定（每日額度、生成期限、廠商延遲），細節見下方「執行期設定」 |
+| `GET /debug/config` | 查看執行期設定（每日額度、生成期限、廠商延遲、初始點數（尚未實作）），細節見下方「執行期設定」 |
 | `PUT /debug/config` | 調整執行期設定，只改有帶的欄位，成功回 `200` 和改後的完整設定 |
 | `POST /debug/faults/consume` | 內部端點，只給 `vendor-sim` 取得異常；和其他 `/debug/*` 一樣受 `DEBUG_API_ENABLED` 與 Bearer token 保護。回 `200`：有 `vendor_*` 異常時扣 1 次並回 `{"fault":{"name","params"}}`，沒有時回 `{"fault":null}`。回應最外層（和 `fault` 同層，`fault` 為 `null` 時也帶）另有 `"vendor_delay_sec"`，值為目前覆寫的廠商延遲或 `null`。沒 token 回 `401`，關閉時回 `404`，`GET` 回 `405` |
 
 **執行期設定**（`GET`／`PUT /debug/config`）：模擬環境用，給 demo 時調整；和其他 `/debug/*` 一樣受 `DEBUG_API_ENABLED` 與 Bearer token 保護。`GET` 回：
 
 ```json
-{"daily_limit":3,"generation_ttl_sec":120,"vendor_delay_sec":null}
+{"daily_limit":3,"generation_ttl_sec":120,"vendor_delay_sec":null,"initial_points":null}
 ```
 
+`initial_points` 尚未實作：目前後端的 `GET` 不回這個欄位，`PUT` 帶它會當未知欄位回 `400 INVALID_CONFIG`；以下涉及 `initial_points` 的說明為規格。
+
 - `PUT` 收同樣欄位的任意子集，只改有帶的欄位，成功回 `200` 和改後的完整設定。
-- 範圍：`daily_limit` 整數 1–1000；`generation_ttl_sec` 整數 10–1800；`vendor_delay_sec` 數字 0–600，或 `null`（不覆寫，用 `vendor-sim` 自己的 `VENDOR_DELAY_SEC`）。`daily_limit`、`generation_ttl_sec` 不接受 `null`，`3.0` 這類帶小數點的寫法也不算整數，兩者都視為型別錯誤。
+- 範圍：`daily_limit` 整數 1–1000；`generation_ttl_sec` 整數 10–1800；`vendor_delay_sec` 數字 0–600，或 `null`（不覆寫，用 `vendor-sim` 自己的 `VENDOR_DELAY_SEC`）；`initial_points` 整數 0–100000，或 `null`（不覆寫，`POST /debug/reset` 時餘額回到資料庫的 seed，目前 100）。`daily_limit`、`generation_ttl_sec` 不接受 `null`，`3.0` 這類帶小數點的寫法也不算整數，兩者都視為型別錯誤；`initial_points` 同樣不接受 `5.0` 這類帶小數點的寫法或字串。
 - 空物件、未知欄位、型別錯誤或超出範圍回 `400 INVALID_CONFIG`；任一欄位不合法就全部不改（全有或全無）。body 不是 JSON 物件（語法錯誤、`null`、陣列）回 `400 INVALID_REQUEST`，和 `POST /debug/faults` 一致。
-- 初始值：`daily_limit`、`generation_ttl_sec` 取自環境變數 `DAILY_LIMIT`、`GENERATION_TTL`，`GET` 顯示整秒（無條件捨去）；環境變數超出 `PUT` 範圍（例如 `GENERATION_TTL=1h` 或小於 10 秒）時，`GET` 照實顯示捨去後的值，不夾到範圍內，這時 `PUT` 只要不帶該欄位就能改其他欄位。`vendor_delay_sec` 初始為 `null`。
-- 值只存在記憶體：`api` 重啟就回到初始值；`POST /debug/reset` 不改這些值。
-- 生效時機：`daily_limit` 立即影響建單檢查與 `GET /v1/quota`，已建的訂單不變，調低到小於今日已用次數時剩餘為 0；`generation_ttl_sec` 只影響之後送出的訂單（期限在送出時寫入）；`vendor_delay_sec` 由 `POST /debug/faults/consume` 回應交給 `vendor-sim`，只影響之後 `vendor-sim` 收到的新工作（以收到工作的時間為準，不是送出訂單的時間；重送的同一工作不受影響）；欄位為 `null`、缺少、不是 0–600 的數字，或 consume 失敗時，`vendor-sim` 用自己的 `VENDOR_DELAY_SEC`。
+- 初始值：`daily_limit`、`generation_ttl_sec` 取自環境變數 `DAILY_LIMIT`、`GENERATION_TTL`，`GET` 顯示整秒（無條件捨去）；環境變數超出 `PUT` 範圍（例如 `GENERATION_TTL=1h` 或小於 10 秒）時，`GET` 照實顯示捨去後的值，不夾到範圍內，這時 `PUT` 只要不帶該欄位就能改其他欄位。`vendor_delay_sec`、`initial_points` 初始為 `null`。
+- 值只存在記憶體（含 `initial_points`）：`api` 重啟就回到初始值（`initial_points` 回到 `null`）；`POST /debug/reset` 不改這些值。
+- 生效時機：`daily_limit` 立即影響建單檢查與 `GET /v1/quota`，已建的訂單不變，調低到小於今日已用次數時剩餘為 0；`generation_ttl_sec` 只影響之後送出的訂單（期限在送出時寫入）；`vendor_delay_sec` 由 `POST /debug/faults/consume` 回應交給 `vendor-sim`，只影響之後 `vendor-sim` 收到的新工作（以收到工作的時間為準，不是送出訂單的時間；重送的同一工作不受影響）；欄位為 `null`、缺少、不是 0–600 的數字，或 consume 失敗時，`vendor-sim` 用自己的 `VENDOR_DELAY_SEC`；`initial_points` 在 `PUT` 時不動餘額，只在下一次 `POST /debug/reset` 時把餘額設成這個值（`null` 則設成 seed），reset 本來就清空明細與訂單，所以餘額與明細不會對不上（用途：demo 點數不足 `402`，初始點數設 5 → 重設 → 建單（片段 10 點）→ `402`）。
 - 不檢查延遲與期限的關係：延遲大於或等於生成期限時，正常訂單也會逾時，由網頁控制台提示。
 
 驗證程度：Go 整合測試涵蓋 23 種無效 `PUT` 回 `400` 且設定不變、非物件 body 回 `INVALID_REQUEST`、關閉時 `404`、沒 token `401`、reset 不還原、`daily_limit` 影響建單與額度（含調低到小於已用）、生成期限只影響之後送出的訂單、環境變數超出範圍時 `GET` 照實顯示；`vendor-sim` 單元測試涵蓋延遲覆寫、各種退回情況、consume 失敗、重送只 consume 一次；相關套件以 `-race` 跑過。Docker 實測（`VENDOR_DELAY_SEC=20`、`GENERATION_TTL=2m`）：延遲覆寫 3 秒時送出到 `SUCCEEDED` 約 4 秒、改回 `null` 約 22 秒、延遲 1 秒加 `vendor_failed` 約 2 秒後 `FAILED`、reset 後設定保留、`daily_limit` 改 1 後 `/v1/quota` 立即反映。控制台在 Chrome 實際操作過（開頁顯示、沒有變動不送、延遲 200 時警示、清空送 `null`、不合法輸入不送、3 秒更新不讀設定）。App 不呼叫這個 API，沒有 App 端實測。
 
-`POST /debug/reset`：清空訂單、點數明細、廠商事件、自拍檔案和異常；餘額回到 seed 的值；片段保留；額度因訂單清空而恢復。重設後才到的廠商回呼，照未知 `job_id` 的處理（見上方 webhook 檢查順序：回 `404 CAMEO_NOT_FOUND`、事件不留），訂單不會復活。reset 不會清 App 本機資料。自拍檔案只刪被清除訂單對應的檔案，刪除失敗只記 log，仍回 `204`。
+`POST /debug/reset`：清空訂單、點數明細、廠商事件、自拍檔案和異常；餘額回到 `initial_points`，未設定（`null`）時回到 seed 的值（`initial_points` 尚未實作，目前一律回到 seed）；片段保留；額度因訂單清空而恢復。重設後才到的廠商回呼，照未知 `job_id` 的處理（見上方 webhook 檢查順序：回 `404 CAMEO_NOT_FOUND`、事件不留），訂單不會復活。reset 不會清 App 本機資料。自拍檔案只刪被清除訂單對應的檔案，刪除失敗只記 log，仍回 `204`。
 
 設定異常 body：
 
