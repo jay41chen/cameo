@@ -1,7 +1,7 @@
-response-lost-after-commit	下一次「建立訂單」寫入成功後不回應（連線中斷，模擬回應遺失），用同一個 Idempotency-Key 重試應拿到同一筆
-upload-interrupted	下一次上傳自拍，內容超過 1024 bytes 後連線中斷（訂單狀態不變）
-upload-expired	下一次上傳自拍（或送出）時，該訂單的上傳期限視為已到（回 410，訂單 EXPIRED、釋放點數）
-vendor-failed	下一個生成工作失敗（FAILED / VENDOR_FAILED），退點
-vendor-duplicate-callback	下一個工作的完成回呼重複送 3 次 SUCCEEDED（驗冪等）
-vendor-no-callback	下一個工作不回呼，等 GENERATION_TTL（compose 預設 2m）逾時轉 FAILED / TIMEOUT，退點
-content-rejected	下一個生成工作被內容審核拒絕（FAILED / CONTENT_REJECTED），退點、今日次數不退
+response-lost-after-commit	下一次「建立訂單」寫入成功後不回應（連線中斷，模擬回應遺失），用同一個 Idempotency-Key 重試應拿到同一筆；重試後繼續上傳、送出，仍會正常生成，要確認的是只多一筆訂單、點數只扣一次、今日次數只加 1。相關設定：無
+upload-interrupted	下一次上傳自拍，內容超過 1024 bytes 後連線中斷（訂單狀態不變）；中斷位置可改範例 JSON 的 params.after_bytes。相關設定：無
+upload-expired	下一次上傳自拍（或送出）時，該訂單的上傳期限視為已到（回 410，訂單 EXPIRED、釋放點數）。相關設定：無
+vendor-failed	下一個生成工作失敗（FAILED / VENDOR_FAILED），退點、今日次數恢復。相關設定：「廠商延遲」決定多久後收到失敗（空白＝vendor-sim 的 VENDOR_DELAY_SEC，compose 預設 20 秒）
+vendor-duplicate-callback	下一個工作的完成回呼重複送 3 次 SUCCEEDED（驗冪等），次數可改 params.count。相關設定：「廠商延遲」決定多久後開始回呼
+vendor-no-callback	下一個工作不回呼，等生成期限逾時轉 FAILED / TIMEOUT，退點。相關設定：「生成期限」決定等多久（送出時寫入訂單，要先改再送出，最低 10 秒）；與「廠商延遲」無關，但期限調短時也要把廠商延遲調短，否則正常訂單會一起逾時
+content-rejected	下一個生成工作被內容審核拒絕（FAILED / CONTENT_REJECTED），退點、今日次數不退。相關設定：「廠商延遲」決定多久後收到結果
