@@ -3,23 +3,26 @@
 需求：JDK 21（`android/gradle/gradle-daemon-jvm.properties` 要求 Gradle daemon 用 JDK 21，編譯用的 toolchain 也是 21；本機沒有時 Gradle 會透過 foojay 自動下載，需連網）、Android SDK 37（compileSdk 需要；targetSdk 為 36）。SDK 位置要設 `ANDROID_HOME` 環境變數，或在 `android/local.properties` 寫 `sdk.dir=/path/to/sdk`（此檔不進 git）。
 
 1. 先啟動後端（見 [`../backend/README.md`](../backend/README.md)）。
-2. 用 Android Studio 開啟 `android/` 資料夾並執行 `app`；或用 Gradle：
+2. 用 Android Studio 開啟 `android/` 資料夾並執行 `app`；或用 Gradle（第 1 行取本機 AVD 清單的第一個（要用別的 AVD 就把 `AVD=` 改成那個名稱），第 2 行帶相機參數在背景啟動模擬器，第 3 行等開機完成；只設 `local.properties`、沒設 `ANDROID_HOME` 時，把 `$ANDROID_HOME` 換成 SDK 路徑）：
 
 ```
+AVD=$($ANDROID_HOME/emulator/emulator -list-avds | head -1)
+$ANDROID_HOME/emulator/emulator -avd "$AVD" -camera-front emulated -camera-back virtualscene &
+adb wait-for-device shell 'while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 1; done'
 cd android
 ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n io.github.jay41chen.cameo/.MainActivity
 ```
 
-- 先等模擬器開機完成（`adb wait-for-device shell 'while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 1; done'`）再安裝。要從頭驗收時，先 `adb uninstall io.github.jay41chen.cameo` 或用全新 AVD，否則已授予的權限和舊資料會保留，第一次按「＋客串」不會跳權限對話框。
+- 要從頭驗收時，先 `adb uninstall io.github.jay41chen.cameo` 或用全新 AVD，否則已授予的權限和舊資料會保留，第一次按「＋客串」不會跳權限對話框。
 - App 預設連 `http://10.0.2.2:8080`（模擬器看到的宿主機），後端換 port 時用 `-PcameoBaseUrl` 指定（見下一條）；測試 token 為 `test-token`，由 `:app` 的 build config 提供；只有 debug build 允許對 `10.0.2.2` 明文 HTTP。`adb reverse` 不是必要步驟。
 - 後端網址（`-PcameoBaseUrl`）：後端不在 8080 時，build 與安裝都要帶同一個值，例如 `./gradlew :app:assembleDebug -PcameoBaseUrl=http://10.0.2.2:9090`（`installDebug` 同樣帶）。
   - 格式只收 `http://10.0.2.2:<port>`：port 為 1–65535、不可有前導零，結尾最多一個 `/`。只支援模擬器，因為 debug build 只對 `10.0.2.2` 開放明文 HTTP，真機與區網 IP 不支援。
   - 格式錯誤時 build 失敗，並印出格式與範例。檢查在 Gradle 設定階段進行，所以參數錯誤時，任何 Gradle 指令（包括單元測試）都會失敗。
-  - debug build、後端 `DEBUG_API_ENABLED=true`（compose 預設）時，分享連結在 App 內用同一個值，不用另外設定。後端也要一起改 `API_PORT`、`PUBLIC_BASE_URL`，見 [`../backend/README.md`](../backend/README.md)。
+  - debug build、後端 `DEBUG_API_ENABLED=true`（compose 預設）時，分享連結在 App 內用同一個值，不用另外設定。這個連結開頭是 `10.0.2.2`，只能在模擬器內開；在電腦瀏覽器開要把 `10.0.2.2` 換成 `localhost`。後端也要一起改 `API_PORT`、`PUBLIC_BASE_URL`，見 [`../backend/README.md`](../backend/README.md)。
   - 已實測的項目：不帶參數時是 8080；帶 `http://10.0.2.2:9090/` 時是 9090；port 1 與 65535 可以通過；configuration cache 開著時換值會重新讀取；規格列出的 12 種錯誤格式（例如區網 IP、https、缺 port、帶路徑）都會讓 build 失敗；在模擬器以 9090 冒煙一次，首頁能載入，分享連結為 `http://10.0.2.2:9090/s/…`。
-- 模擬器相機：AVD 啟動時加 `-camera-front emulated -camera-back virtualscene`（例如 `$ANDROID_HOME/emulator/emulator -avd Pixel_10_Pro -camera-front emulated -camera-back virtualscene`）；驗證時即用此參數，未測不加參數時的相機預覽 `[待確認]`。App 預設用前鏡頭，沒有前鏡頭用後鏡頭。
+- 模擬器相機：AVD 啟動時加 `-camera-front emulated -camera-back virtualscene`（例如 `$ANDROID_HOME/emulator/emulator -avd <AVD 名稱> -camera-front emulated -camera-back virtualscene`）；驗證時即用此參數，未測不加參數時的相機預覽 `[待確認]`。App 預設用前鏡頭，沒有前鏡頭用後鏡頭。
 
 ## 畫面
 

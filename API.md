@@ -251,7 +251,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 網頁控制台 `GET /debug/console`：在瀏覽器登記、清空、重設異常，並每 3 秒顯示點數、今日額度、最近 10 筆已送出的訂單和已登記的異常（`GET /v1/cameos` 只回已送出的訂單，所以 `AWAITING_UPLOAD`、`UPLOADED`、`EXPIRED` 不會出現）。只在 `DEBUG_API_ENABLED=true` 時開放，否則和其他 `/debug/*` 一樣回 `404`。開頁面不用 token；頁內 JS 固定帶 `Authorization: Bearer test-token`，同源呼叫既有 API，其他 `/debug/*` 與 `/v1/*` 不帶 token 仍回 `401`。只收 `GET`、`HEAD`，其他方法回 `405`；回應帶 `Cache-Control: no-store`。頁面是嵌進後端的純 HTML/CSS/JS，不載入外部資源；頁面的情境按鈕由後端內嵌的 `backend/faults/`（`scenarios.tsv` 與各情境 JSON）產生。驗證程度：Go 測試涵蓋 `200` 與標頭、關閉時 `404`、`POST` 回 `405`、頁面情境（順序、名稱、說明、範例 JSON）與 `backend/faults/` 一致，情境檔一一對應與格式錯誤另有單元測試（`backend/faults/faults_test.go`）；Docker 實測 `200`、`no-store`、`405`，關閉後 `404`；在 Chrome 實際操作登記、清空、重設、3 秒更新，並在頁面登記 `vendor-failed` 後用 curl 走完一筆訂單，結果為 `FAILED`／`VENDOR_FAILED`／`REFUNDED`；375px 寬不會水平捲動，沒有用真手機測。
 
-控制台頁面另有「設定」區塊：三個輸入框（每日額度、生成期限秒數、廠商延遲秒數，延遲空白＝用 `vendor-sim` 預設），按「儲存」只送有變動的欄位（延遲由有值清成空白時送 `null`）；沒有變動就不送並顯示「沒有變動」，輸入不是有效數字（顯示「請求失敗：輸入不是有效的數字」）或每日額度、生成期限空白時整筆不送；警示依最近一次讀到的設定判斷，不是依輸入框的值：該設定的延遲有值且大於或等於生成期限時，顯示「延遲不短於生成期限，正常訂單會逾時」。設定區塊只在開頁和儲存成功後讀 `GET /debug/config`（警示也只在這兩個時機更新），不跟著 3 秒更新。規格另要新增第四個輸入框「初始點數」（空白＝用 seed，由有值清成空白時送 `null`，旁註「按重設後生效」），**尚未實作**。
+控制台頁面另有「設定」區塊：四個輸入框（每日額度、生成期限秒數、廠商延遲秒數、初始點數；延遲空白＝用 `vendor-sim` 預設，初始點數空白＝重設時用 seed，旁註「按重設後生效」），按「儲存」只送有變動的欄位（延遲、初始點數由有值清成空白時送 `null`）；沒有變動就不送並顯示「沒有變動」，輸入不是有效數字（顯示「請求失敗：輸入不是有效的數字」）或每日額度、生成期限空白時整筆不送；警示依最近一次讀到的設定判斷，不是依輸入框的值：該設定的延遲有值且大於或等於生成期限時，顯示「延遲不短於生成期限，正常訂單會逾時」。設定區塊只在開頁和儲存成功後讀 `GET /debug/config`（警示也只在這兩個時機更新），不跟著 3 秒更新。
 
 驗證程度：自動測試涵蓋上述端點和 6 種異常（`vendor_*` 分別測 `vendor-sim` 與 `consume`，兩者串接只有 Docker 實測）；在 Docker 實測確認 reset、互斥、並存、部分輸入驗證和 6 種異常的觸發。`consume` 的 2 秒逾時只有單元測試，沒有 Docker 實測；App 在這些異常下的表現已在 API 37 模擬器實測，見「異常觸發方式」。`DEBUG_API_ENABLED=false` 已於 Docker 重跑（`/debug/reset`、`/debug/faults`、`consume` 回 `404`，訂單與額度不變；`vendor-sim` 記 log 後照常回呼，訂單 `SUCCEEDED`），開關讀環境變數的判斷沒有自動測試；同名覆蓋和其餘輸入驗證只有自動測試，沒有 Docker 實測。
 
@@ -265,7 +265,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 | `POST /debug/faults` | 設定異常，成功回 `200` 和目前清單（同 `GET`） |
 | `DELETE /debug/faults` | 全部清除，回 `204` |
 | `POST /debug/reset` | 重設環境，回 `204` |
-| `GET /debug/config` | 查看執行期設定（每日額度、生成期限、廠商延遲、初始點數（尚未實作）），細節見下方「執行期設定」 |
+| `GET /debug/config` | 查看執行期設定（每日額度、生成期限、廠商延遲、初始點數），細節見下方「執行期設定」 |
 | `PUT /debug/config` | 調整執行期設定，只改有帶的欄位，成功回 `200` 和改後的完整設定 |
 | `POST /debug/faults/consume` | 內部端點，只給 `vendor-sim` 取得異常；和其他 `/debug/*` 一樣受 `DEBUG_API_ENABLED` 與 Bearer token 保護。回 `200`：有 `vendor_*` 異常時扣 1 次並回 `{"fault":{"name","params"}}`，沒有時回 `{"fault":null}`。回應最外層（和 `fault` 同層，`fault` 為 `null` 時也帶）另有 `"vendor_delay_sec"`，值為目前覆寫的廠商延遲或 `null`。沒 token 回 `401`，關閉時回 `404`，`GET` 回 `405` |
 
@@ -275,8 +275,6 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 {"daily_limit":3,"generation_ttl_sec":120,"vendor_delay_sec":null,"initial_points":null}
 ```
 
-`initial_points` 尚未實作：目前後端的 `GET` 不回這個欄位，`PUT` 帶它會當未知欄位回 `400 INVALID_CONFIG`；以下涉及 `initial_points` 的說明為規格。
-
 - `PUT` 收同樣欄位的任意子集，只改有帶的欄位，成功回 `200` 和改後的完整設定。
 - 範圍：`daily_limit` 整數 1–1000；`generation_ttl_sec` 整數 10–1800；`vendor_delay_sec` 數字 0–600，或 `null`（不覆寫，用 `vendor-sim` 自己的 `VENDOR_DELAY_SEC`）；`initial_points` 整數 0–100000，或 `null`（不覆寫，`POST /debug/reset` 時餘額回到資料庫的 seed，目前 100）。`daily_limit`、`generation_ttl_sec` 不接受 `null`，`3.0` 這類帶小數點的寫法也不算整數，兩者都視為型別錯誤；`initial_points` 同樣不接受 `5.0` 這類帶小數點的寫法或字串。
 - 空物件、未知欄位、型別錯誤或超出範圍回 `400 INVALID_CONFIG`；任一欄位不合法就全部不改（全有或全無）。body 不是 JSON 物件（語法錯誤、`null`、陣列）回 `400 INVALID_REQUEST`，和 `POST /debug/faults` 一致。
@@ -285,9 +283,9 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 - 生效時機：`daily_limit` 立即影響建單檢查與 `GET /v1/quota`，已建的訂單不變，調低到小於今日已用次數時剩餘為 0；`generation_ttl_sec` 只影響之後送出的訂單（期限在送出時寫入）；`vendor_delay_sec` 由 `POST /debug/faults/consume` 回應交給 `vendor-sim`，只影響之後 `vendor-sim` 收到的新工作（以收到工作的時間為準，不是送出訂單的時間；重送的同一工作不受影響）；欄位為 `null`、缺少、不是 0–600 的數字，或 consume 失敗時，`vendor-sim` 用自己的 `VENDOR_DELAY_SEC`；`initial_points` 在 `PUT` 時不動餘額，只在下一次 `POST /debug/reset` 時把餘額設成這個值（`null` 則設成 seed），reset 本來就清空明細與訂單，所以餘額與明細不會對不上（用途：demo 點數不足 `402`，初始點數設 5 → 重設 → 建單（片段 10 點）→ `402`）。
 - 不檢查延遲與期限的關係：延遲大於或等於生成期限時，正常訂單也會逾時，由網頁控制台提示。
 
-驗證程度：Go 整合測試涵蓋 23 種無效 `PUT` 回 `400` 且設定不變、非物件 body 回 `INVALID_REQUEST`、關閉時 `404`、沒 token `401`、reset 不還原、`daily_limit` 影響建單與額度（含調低到小於已用）、生成期限只影響之後送出的訂單、環境變數超出範圍時 `GET` 照實顯示；`vendor-sim` 單元測試涵蓋延遲覆寫、各種退回情況、consume 失敗、重送只 consume 一次；相關套件以 `-race` 跑過。Docker 實測（`VENDOR_DELAY_SEC=20`、`GENERATION_TTL=2m`）：延遲覆寫 3 秒時送出到 `SUCCEEDED` 約 4 秒、改回 `null` 約 22 秒、延遲 1 秒加 `vendor_failed` 約 2 秒後 `FAILED`、reset 後設定保留、`daily_limit` 改 1 後 `/v1/quota` 立即反映。控制台在 Chrome 實際操作過（開頁顯示、沒有變動不送、延遲 200 時警示、清空送 `null`、不合法輸入不送、3 秒更新不讀設定）。App 不呼叫這個 API，沒有 App 端實測。
+驗證程度：Go 整合測試涵蓋 23 種無效 `PUT` 回 `400` 且設定不變、非物件 body 回 `INVALID_REQUEST`、關閉時 `404`、沒 token `401`、reset 不還原、`daily_limit` 影響建單與額度（含調低到小於已用）、生成期限只影響之後送出的訂單、環境變數超出範圍時 `GET` 照實顯示；`vendor-sim` 單元測試涵蓋延遲覆寫、各種退回情況、consume 失敗、重送只 consume 一次；相關套件以 `-race` 跑過。Docker 實測（`VENDOR_DELAY_SEC=20`、`GENERATION_TTL=2m`）：延遲覆寫 3 秒時送出到 `SUCCEEDED` 約 4 秒、改回 `null` 約 22 秒、延遲 1 秒加 `vendor_failed` 約 2 秒後 `FAILED`、reset 後設定保留、`daily_limit` 改 1 後 `/v1/quota` 立即反映。控制台在 Chrome 實際操作過（開頁顯示、沒有變動不送、延遲 200 時警示、清空送 `null`、不合法輸入不送、3 秒更新不讀設定）。App 不呼叫這個 API，沒有 App 端實測。`initial_points` 的實測（Server 回報，`a3d59a0`）：Go 單元測試、整合測試（真實 Postgres）與 `-race` 通過；6 個 mutation 全部抓到（reset 忽略覆寫值、nil 與非 nil 對調、`null` 不回 seed、範圍上限、白名單漏欄位、`PUT` 只帶其他欄位時清掉 `initial_points`）；Docker 加瀏覽器控制台實測：輸入 5 儲存後餘額仍 100，按重設後可用 5，此時建單回 `402 INSUFFICIENT_POINTS`，清空輸入框儲存送出 `null`，再重設餘額回到 100。
 
-`POST /debug/reset`：清空訂單、點數明細、廠商事件、自拍檔案和異常；餘額回到 `initial_points`，未設定（`null`）時回到 seed 的值（`initial_points` 尚未實作，目前一律回到 seed）；片段保留；額度因訂單清空而恢復。重設後才到的廠商回呼，照未知 `job_id` 的處理（見上方 webhook 檢查順序：回 `404 CAMEO_NOT_FOUND`、事件不留），訂單不會復活。reset 不會清 App 本機資料。自拍檔案只刪被清除訂單對應的檔案，刪除失敗只記 log，仍回 `204`。
+`POST /debug/reset`：清空訂單、點數明細、廠商事件、自拍檔案和異常；餘額回到 `initial_points`，未設定（`null`）時回到 seed 的值；片段保留；額度因訂單清空而恢復。重設後才到的廠商回呼，照未知 `job_id` 的處理（見上方 webhook 檢查順序：回 `404 CAMEO_NOT_FOUND`、事件不留），訂單不會復活。reset 不會清 App 本機資料。自拍檔案只刪被清除訂單對應的檔案，刪除失敗只記 log，仍回 `204`。
 
 設定異常 body：
 
@@ -329,7 +327,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 在專案根目錄執行：
 
-1. 重設環境：`backend/scripts/fault.sh reset`（也可以直接用 curl：`curl -X POST -H "Authorization: Bearer test-token" localhost:8080/debug/reset`），或用網頁控制台的「重設環境」。reset 不會還原執行期設定（`/debug/config`）；改過額度或期限的話，先改回預設，下方實測表的數字才對得上
+1. 重設環境：`backend/scripts/fault.sh reset`（也可以直接用 curl：`curl -X POST -H "Authorization: Bearer test-token" localhost:8080/debug/reset`），或用網頁控制台的「重設環境」。reset 不會還原執行期設定（`/debug/config`）；改過額度、期限或初始點數的話，先改回預設（初始點數設回 `null`），下方實測表的數字才對得上
 2. 設定異常，其他異常換情境名稱：`backend/scripts/fault.sh vendor-failed`（也可以直接用 curl：`curl -X POST -H "Authorization: Bearer test-token" -H 'Content-Type: application/json' -d @backend/faults/vendor-failed.json localhost:8080/debug/faults`）。`fault.sh` 不帶參數列出所有情境，`list` 看已登記的異常，`clear` 清除；改過 port 時設 `API_PORT`，或用 `API_BASE` 指定完整網址；也可以傳自訂 JSON 檔路徑。也可以在瀏覽器開 `http://localhost:8080/debug/console` 登記（見「Debug 異常 API」）。內容審核拒絕用 `backend/scripts/fault.sh content-rejected`。
 3. 走一筆新訂單（建單、上傳、送出）：
 
@@ -364,7 +362,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 
 | 異常 | 情境檔與觸發 | 後端結果 | App 端結果（API 37 模擬器） |
 |---|---|---|---|
-| `response_lost_after_commit` | `response-lost-after-commit.json`（`target` 為 `create`，測送出時改成 `submit`），建單或送出 | 連線中斷、沒有回應；建單用同一個 key 重送、送出對同一筆訂單重送，都回 `200`，點數只占用或扣一次；送出情境明細只有 1 筆 `CHARGE` | `times` 1–3 共 7 輪（建單 4、送出 3）都被 App 吸收，App 不顯示錯誤，每輪 1 張單、1 筆扣款；`times` 5–8 結果不固定。看到錯誤時：建單頁顯示錯誤加「重試」，重試後接回同一張單，只扣 1 次；送出頁顯示錯誤加「重試」「回我的客串」，重試後只扣 1 次並有通知。送出回應遺失時 App 沒有重試，訂單照樣生成並扣款（1 次） |
+| `response_lost_after_commit` | `response-lost-after-commit.json`（`target` 為 `create`，測送出時改成 `submit`），建單或送出 | 這個異常驗的是冪等，不是失敗：訂單已寫入，後續照常走完，最後是 `SUCCEEDED`。通過條件：訂單只多 1 筆、點數只扣 1 次、今日已用次數只加 1、控制台異常清單裡這筆已用掉。連線中斷、沒有回應；建單用同一個 key 重送、送出對同一筆訂單重送，都回 `200`，點數只占用或扣一次；送出情境明細只有 1 筆 `CHARGE` | `times` 1–3 共 7 輪（建單 4、送出 3）都被 App 吸收，App 不顯示錯誤，每輪 1 張單、1 筆扣款；`times` 5–8 結果不固定。看到錯誤時：建單頁顯示錯誤加「重試」，重試後接回同一張單，只扣 1 次；送出頁顯示錯誤加「重試」「回我的客串」，重試後只扣 1 次並有通知。送出回應遺失時 App 沒有重試，訂單照樣生成並扣款（1 次） |
 | `upload_interrupted` | `upload-interrupted.json`，上傳超過 1024 bytes 的 JPEG | 連線中斷；訂單仍是 `AWAITING_UPLOAD`，重傳成功 | 修正前（`d4fa507`）2/2 沒出現錯誤：一次確認會上傳 2 次，第二次把中斷吸收，要連續中斷 2 次才看到錯誤。`736dfba` 修正後重測（`times` 1、5 各 1 輪）：兩輪都顯示通用錯誤加「重試」；`times` 5 那輪清除異常後重試成功、只扣 1 次（`times` 1 那輪記錄為 1→0，20 秒後仍停在錯誤與「重試」） |
 | `upload_expired` | `upload-expired.json`，上傳合法內容 | `410`；訂單 `EXPIRED`，available 100、remaining 3。內容不合法時回 `400`，異常仍在 | 2/2：顯示「已過期」與「上傳期限已過，點數沒有扣款，請重新客串。」，只有「回首頁重新客串」；不扣款 |
 | `vendor_failed` | `vendor-failed.json`，送出 | `FAILED`／`VENDOR_FAILED`；available 100、remaining 3；明細 `CHARGE`、`REFUND` | 2/2（前景 1 次、送出後進背景 1 次）：顯示「生成失敗」「點數已退還」，餘額退回；背景也收到失敗通知，沒有重複 |
