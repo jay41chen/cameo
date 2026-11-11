@@ -18,7 +18,6 @@ import androidx.lifecycle.compose.dropUnlessResumed
 
 @Composable
 fun ConfirmScreen(
-    onBack: () -> Unit,
     onRetake: () -> Unit,
     onBackHome: () -> Unit,
     onCreated: (String) -> Unit,
@@ -44,7 +43,7 @@ fun ConfirmScreen(
         }
         is ConfirmUiState.Rejected -> Body {
             Text(s.message ?: GENERIC_ERROR)
-            Button(onClick = onBack) { Text("回片段清單") }
+            Button(onClick = onBackHome) { Text(BACK_HOME_TEXT) }
         }
         ConfirmUiState.PhotoMissing -> Body {
             Text(NEED_PHOTO_TEXT)
