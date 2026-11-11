@@ -64,6 +64,7 @@
     <label><span>每日額度 <input id="cfgLimit" type="number" step="1" style="width:6em"></span></label>
     <label><span>生成期限（秒） <input id="cfgTtl" type="number" step="1" style="width:6em"></span></label>
     <label><span>廠商延遲（秒，空白＝用 vendor-sim 預設） <input id="cfgDelay" type="number" step="any" style="width:6em"></span></label>
+    <label><span>初始點數（空白＝seed，按重設後生效） <input id="cfgInit" type="number" step="1" style="width:6em"></span></label>
   </div>
   <div>
     <button class="primary" id="btnCfgSave">儲存</button>
@@ -144,7 +145,7 @@
   });
 
   // 設定區塊：只在開頁和儲存成功後讀 GET /debug/config，不跟著 3 秒更新。
-  var cfgLoaded = null; // { daily_limit, generation_ttl_sec, vendor_delay_sec }
+  var cfgLoaded = null; // { daily_limit, generation_ttl_sec, vendor_delay_sec, initial_points }
   function renderCfgWarn() {
     var c = cfgLoaded;
     var warn = c && c.vendor_delay_sec !== null && c.vendor_delay_sec !== undefined && c.vendor_delay_sec >= c.generation_ttl_sec;
@@ -156,6 +157,7 @@
       $('cfgLimit').value = c.daily_limit;
       $('cfgTtl').value = c.generation_ttl_sec;
       $('cfgDelay').value = c.vendor_delay_sec === null || c.vendor_delay_sec === undefined ? '' : c.vendor_delay_sec;
+      $('cfgInit').value = c.initial_points === null || c.initial_points === undefined ? '' : c.initial_points;
       $('cfgErr').textContent = '';
       renderCfgWarn();
     }).catch(function (e) { $('cfgErr').textContent = '讀取設定失敗：' + e.message; });
@@ -163,8 +165,8 @@
   $('btnCfgSave').addEventListener('click', function () {
     if (!cfgLoaded) { loadConfig(); return; }
     var body = {};
-    var limit = $('cfgLimit').value.trim(), ttl = $('cfgTtl').value.trim(), delay = $('cfgDelay').value.trim();
-    if ($('cfgLimit').validity.badInput || $('cfgTtl').validity.badInput || $('cfgDelay').validity.badInput) {
+    var limit = $('cfgLimit').value.trim(), ttl = $('cfgTtl').value.trim(), delay = $('cfgDelay').value.trim(), init = $('cfgInit').value.trim();
+    if ($('cfgLimit').validity.badInput || $('cfgTtl').validity.badInput || $('cfgDelay').validity.badInput || $('cfgInit').validity.badInput) {
       showFailure('cfgResult', '輸入不是有效的數字');
       return;
     }
@@ -178,6 +180,11 @@
       if (cfgLoaded.vendor_delay_sec !== null) body.vendor_delay_sec = null;
     } else if (Number(delay) !== cfgLoaded.vendor_delay_sec) {
       body.vendor_delay_sec = Number(delay);
+    }
+    if (init === '') {
+      if (cfgLoaded.initial_points !== null && cfgLoaded.initial_points !== undefined) body.initial_points = null;
+    } else if (Number(init) !== cfgLoaded.initial_points) {
+      body.initial_points = Number(init);
     }
     if (Object.keys(body).length === 0) {
       var box = $('cfgResult');

@@ -17,15 +17,18 @@ const (
 	minDailyLimit, maxDailyLimit = 1, 1000
 	minTTLSec, maxTTLSec         = 10, 1800
 	minDelaySec, maxDelaySec     = 0.0, 600.0
+	minInitPoints, maxInitPoints = 0, 100000
 )
 
 // runtimeConfig 是記憶體內、可同時讀寫的執行期設定，實作 usecase.RuntimeConfig。
-// vendorDelay 為 nil 表示不覆寫（vendor-sim 用自己的 VENDOR_DELAY_SEC）。
+// vendorDelay 為 nil 表示不覆寫（vendor-sim 用自己的 VENDOR_DELAY_SEC）；
+// initialPoints 為 nil 表示不覆寫（reset 時餘額回到 seed_balance）。
 type runtimeConfig struct {
 	mu          sync.RWMutex
 	dailyLimit  int
 	ttl         time.Duration
 	vendorDelay *float64
+	initialPts  *int
 }
 
 func newRuntimeConfig(base usecase.Config) *runtimeConfig {
@@ -51,6 +54,17 @@ func (c *runtimeConfig) VendorDelaySec() *float64 {
 	return c.vendorDelay
 }
 
+// InitialPoints 回傳目前的初始點數覆寫值的複本（nil 表示不覆寫）。
+func (c *runtimeConfig) InitialPoints() *int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.initialPts == nil {
+		return nil
+	}
+	v := *c.initialPts
+	return &v
+}
+
 // view 在同一把讀鎖內取出完整設定。generation_ttl_sec 無條件捨去到整秒。
 func (c *runtimeConfig) view() map[string]any {
 	c.mu.RLock()
@@ -64,11 +78,12 @@ func (c *runtimeConfig) viewLocked() map[string]any {
 		"daily_limit":        c.dailyLimit,
 		"generation_ttl_sec": int64(c.ttl / time.Second),
 		"vendor_delay_sec":   c.vendorDelay,
+		"initial_points":     c.initialPts,
 	}
 }
 
 // apply 在同一把寫鎖內寫入有帶的欄位並組出回應用的 view，避免回應混到並行請求的值。
-func (c *runtimeConfig) apply(hasLimit bool, limit int, hasTTL bool, ttlSec int, hasDelay bool, delay *float64) map[string]any {
+func (c *runtimeConfig) apply(hasLimit bool, limit int, hasTTL bool, ttlSec int, hasDelay bool, delay *float64, hasInit bool, init *int) map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if hasLimit {
@@ -79,6 +94,9 @@ func (c *runtimeConfig) apply(hasLimit bool, limit int, hasTTL bool, ttlSec int,
 	}
 	if hasDelay {
 		c.vendorDelay = delay
+	}
+	if hasInit {
+		c.initialPts = init
 	}
 	return c.viewLocked()
 }
@@ -129,7 +147,7 @@ func (s *server) debugPutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for k := range fields {
-		if k != "daily_limit" && k != "generation_ttl_sec" && k != "vendor_delay_sec" {
+		if k != "daily_limit" && k != "generation_ttl_sec" && k != "vendor_delay_sec" && k != "initial_points" {
 			invalidConfig(w, "未知的設定欄位："+k)
 			return
 		}
@@ -137,6 +155,7 @@ func (s *server) debugPutConfig(w http.ResponseWriter, r *http.Request) {
 	var (
 		limit, ttlSec int
 		delay         *float64
+		initPts       *int
 	)
 	rawLimit, hasLimit := fields["daily_limit"]
 	if hasLimit {
@@ -167,5 +186,15 @@ func (s *server) debugPutConfig(w http.ResponseWriter, r *http.Request) {
 		delay = &f
 	}
 
-	writeJSON(w, http.StatusOK, s.rc.apply(hasLimit, limit, hasTTL, ttlSec, hasDelay, delay))
+	rawInit, hasInit := fields["initial_points"]
+	if hasInit && !bytes.Equal(bytes.TrimSpace(rawInit), []byte("null")) {
+		n, ok := intInRange(rawInit, minInitPoints, maxInitPoints)
+		if !ok {
+			invalidConfig(w, "initial_points 必須是 0 到 100000 的整數，或 null")
+			return
+		}
+		initPts = &n
+	}
+
+	writeJSON(w, http.StatusOK, s.rc.apply(hasLimit, limit, hasTTL, ttlSec, hasDelay, delay, hasInit, initPts))
 }

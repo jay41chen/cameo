@@ -163,7 +163,7 @@ func (d *fakeDB) InsertVendorEvent(_ context.Context, e usecase.VendorEvent) (bo
 	return true, nil
 }
 
-func (d *fakeDB) ResetData(context.Context) ([]string, error) {
+func (d *fakeDB) ResetData(_ context.Context, initialBalance *int) ([]string, error) {
 	d.locks = append(d.locks, "reset")
 	if d.failOn == "ResetData" {
 		return nil, errors.New("injected ResetData failure")
@@ -173,6 +173,9 @@ func (d *fakeDB) ResetData(context.Context) ([]string, error) {
 		ids = []string{d.cameo.ID}
 	}
 	d.exists, d.ledger, d.events, d.balance = false, nil, nil, d.seed
+	if initialBalance != nil {
+		d.balance = *initialBalance
+	}
 	return ids, nil
 }
 

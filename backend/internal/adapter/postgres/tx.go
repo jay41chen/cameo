@@ -168,7 +168,8 @@ func (t *txStore) InsertVendorEvent(ctx context.Context, e usecase.VendorEvent) 
 }
 
 // ResetData 用 DELETE（不用 TRUNCATE，避免更強的鎖）。外鍵順序：明細引用訂單，先刪明細再刪訂單。
-func (t *txStore) ResetData(ctx context.Context) ([]string, error) {
+// initialBalance 非 nil 時餘額設成該值，nil 時設回 seed_balance（不改 seed_balance 欄位本身）。
+func (t *txStore) ResetData(ctx context.Context, initialBalance *int) ([]string, error) {
 	if _, err := t.db.Exec(ctx, `DELETE FROM ledger_entries`); err != nil {
 		return nil, err
 	}
@@ -183,7 +184,11 @@ func (t *txStore) ResetData(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := t.db.Exec(ctx, `UPDATE points_account SET balance = seed_balance WHERE id = $1`, userID); err != nil {
+	if initialBalance == nil {
+		if _, err := t.db.Exec(ctx, `UPDATE points_account SET balance = seed_balance WHERE id = $1`, userID); err != nil {
+			return nil, err
+		}
+	} else if _, err := t.db.Exec(ctx, `UPDATE points_account SET balance = $2 WHERE id = $1`, userID, *initialBalance); err != nil {
 		return nil, err
 	}
 	return ids, nil

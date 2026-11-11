@@ -203,16 +203,18 @@ func (s *Service) deleteSelfies(ids ...string) {
 	}
 }
 
-// ResetAll 清空訂單、點數明細與廠商事件，餘額回到 seed_balance（供 POST /debug/reset）。
+// ResetAll 清空訂單、點數明細與廠商事件，餘額設成執行期設定的 initial_points（供 POST /debug/reset）；
+// 未設定（nil）時回到 seed_balance。初始點數在交易前讀一次。
 // 交易內先 LockAccount；commit 後才刪自拍檔，刪除失敗只記 log。
 func (s *Service) ResetAll(ctx context.Context) error {
 	var ids []string
+	initial := s.initialPoints()
 	err := s.tx.Run(ctx, func(tx Tx) error {
 		if _, err := tx.LockAccount(ctx); err != nil {
 			return err
 		}
 		var err error
-		ids, err = tx.ResetData(ctx)
+		ids, err = tx.ResetData(ctx, initial)
 		return err
 	})
 	if err != nil {

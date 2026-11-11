@@ -55,6 +55,8 @@ type Service struct {
 type RuntimeConfig interface {
 	DailyLimit() int
 	GenerationTTL() time.Duration
+	// InitialPoints 回傳 reset 時要設成的餘額；nil 表示用資料庫的 seed_balance。
+	InitialPoints() *int
 }
 
 func NewService(q Queries, tx TxRunner, clock Clock, cfg Config, files FileStore) *Service {
@@ -95,6 +97,14 @@ func (s *Service) dailyLimit() int {
 		return s.rc.DailyLimit()
 	}
 	return s.cfg.DailyLimit
+}
+
+// initialPoints 回傳 reset 用的初始餘額覆寫值；nil 表示用 seed_balance。
+func (s *Service) initialPoints() *int {
+	if s.rc != nil {
+		return s.rc.InitialPoints()
+	}
+	return nil
 }
 
 func (s *Service) generationTTL() time.Duration {

@@ -205,8 +205,8 @@ func TestDebugResetUsesSeedBalance(t *testing.T) {
 type resetFailTx struct{ usecase.Tx }
 
 // ResetData 真的做完才回錯，讓交易必須整個回滾。
-func (t resetFailTx) ResetData(ctx context.Context) ([]string, error) {
-	if _, err := t.Tx.ResetData(ctx); err != nil {
+func (t resetFailTx) ResetData(ctx context.Context, initialBalance *int) ([]string, error) {
+	if _, err := t.Tx.ResetData(ctx, initialBalance); err != nil {
 		return nil, err
 	}
 	return nil, errors.New("injected failure after ResetData")

@@ -34,9 +34,9 @@ func (f *vfx) genExpires(t *testing.T, id string) time.Time {
 	return at
 }
 
-func wantCfg(t *testing.T, got map[string]any, limit, ttl float64, delay any) {
+func wantCfg(t *testing.T, got map[string]any, limit, ttl float64, delay, initPts any) {
 	t.Helper()
-	want := map[string]any{"daily_limit": limit, "generation_ttl_sec": ttl, "vendor_delay_sec": delay}
+	want := map[string]any{"daily_limit": limit, "generation_ttl_sec": ttl, "vendor_delay_sec": delay, "initial_points": initPts}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("config = %v, want %v", got, want)
 	}
@@ -44,7 +44,7 @@ func wantCfg(t *testing.T, got map[string]any, limit, ttl float64, delay any) {
 
 func TestConfigGetInitial(t *testing.T) {
 	f := newDebugVfx(t) // DailyLimit 3、GenerationTTL 30 分鐘
-	wantCfg(t, f.cfgGet(t), 3, 1800, nil)
+	wantCfg(t, f.cfgGet(t), 3, 1800, nil, nil)
 }
 
 func TestConfigPutSubsetKeepsOthers(t *testing.T) {
@@ -53,16 +53,16 @@ func TestConfigPutSubsetKeepsOthers(t *testing.T) {
 	if r.Code != 200 {
 		t.Fatalf("put = %d %v", r.Code, r.body)
 	}
-	wantCfg(t, r.body, 3, 120, nil)
-	wantCfg(t, f.cfgGet(t), 3, 120, nil)
+	wantCfg(t, r.body, 3, 120, nil, nil)
+	wantCfg(t, f.cfgGet(t), 3, 120, nil, nil)
 	if r := f.cfgPut(`{"vendor_delay_sec":2.5}`); r.Code != 200 {
 		t.Fatalf("put = %d", r.Code)
 	}
-	wantCfg(t, f.cfgGet(t), 3, 120, 2.5)
+	wantCfg(t, f.cfgGet(t), 3, 120, 2.5, nil)
 	if r := f.cfgPut(`{"vendor_delay_sec":null,"daily_limit":5}`); r.Code != 200 {
 		t.Fatalf("put = %d", r.Code)
 	}
-	wantCfg(t, f.cfgGet(t), 5, 120, nil)
+	wantCfg(t, f.cfgGet(t), 5, 120, nil, nil)
 	// 範圍端點。
 	for _, b := range []string{`{"daily_limit":1}`, `{"daily_limit":1000}`, `{"generation_ttl_sec":10}`, `{"generation_ttl_sec":1800}`, `{"vendor_delay_sec":0}`, `{"vendor_delay_sec":600}`} {
 		if r := f.cfgPut(b); r.Code != 200 {
@@ -142,11 +142,11 @@ func TestConfigPutRejectsAndChangesNothing(t *testing.T) {
 	}
 	for _, b := range invalid {
 		wantError(t, f.cfgPut(b), 400, "INVALID_CONFIG")
-		wantCfg(t, f.cfgGet(t), 3, 1800, 7.0)
+		wantCfg(t, f.cfgGet(t), 3, 1800, 7.0, nil)
 	}
 	for _, b := range []string{`null`, `[]`, `{"daily_limit":`, `not json`, ``, `"x"`, `{"daily_limit":5} {}`} {
 		wantError(t, f.cfgPut(b), 400, "INVALID_REQUEST")
-		wantCfg(t, f.cfgGet(t), 3, 1800, 7.0)
+		wantCfg(t, f.cfgGet(t), 3, 1800, 7.0, nil)
 	}
 }
 
@@ -174,7 +174,7 @@ func TestConfigSurvivesReset(t *testing.T) {
 	if r := f.debugPost("/debug/reset", ""); r.Code != 204 {
 		t.Fatalf("reset = %d", r.Code)
 	}
-	wantCfg(t, f.cfgGet(t), 7, 90, 3.0)
+	wantCfg(t, f.cfgGet(t), 7, 90, 3.0, nil)
 	if got := f.remaining(t); got != 7 {
 		t.Fatalf("remaining = %d, want 7", got)
 	}
@@ -240,11 +240,94 @@ func TestConfigTTLTruncatedAndPartialPutKeepsIt(t *testing.T) {
 	f := newVfx(t)
 	f.svc = newSvc(f.pool, f.clock, usecase.Config{DailyLimit: 3, UploadTTL: ttl, GenerationTTL: time.Hour + 1500*time.Millisecond, MaxSelfieBytes: 100}, newFiles2(t, f.dir)).WithVendor(f.vendor)
 	f.h = f.handler(f.svc)
-	wantCfg(t, f.cfgGet(t), 3, 3601, nil)
+	wantCfg(t, f.cfgGet(t), 3, 3601, nil, nil)
 	r := f.cfgPut(`{"daily_limit":5}`)
 	if r.Code != 200 {
 		t.Fatalf("put = %d %v", r.Code, r.body)
 	}
-	wantCfg(t, r.body, 5, 3601, nil)
-	wantCfg(t, f.cfgGet(t), 5, 3601, nil)
+	wantCfg(t, r.body, 5, 3601, nil, nil)
+	wantCfg(t, f.cfgGet(t), 5, 3601, nil, nil)
+}
+
+// available 讀 GET /v1/points 的可用點數。
+func (f *vfx) available(t *testing.T) int {
+	t.Helper()
+	a, _ := f.getPoints(t)
+	return a
+}
+
+func (f *vfx) reset(t *testing.T) {
+	t.Helper()
+	if r := f.debugPost("/debug/reset", ""); r.Code != 204 {
+		t.Fatalf("reset = %d %v", r.Code, r.body)
+	}
+}
+
+func TestConfigInitialPointsGetPutAndInvalid(t *testing.T) {
+	f := newDebugVfx(t)
+	wantCfg(t, f.cfgGet(t), 3, 1800, nil, nil)
+	r := f.cfgPut(`{"initial_points":5}`)
+	if r.Code != 200 {
+		t.Fatalf("put = %d %v", r.Code, r.body)
+	}
+	wantCfg(t, r.body, 3, 1800, nil, 5.0)
+	wantCfg(t, f.cfgGet(t), 3, 1800, nil, 5.0)
+	for _, b := range []string{`{"initial_points":0}`, `{"initial_points":100000}`} {
+		if r := f.cfgPut(b); r.Code != 200 {
+			t.Fatalf("put %s = %d %v", b, r.Code, r.body)
+		}
+	}
+	r = f.cfgPut(`{"initial_points":null}`)
+	if r.Code != 200 {
+		t.Fatalf("put = %d %v", r.Code, r.body)
+	}
+	wantCfg(t, r.body, 3, 1800, nil, nil)
+
+	if r := f.cfgPut(`{"initial_points":5}`); r.Code != 200 {
+		t.Fatalf("put = %d", r.Code)
+	}
+	for _, b := range []string{
+		`{"initial_points":-1}`, `{"initial_points":100001}`, `{"initial_points":5.0}`, `{"initial_points":"5"}`, `{"initial_points":true}`,
+		`{"daily_limit":7,"initial_points":-1}`, // 混合：合法欄位也不能被改
+	} {
+		wantError(t, f.cfgPut(b), 400, "INVALID_CONFIG")
+		wantCfg(t, f.cfgGet(t), 3, 1800, nil, 5.0)
+	}
+}
+
+func TestConfigInitialPointsAppliedOnlyOnReset(t *testing.T) {
+	f := newDebugVfx(t)
+	before := f.available(t)
+	if r := f.cfgPut(`{"initial_points":5}`); r.Code != 200 {
+		t.Fatalf("put = %d", r.Code)
+	}
+	if got := f.available(t); got != before {
+		t.Fatalf("available after PUT only = %d, want %d", got, before)
+	}
+	f.reset(t)
+	if got := f.available(t); got != 5 {
+		t.Fatalf("available after reset = %d, want 5", got)
+	}
+	// reset 不還原設定。
+	wantCfg(t, f.cfgGet(t), 3, 1800, nil, 5.0)
+	// 設回 null 後 reset：回到 seed（100）。
+	if r := f.cfgPut(`{"initial_points":null}`); r.Code != 200 {
+		t.Fatalf("put = %d", r.Code)
+	}
+	f.reset(t)
+	if got := f.available(t); got != 100 {
+		t.Fatalf("available after null reset = %d, want 100", got)
+	}
+}
+
+func TestConfigInitialPointsZeroMakesCreate402(t *testing.T) {
+	f := newDebugVfx(t)
+	if r := f.cfgPut(`{"initial_points":0}`); r.Code != 200 {
+		t.Fatalf("put = %d", r.Code)
+	}
+	f.reset(t)
+	if got := f.available(t); got != 0 {
+		t.Fatalf("available = %d, want 0", got)
+	}
+	wantError(t, f.createReq("poor"), 402, "INSUFFICIENT_POINTS")
 }
