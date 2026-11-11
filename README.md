@@ -14,7 +14,7 @@
 - 分享連結與取消分享
 - 失敗時退還點數
 - 點數明細
-- 用模擬後端觸發 6 種異常
+- 用模擬後端觸發 6 種異常（7 個情境，內容審核拒絕是廠商失敗的一種）
 
 ## 技術
 
@@ -35,7 +35,7 @@ MVP 已完成。Android App 只在 API 37 模擬器驗證，沒有真機；已�
 
    不需要任何帳號或金鑰。細節見 [`backend/README.md`](backend/README.md)。
 
-2. App：需要 JDK 21、Android SDK 37，並設 `ANDROID_HOME` 或 `android/local.properties`（只設 `local.properties`、沒設 `ANDROID_HOME` 時，把下面的 `$ANDROID_HOME` 換成 SDK 路徑）。後端啟動後執行：第 1 行取本機 AVD 清單的第一個（要用別的 AVD 就把 `AVD=` 改成那個名稱），第 2 行帶相機參數在背景啟動模擬器，第 3 行等開機完成，之後 build、安裝、開啟 App。
+2. App：需要 JDK 21、Android SDK 37，並設 `ANDROID_HOME` 或 `android/local.properties`（只設 `local.properties`、沒設 `ANDROID_HOME` 時，把下面的 `$ANDROID_HOME` 換成 SDK 路徑）。要先有一個 AVD：沒有時在 Android Studio 的 Device Manager 建立一個 API 37 的裝置（第 1 行 `-list-avds` 才取得到名稱）。`adb` 在 SDK 的 `platform-tools` 目錄（`$ANDROID_HOME/platform-tools`），要加進 PATH（或把指令裡的 `adb` 換成完整路徑）。後端啟動後，在專案根目錄把下面整段一次貼上執行（第 2 行會用到第 1 行設定的 `AVD` 變數，且區塊裡有 `cd android`，分行貼或在別的目錄貼都會失敗）。各行用途：第 1 行取本機 AVD 清單的第一個（要用別的 AVD 就把 `AVD=` 改成那個名稱），第 2 行帶相機參數在背景啟動模擬器，第 3 行等開機完成，之後 build、安裝、開啟 App。
 
    ```
    AVD=$($ANDROID_HOME/emulator/emulator -list-avds | head -1)

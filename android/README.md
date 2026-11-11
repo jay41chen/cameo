@@ -1,9 +1,9 @@
 # Android App
 
-需求：JDK 21（`android/gradle/gradle-daemon-jvm.properties` 要求 Gradle daemon 用 JDK 21，編譯用的 toolchain 也是 21；本機沒有時 Gradle 會透過 foojay 自動下載，需連網）、Android SDK 37（compileSdk 需要；targetSdk 為 36）。SDK 位置要設 `ANDROID_HOME` 環境變數，或在 `android/local.properties` 寫 `sdk.dir=/path/to/sdk`（此檔不進 git）。
+需求：JDK 21（`android/gradle/gradle-daemon-jvm.properties` 要求 Gradle daemon 用 JDK 21，編譯用的 toolchain 也是 21；本機沒有時 Gradle 會透過 foojay 自動下載，需連網）、Android SDK 37（compileSdk 需要；targetSdk 為 36）。SDK 位置要設 `ANDROID_HOME` 環境變數，或在 `android/local.properties` 寫 `sdk.dir=/path/to/sdk`（此檔不進 git）。要先有一個 AVD：沒有時在 Android Studio 的 Device Manager 建立一個 API 37 的裝置（第 1 行 `-list-avds` 才取得到名稱）。`adb` 在 SDK 的 `platform-tools` 目錄（`$ANDROID_HOME/platform-tools`），要加進 PATH（或把指令裡的 `adb` 換成完整路徑）。
 
 1. 先啟動後端（見 [`../backend/README.md`](../backend/README.md)）。
-2. 用 Android Studio 開啟 `android/` 資料夾並執行 `app`；或用 Gradle（第 1 行取本機 AVD 清單的第一個（要用別的 AVD 就把 `AVD=` 改成那個名稱），第 2 行帶相機參數在背景啟動模擬器，第 3 行等開機完成；只設 `local.properties`、沒設 `ANDROID_HOME` 時，把 `$ANDROID_HOME` 換成 SDK 路徑）：
+2. 用 Android Studio 開啟 `android/` 資料夾並執行 `app`；或用 Gradle（要在專案根目錄整段一次貼上執行：第 2 行會用到第 1 行設定的 `AVD` 變數，且區塊裡有 `cd android`，分行貼或在別的目錄貼都會失敗；第 1 行取本機 AVD 清單的第一個（要用別的 AVD 就把 `AVD=` 改成那個名稱），第 2 行帶相機參數在背景啟動模擬器，第 3 行等開機完成；只設 `local.properties`、沒設 `ANDROID_HOME` 時，把 `$ANDROID_HOME` 換成 SDK 路徑）：
 
 ```
 AVD=$($ANDROID_HOME/emulator/emulator -list-avds | head -1)
