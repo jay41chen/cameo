@@ -205,7 +205,7 @@ API 說明中尚未實作的部分（例如 `GET /v1/events`）是設計，未�
 - `GET /s/{token}`：分享網頁，只播放影片，免登入。有效時回 `200 text/html`；已取消或不存在時回簡短 HTML 404、查詢錯誤時回簡短 HTML 500（都是上方通用錯誤格式的例外）。
 - `GET /s/{token}/video`：分享頁用的影片，免登入。已取消或不存在時維持 JSON 404（通用錯誤格式）。Range 超出範圍回 `416`。
 - `GET`／`HEAD /s/{token}` 與 `/s/{token}/video` 的回應都帶 `Cache-Control: no-store`、`X-Robots-Tag: noindex`、`Referrer-Policy: no-referrer`。例外：`405` 與 `/s/{token}/` 這類未註冊路徑的通用 JSON `404` 不帶；`/s/{token}/video` 的 `416` 不帶 `Cache-Control`，body 是標準庫純文字。
-- 驗證：Agent 以 Claude in Chrome 在桌面 Chrome 自動化驗證 `<video>` 可載入、播放與跳轉（JS 操作、靜音），取消分享後舊連結失效（頁面顯示「找不到這個分享。」、影片回 `404`）。模擬器內的 Chrome 打得開分享頁（API 37 模擬器）；播放與跳轉在桌面 Chrome 自動化驗證；新的範例影片也經真人在電腦瀏覽器開分享連結播放與跳轉過（1 次）。Range 由自動測試與 curl 驗證，沒有瀏覽器紀錄。資料庫真的斷線時的 HTML `500` 也尚未驗證（目前只用已取消的 context 模擬）。
+- 驗證：Agent 以 Claude in Chrome 在桌面 Chrome 自動化驗證 `<video>` 可載入、播放與跳轉（JS 操作、靜音），取消分享後舊連結失效（頁面顯示「找不到這個分享。」、影片回 `404`）。模擬器內的 Chrome 打得開分享頁（API 37 模擬器）；播放與跳轉在桌面 Chrome 自動化驗證；新的範例影片也經專案負責人親自在電腦瀏覽器開分享連結播放與跳轉過（1 次）。Range 由自動測試與 curl 驗證，沒有瀏覽器紀錄。資料庫真的斷線時的 HTML `500` 也尚未驗證（目前只用已取消的 context 模擬）。
 - token 以 Go 標準庫 `crypto/rand.Text()` 產生，存在 `cameos.share_token`，`NULL` 代表未分享。
 - 分享網址的 base 由環境變數 `PUBLIC_BASE_URL` 設定，預設 `http://localhost:8080`，不寫死。預設用電腦瀏覽器開；要在模擬器內開，把它設成 `http://10.0.2.2:8080`；`adb reverse` 只是選用，不是必要步驟。debug 開啟時，`PUT` 可用 `debug_base_url` 覆寫這次回應的網址（見上方）。
 - 範例影片：`backend/assets/sample.mp4`（約 265 KB、H.264、無音軌），所有 `SUCCEEDED` 訂單共用。長度 15 秒、解析度 640×360；畫面是程式產生的動態漸層和 `Cameo sample video` 字樣，沒有第三方素材。
